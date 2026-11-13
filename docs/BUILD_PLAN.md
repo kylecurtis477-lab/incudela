@@ -253,6 +253,13 @@ count stays at or under 709.
      `mut` and `own`, field and pointer/local swaps), take_shadow_ok (user functions win) and 33 compile-fail cases
      (bad_take_*, bad_replace_*, bad_swap_*, bad_nown_field_moved_hint); tests/own 151 checks. Adversarial set: 78
      programs (56 must-reject, 22 must-accept), all as expected.
+     *Fix (2026-11-13, found while designing 3d):* passing a `mut[T]` local whole as a call argument reborrowed it
+     for the call (`fs_tb_push(l, 2)`) without checking for a live shared borrow, so `r: ref[Node] = borrow(m);
+     bump(m); peek(r)` and `both(borrow(m), m)` gave a callee write access to what a `ref` still treated as shared
+     (writes through `m` itself were already refused by `fs_wstore`). On master this broke the shared-borrow
+     guarantee without a dangling pointer; with 3d's borrows of `m.head` it would let the callee `replace` and free a
+     node a live `ref` points to. Now `fs_lchk` refuses it. Tests: bad_mut_pass_shared, bad_mut_pass_shared_arg;
+     tests/own 153 checks.
    - *Next Stage 3 steps (from ChatGPT's design note, in order; each its own gated commit):*
      (3b) `nown[T]`, a nullable affine owner: the only owner type allowed in zero-initialised storage (globals,
      arrays, kexec records), with a null check before use; arrays of owners return as arrays of `nown[T]`.

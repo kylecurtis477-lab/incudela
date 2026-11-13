@@ -16669,7 +16669,10 @@ def fs_lchk(l, lh):
             fs_die(c3("cannot move ", fs_lname(l), c3(" while it is borrowed (at ", fs_where(fsl_bl[l]), ")")))
         fsl_mv[l] = tl[fp - 1]
     elif ftsg[t] == 4 and fs_argd > 0:
-    # passing a mut[T] reborrows it for the call: no other use of it in the same call
+    # passing a mut[T] reborrows it for the call: no other use of it in the same call, and not while a shared
+    # borrow of it is live (r = borrow(m); bump(m) let the callee write what r still reads as shared)
+        if fsl_sh[l] > 0:
+            fs_die(c3("cannot pass ", fs_lname(l), c3(" as a mut[T] while it is borrowed (at ", fs_where(fsl_bl[l]), ")")))
         fs_tb_push(l, 2)
 
 def fs_nowncmp(p):
