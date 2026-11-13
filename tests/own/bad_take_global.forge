@@ -1,4 +1,4 @@
-# expect: take()/replace()/swap() need a named place: an own/nown local, a direct own/nown field of a local struct, or an own/nown field through a local own[T]/mut[T] pointer
+# expect: take()/replace()/swap() need a named place
 # forge: no-runtime
 include "../fs/linux.fsi"
 struct Node:

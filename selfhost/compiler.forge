@@ -15659,6 +15659,16 @@ fs_pll = -1
 fs_plo = 0
 fs_ploff = 0
 fs_plt = 0
+# Stage 3d: an owner path name.f1...fn that fs_chain resolved: its root local fs_chr (a pointer local, or the
+# Stage 2 slot of a local struct's first field) of pointer kind fs_chsg, the fs_chn field offsets fs_cho below the
+# root (each loaded in turn; the last one is the place), the type fs_cht of the last field, and fs_chslot = 1 when
+# the path is only a local struct's direct owner field (the slot itself, no offsets)
+fs_chr = -1
+fs_chsg = 0
+fs_chn = 0
+fs_cho = list(64)
+fs_cht = 0
+fs_chslot = 0
 nfstb = 0
 fs_argd = 0
 # SysV argument layout of the current call/prologue: fs_wd[w] is the destination of argument word w
@@ -17642,6 +17652,56 @@ def fs_callsite(target):
     if odd:
         e("add $8,%rsp")
 
+def fs_rborrow(x, k):
+# Stage 3d: borrow(p.f1. ... .fn) / borrow_mut(...) of an own[T] field reached through own fields from the root of
+# the path (a pointer local, or the Stage 2 slot of a local struct's field: fs_chain). The borrow is recorded on that
+# root, so while it lives the root is not moved, written through, passed as mut or take/replace/swap-ed (shared),
+# or not used at all (mutable); it ends at the call or block end like any borrow. fp is at the name.
+    global fp, fs_ety, fs_mode, fs_bpend, fs_bpk
+    what = "borrow()"
+    if k == 2:
+        what = "borrow_mut()"
+    q = fp + 1
+    while fs_isop2(q, ".") and tk[q + 1] == K_ID:
+        q += 2
+    if not fs_isop2(q, ")"):
+        fs_die("borrow()/borrow_mut() take a local own[T] variable or direct own[T] field")
+    fs_chain(fp, q, what)
+    if ft_isnown(fs_cht):
+        fs_die("nown[T] may be none: take() it into a local and check it (if o != 0:) before borrowing it")
+    if not (fsk[fs_cht] == 1 and ftsg[fs_cht] == 2):
+        fs_die("borrow()/borrow_mut() take a local own[T] variable, a direct own[T] field, or an own[T] field through own fields from a pointer")
+    r = fs_chr
+    if k == 2 and fs_chsg == 3:
+        fs_die(c3("cannot borrow_mut through ", fs_lname(r), ": a ref[T] is a shared borrow (use borrow)"))
+    if fsl_dead[r]:
+        fs_die(concat(fs_lname(r), " is a borrow whose block has ended"))
+    if fsl_mv[r] == -1:
+        fs_die(concat("use of uninitialised field ", fs_lname(r)))
+    if fsl_mv[r] > 0:
+        fs_die(c4("borrow of moved value ", fs_lname(r), " (moved at ", concat(fs_where(fsl_mv[r]), ")")))
+    if fsl_mu[r] > 0:
+        fs_die(c3("cannot borrow through ", fs_lname(r), c3(": it is already mutably borrowed (at ", fs_where(fsl_bl[r]), ")")))
+    if k == 2 and fsl_sh[r] > 0:
+        fs_die(c3("cannot borrow_mut through ", fs_lname(r), c3(": it is already borrowed (at ", fs_where(fsl_bl[r]), ")")))
+    e(c3("mov ", str(fsl_o[r]), "(%rbp),%rax"))
+    i = 0
+    while i < fs_chn:
+        if fs_cho[i] == 0:
+            e("mov (%rax),%rax")
+        else:
+            e(c3("mov ", str(fs_cho[i]), "(%rax),%rax"))
+        i += 1
+    fp = q + 1
+    fs_ety = ft_bptr(ftel[fs_cht], 2 + k)
+    fs_mode = 0
+    if fs_argd > 0:
+        fs_tb_push(r, k)
+    else:
+        fs_bpend = r
+        fs_bpk = k
+    return 1
+
 def fs_borrow(k):
 # borrow(x) -> ref[T], borrow_mut(x) -> mut[T]; x is an own[T] (or, for borrow, a mut[T]) local
     global fp, fs_ety, fs_mode, fs_bpend, fs_bpk
@@ -17650,6 +17710,8 @@ def fs_borrow(k):
     if tk[fp] == K_ID:
         x = fs_local(tv[fp])
     fld = -1
+    if x >= 0 and fs_isop2(fp + 1, ".") and tk[fp + 2] == K_ID and not (fsk[fsl_t[x]] == 2 and fs_isop2(fp + 3, ")")):
+        return fs_rborrow(x, k)
     if x >= 0 and fs_isop2(fp + 1, ".") and tk[fp + 2] == K_ID and fs_isop2(fp + 3, ")"):
         if fsk[fsl_t[x]] != 2:
             fs_die("field borrowing requires a local struct")
@@ -17686,12 +17748,66 @@ def fs_borrow(k):
     return 1
 
 def fs_plmsg():
-    return "take()/replace()/swap() need a named place: an own/nown local, a direct own/nown field of a local struct, or an own/nown field through a local own[T]/mut[T] pointer"
+    return "take()/replace()/swap() need a named place: an own/nown local, a direct own/nown field of a local struct, or an own/nown field reached through own[T] fields from a local own[T]/mut[T] pointer or own field"
+
+def fs_chain(p, q, what):
+# Stage 3d: tokens [p, q) are `name.f1. ... .fn` (n >= 1) for a local name: resolve the owner path (fs_ch*). Every
+# step but the last must be an own[T] field: behind a pointer an own field is never empty, so the path always leads
+# to memory owned through its root; a nown step needs take() and a check first, raw/ref/mut fields are not followed.
+    global fs_chr, fs_chsg, fs_chn, fs_cht, fs_chslot
+    r = fs_local(tv[p])
+    t = fsl_t[r]
+    i = p + 2
+    fs_chslot = 0
+    fs_chn = 0
+    if fsk[t] == 2:
+        k = fs_field(t, tv[i])
+        z = -1
+        if ft_isowner(fft[k]):
+            z = fs_flocal(r, k)
+        if z < 0:
+            fs_die(c4(what, " on a local struct needs one of its direct own[T]/nown[T] fields (", c3(fsl_n[r], ".", tv[i]), ")"))
+        fs_chr = z
+        fs_chsg = 2
+        fs_cht = fft[k]
+        if i + 1 == q:
+            fs_chslot = 1
+            return 0
+        if ft_isnown(fft[k]):
+            fs_die("nown[T] may be none: take() it into a local and check it (if o != 0:) before reaching through it")
+        t = fft[k]
+        i += 2
+    elif fsk[t] == 1:
+        sg = ftsg[t]
+        if sg < 2:
+            fs_die(c3("cannot ", what, " through a raw ptr[T]/nptr[T], even in unsafe code: convert the pointer to own/mut[T] first"))
+        if sg == 5 and not fsl_nn[r]:
+            fs_die("nown[T] may be none: check it (if o != 0:) before a field access")
+        fs_chr = r
+        fs_chsg = sg
+    else:
+        fs_die(c3(what, " needs an owner path: ", fs_plmsg()))
+    while i < q:
+        if fsk[t] != 1 or fsk[ftel[t]] != 2:
+            fs_die(c3(what, " needs an owner path: ", fs_plmsg()))
+        k = fs_field(ftel[t], tv[i])
+        if fs_chn >= 64:
+            fs_die("owner path too long")
+        fs_cho[fs_chn] = ffo[k]
+        fs_chn += 1
+        t = fft[k]
+        if i + 1 < q and ft_isnown(t):
+            fs_die("nown[T] may be none: take() it into a local and check it (if o != 0:) before reaching through it")
+        if i + 1 < q and not (fsk[t] == 1 and ftsg[t] == 2):
+            fs_die(c3(what, " follows only own[T] fields to the place: ", fs_plmsg()))
+        i += 2
+    fs_cht = t
+    return 0
 
 def fs_place(p, nm):
-# Stage 3c: resolve the take/replace/swap operand at token p as a place (no code, no state change): a name or
-# `name.field`, ending at `,` or `)`. Anything else (a call, an index, an operator, parentheses, a global) is a
-# value, not a place. Returns the token after the place; sets fs_plk/fs_plr/fs_pll/fs_plo/fs_ploff/fs_plt.
+# Stage 3c: resolve the take/replace/swap operand at token p as a place (no code, no state change): a name or an
+# owner path `name.f1. ... .fn` (fs_chain), ending at `,` or `)`. Anything else (a call, an index, an operator,
+# parentheses, a global) is a value, not a place. Returns the token after the place; sets fs_plk/fs_plr/fs_pll/fs_plo/fs_ploff/fs_plt.
     global fs_plk, fs_plr, fs_pll, fs_plo, fs_ploff, fs_plt
     q = p + 1
     while fs_isop2(q, ".") and tk[q + 1] == K_ID:
@@ -17712,41 +17828,24 @@ def fs_place(p, nm):
         fs_plo = fsl_o[r]
         fs_plt = t
         return q
-    if fsk[t] == 2:
-    # a local struct: only its direct owner fields have Stage 2 state slots
-        k = fs_field(t, tv[p + 2])
-        if q != p + 3 or not ft_isowner(fft[k]):
-            fs_die(c3(nm, "() on a local struct needs one of its direct own[T]/nown[T] fields (", c3(fsl_n[r], ".", concat(tv[p + 2], ")"))))
-        z = fs_flocal(r, k)
-        if z < 0:
-            fs_die(fs_plmsg())
+    # Stage 3d: a longer path (q.head.slot, p.head.next) follows own fields from its root (fs_chain)
+    fs_chain(p, q, concat(nm, "()"))
+    if fs_chslot:
         fs_plk = 1
-        fs_pll = z
-        fs_plo = fsl_o[z]
-        fs_plt = fft[k]
+        fs_pll = fs_chr
+        fs_plo = fsl_o[fs_chr]
+        fs_plt = fs_cht
         return q
-    if fsk[t] != 1:
-        fs_die(fs_plmsg())
-    sg = ftsg[t]
-    if sg == 3:
-        fs_die(c4("cannot ", nm, "() through ", concat(fs_lname(r), ": a ref[T] is a shared borrow (use borrow_mut / mut[T])")))
-    if sg < 2:
-        fs_die(c3("cannot ", nm, "() through a raw ptr[T]/nptr[T], even in unsafe code: convert the pointer to own/mut[T] first"))
-    if sg == 5 and not fsl_nn[r]:
-        fs_die("nown[T] may be none: check it (if o != 0:) before a field access")
-    # owner-bearing structs never nest (fs_type refuses them), so the place is one field of the pointee
-    st = ftel[t]
-    if q != p + 3 or fsk[st] != 2:
-        fs_die(fs_plmsg())
-    k = fs_field(st, tv[p + 2])
-    fs_ploff = ffo[k]
-    st = fft[k]
-    if not ft_isowner(st):
-        fs_die(c4(nm, "() needs an own[T] or nown[T] place, not the field ", c3(fsl_n[r], ".", tv[p + 2]), ""))
+    if fs_chsg == 3:
+        fs_die(c4("cannot ", nm, "() through ", concat(fs_lname(fs_chr), ": a ref[T] is a shared borrow (use borrow_mut / mut[T])")))
+    if not ft_isowner(fs_cht):
+        fs_die(c4(nm, "() needs an own[T] or nown[T] place, not the field ", c3(fsl_n[r], ".", tv[q - 1]), ""))
     fs_plk = 2
+    fs_plr = fs_chr
     fs_pll = -1
-    fs_plo = fsl_o[r]
-    fs_plt = st
+    fs_plo = fsl_o[fs_chr]
+    fs_ploff = fs_cho[fs_chn - 1]
+    fs_plt = fs_cht
     return q
 
 def fs_plchk(nm):
@@ -17760,6 +17859,8 @@ def fs_plchk(nm):
     if fs_plk == 2:
         if fsl_sh[r] > 0:
             fs_die(c4("cannot ", nm, "() through ", c3(fs_lname(r), " while it is borrowed (at ", concat(fs_where(fsl_bl[r]), ")"))))
+        if fsl_mv[r] == -1:
+            fs_die(concat("use of uninitialised field ", fs_lname(r)))
         if fsl_mv[r] > 0:
             fs_die(c4("use of moved value ", fs_lname(r), " (moved at ", concat(fs_where(fsl_mv[r]), ")")))
         return 0
@@ -17772,12 +17873,23 @@ def fs_plchk(nm):
         fs_die(c4("use of moved value ", fs_lname(x), " (moved at ", c3(fs_where(fsl_mv[x]), "): ", concat(nm, "() needs an initialised place"))))
     return 0
 
+def fs_plbase():
+# %rcx = the struct holding a pointer place: the root's value, then each own field above the place in turn
+    e(c3("mov ", str(fs_plo), "(%rbp),%rcx"))
+    i = 0
+    while i < fs_chn - 1:
+        if fs_cho[i] == 0:
+            e("mov (%rcx),%rcx")
+        else:
+            e(c3("mov ", str(fs_cho[i]), "(%rcx),%rcx"))
+        i += 1
+
 def fs_plld(r):
 # load the resolved place into register r (a pointer place uses %rcx for its base)
     if fs_plk == 1:
         e(c4("mov ", str(fs_plo), "(%rbp),", r))
         return 0
-    e(c3("mov ", str(fs_plo), "(%rbp),%rcx"))
+    fs_plbase()
     if fs_ploff == 0:
         e(concat("mov (%rcx),", r))
     else:
@@ -17788,7 +17900,7 @@ def fs_plst(r):
     if fs_plk == 1:
         e(c4("mov ", r, ",", concat(str(fs_plo), "(%rbp)")))
         return 0
-    e(c3("mov ", str(fs_plo), "(%rbp),%rcx"))
+    fs_plbase()
     if fs_ploff == 0:
         e(c3("mov ", r, ",(%rcx)"))
     else:
@@ -18479,6 +18591,9 @@ def fs_postfix():
     w = fs_fwriting
     fs_fwriting = 0
     vr = 0
+    # Stage 3d: pv is the root local of the owner path being followed (after p.head or q.head reached as a place),
+    # so a further own field (p.head.next) is a place of the same root; -1 once anything else intervenes
+    pv = -1
     base = ""
     if tk[fp] == K_ID:
         base = tv[fp]
@@ -18542,6 +18657,7 @@ def fs_postfix():
             fs_mode = 1
             fs_ety = el
             base = ""
+            pv = -1
         elif fs_isop("."):
             fp += 1
             t = fs_ety
@@ -18568,6 +18684,8 @@ def fs_postfix():
                 pl = -1
                 if len(base) > 0:
                     pl = fs_local(base)
+                elif pv >= 0:
+                    pl = pv
                 if pl >= 0 and fsk[fsl_t[pl]] == 1:
                     sg = ftsg[fsl_t[pl]]
                     if sg < 2:
@@ -18580,6 +18698,7 @@ def fs_postfix():
                     # The field's address remains a place; the subsequent postfix may access
                     # members of its pointee, but cannot copy the owner itself.
                     base = ""
+                    pv = pl
                     if ffo[k] != 0:
                         e(c3("add $", str(ffo[k]), ",%rax"))
                     fs_mode = 1
@@ -18612,7 +18731,16 @@ def fs_postfix():
                             fs_die(concat("field is borrowed ", fs_lname(z)))
                     else:
                         fs_lchk(z, 0)
+                # Stage 3d: q.head.next continues an owner path rooted at the slot q.head
+                base = ""
+                if ffo[k] != 0:
+                    e(c3("add $", str(ffo[k]), ",%rax"))
+                fs_mode = 1
+                fs_ety = fft[k]
+                pv = z
+                continue
             base = ""
+            pv = -1
             if ffo[k] != 0:
                 e(c3("add $", str(ffo[k]), ",%rax"))
             fs_mode = 1

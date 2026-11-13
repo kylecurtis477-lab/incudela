@@ -1,0 +1,7 @@
+13 shared borrow of h.head held in a local
+224 borrow_mut(h.head) then nested reads
+4305 borrows two levels down through mut[T]
+7 write through the chain is visible
+985 replace/swap/take on nested nown places
+747 chain from a local struct field
+4 done

@@ -54,6 +54,11 @@ if $FC take_shadow_ok.forge $T/tks.s && ../../build/fas -o $T/tks.o $T/tks.s && 
 else
     echo "FAIL own-take-shadow-ok"; fail=1
 fi
+if $FC rborrow_ok.forge $T/rb.s && ../../build/fas -o $T/rb.o $T/rb.s && ../../build/fld -o $T/rb $T/rb.o && $T/rb | diff -q - rborrow_ok.expected >/dev/null; then
+    echo "PASS own-rborrow-ok"
+else
+    echo "FAIL own-rborrow-ok"; fail=1
+fi
 for f in bad_*.forge; do
     want=$(sed -n 's/^# expect: //p' $f)
     out=$($FC $f $T/x.s 2>&1)

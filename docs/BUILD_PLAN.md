@@ -267,6 +267,25 @@ count stays at or under 709.
      node has two owners. Now `fs_plpre` compares the two operands' token paths: same root name and one path a prefix
      of the other is refused ("needs two disjoint places: one is reached through the other"; equal paths keep "both
      name the same one"). Tests: bad_swap_local_child, bad_swap_nown_child; tests/own 155 checks.
+     *Status (3d): done (2026-11-13).* Borrows of owner-field paths are recorded on the root local (`fs_rborrow`):
+     `borrow(p.head)` / `borrow_mut(p.head.next)` through a local `own`/`mut`/`ref` pointer, a narrowed `nown`, or a
+     Stage 2 own field of a local struct (`l.head.next`, recorded on the field slot). The root then takes the
+     existing borrow bookkeeping: a shared borrow refuses moving, reassigning, writing through, passing as `mut[T]`
+     and `take`/`replace`/`swap` on it; a mutable borrow refuses every use; call-argument borrows end at the call,
+     borrow locals at their block. `fs_chain` resolves nested paths for reads/writes, borrows and the place
+     intrinsics: every intermediate step must be an `own` field (a `nown` step can be none: take it into a local and
+     check it), `borrow_mut` through a `ref` root and writes under a `ref` root are refused, raw `ptr`/`nptr` roots
+     stay refused even in unsafe code, and moving or storing a nested owner still needs `take`/`replace`. `swap`
+     keeps the prefix rule (`swap(p.head.slot, p.head.next.slot)` is fine, `swap(p.head, p.head.next)` is not).
+     Soundness rests on: a returned borrow is refused, different root locals never alias (unique own, exclusive mut),
+     and an own field behind an own/mut root is always live (3c invariant), so a borrow of a path cannot outlive or
+     be invalidated through its root. Code is plain loads (`mov off(%rax),%rax` / `mov off(%rcx),%rcx` per step); no
+     runtime checks, no unsafe operations, kernel and user assembly byte-identical, unsafe report 708. Tests:
+     rborrow_ok (borrow locals and call borrows through own/mut/ref roots, two-level chains, nested
+     take/replace/swap, a local struct root) and 8 compile-fail cases (bad_rborrow_*); bad_ptr_field_nested now
+     checks a write under a ref root. tests/own 164 checks. Adversarial set /workspace/chatgpt/stage3d/adv: 52
+     programs (41 must-reject, 11 must-accept), all as expected. Not in 3d: `nown` globals/arrays and element places
+     (`rq[i]`), borrows through `[i]`.
    - *Next Stage 3 steps (from ChatGPT's design note, in order; each its own gated commit):*
      (3b) `nown[T]`, a nullable affine owner: the only owner type allowed in zero-initialised storage (globals,
      arrays, kexec records), with a null check before use; arrays of owners return as arrays of `nown[T]`.
@@ -277,13 +296,13 @@ count stays at or under 709.
      kind) so a move through `mut[S]` is legal exactly when the slot never stays empty; through `ref[S]` never.
      *3c is done (above) for named places; element places of `nown` arrays come with `nown` globals/arrays.*
      (3d) Borrowing `p.head` records the borrow on the pointer root `p` and releases it at the call or block end;
-     nested owner fields through pointers (`p.head.next`) follow from provenance. (3e) Run queue: one ownership
-     transfer point between the queue and `current[cpu]` (no owning queue entry while a thread runs), tail
-     links stay non-owning, and `rq_push(ptr[Thread])`/`rq_pop() -> u64` become `rq_push(own[Thread])`/
-     `rq_pop() -> nown[Thread]` in one coordinated API change. (3f) kexec/pstate handoff records: owner-bearing
-     typed records proved layout-compatible at every offset across the old and new kernel, adopted once by the
-     receiver and released by `kx_release`; no casting the raw region into several owning pointers. The kernel
-     unsafe count stays at or under 709 through all of it.
+     nested owner fields through pointers (`p.head.next`) follow from provenance. *3d is done (above).* (3e) Run
+     queue: one ownership transfer point between the queue and `current[cpu]` (no owning queue entry while a thread
+     runs), tail links stay non-owning, and `rq_push(ptr[Thread])`/`rq_pop() -> u64` become `rq_push(own[Thread])`/
+     `rq_pop() -> nown[Thread]` in one coordinated API change. (3f) kexec/pstate handoff records: owner-bearing typed
+     records proved layout-compatible at every offset across the old and new kernel, adopted once by the receiver and
+     released by `kx_release`; no casting the raw region into several owning pointers. The kernel unsafe count stays
+     at or under 709 through all of it.
    - *Gate infrastructure (2026-11-13):* a box reset removed the QEMU/GRUB/xorriso/OVMF packages and failed a
      gate on setup, not code. tools/ostools.forge now checks the OS-test toolchain and reinstalls what is missing
      (signed Debian index and .debs fetched with curl, installed by apt offline); the gate harness runs it after
