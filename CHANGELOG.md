@@ -29,6 +29,10 @@
   globals, arrays or `take`/`replace`/`swap` yet.
 - `101c34c` tests: ChatGPT's 3b-min review probes (44 run, none wrongly accepted) pinned as 15 refusals and
   a runtime test; the loop false rejection is documented in SYSTEMS.md.
+- `4fb4c9b` Stage 3c (designed with ChatGPT, implemented here): `take(place)`, `replace(place, v)` and
+  `swap(a, b)` on named places (own/nown locals, Stage 2 fields, fields behind a local own/mut pointer);
+  the only way an owner moves into or out of a field behind a pointer. A condition calling one of them
+  proves nothing (found by the 78-program adversarial set).
 
 ### Optimizer: Phase 12.1 steps 4a-4c
 - `be09366` step 4a, `--fs-opt` promotes scalar locals in safe functions that also take frame addresses;
@@ -57,6 +61,10 @@
 - `36786ed` 2: `noalloc`/`noio`/`noreclaim` effect names reserved (grammar v1.3).
 - `b56affe` 3: an address-space ID in the device-grant ABI (drv 402); only 0 exists.
 - `43b38fa` 4: process-state v2 records carry a checksum next to their version.
+
+### Test infrastructure
+- `7e4cf93` fix(tests): bounds-bench-overhead takes the median of 21 pair ratios, each pair the best of 3
+  interleaved rounds per variant; the 5% limit is unchanged (inv156 failed at 6.95% with identical code).
 
 ### Plan and docs
 - `ce37b64` CHANGELOG.md for 0.17.2 through 0.18.0 and the start of 0.18.1.
