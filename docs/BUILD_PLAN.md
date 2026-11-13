@@ -260,6 +260,13 @@ count stays at or under 709.
      guarantee without a dangling pointer; with 3d's borrows of `m.head` it would let the callee `replace` and free a
      node a live `ref` points to. Now `fs_lchk` refuses it. Tests: bad_mut_pass_shared, bad_mut_pass_shared_arg;
      tests/own 153 checks.
+     *Fix to 3c (2026-11-13, found while designing 3d):* `swap` proved its places distinct by comparing (kind, root,
+     slot, offset), so an own/nown local and a field reached through that same local looked distinct: `swap(x,
+     x.next)` (and `swap(p.slot, p)` on a narrowed recursive `nown`) compiled. It loads both, stores `x.next`'s owner
+     into `x`, then resolves `x.next` again through the new `x` and stores the old `x` there: a cycle in which one
+     node has two owners. Now `fs_plpre` compares the two operands' token paths: same root name and one path a prefix
+     of the other is refused ("needs two disjoint places: one is reached through the other"; equal paths keep "both
+     name the same one"). Tests: bad_swap_local_child, bad_swap_nown_child; tests/own 155 checks.
    - *Next Stage 3 steps (from ChatGPT's design note, in order; each its own gated commit):*
      (3b) `nown[T]`, a nullable affine owner: the only owner type allowed in zero-initialised storage (globals,
      arrays, kexec records), with a null check before use; arrays of owners return as arrays of `nown[T]`.
