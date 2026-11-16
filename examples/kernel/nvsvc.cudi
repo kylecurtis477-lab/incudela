@@ -263,8 +263,8 @@ def nvs_swapper(arg: u64):
         irq_restore(f)
 
 def nvme_service_start(every: u64, crash: u64) -> u64:
-    nvs_img[1] = fs_read_file("EFI/Forge/bin/nvmed", addr(nvs_sz[1]))
-    nvs_img[2] = fs_read_file("EFI/Forge/bin/nvmed2", addr(nvs_sz[2]))
+    nvs_img[1] = fs_read_file("EFI/Incudela/bin/nvmed", addr(nvs_sz[1]))
+    nvs_img[2] = fs_read_file("EFI/Incudela/bin/nvmed2", addr(nvs_sz[2]))
     if nvs_img[1] == 0 or nvs_img[2] == 0:
         return 0
     nvs_state = NVS_MAGIC << 32

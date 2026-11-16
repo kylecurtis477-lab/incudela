@@ -51,6 +51,7 @@ tests/fld/run.sh || fail=1
 tests/krel/run.sh || fail=1
 tests/incudela-part/run.sh || fail=1
 tests/mkgpt/run.sh || fail=1
+tests/espmigrate/run.sh || fail=1
 tests/ed25519-tool/run.sh || fail=1
 tests/grammar-fuzz/run.sh || fail=1
 tests/mkfont/run.sh || fail=1

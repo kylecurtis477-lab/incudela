@@ -1045,7 +1045,7 @@ def iommu_dma_selftest():
 # policy is permissive: kernel drivers and drv 402 grants keep working with host physical
 # addresses, and the boot log says so. iommu_strict refuses drv 402 grants instead: drv_dma_check
 # returns EPERM. It starts at IOMMU_STRICT_DEFAULT; boot_policy (bootpol.cudi) then applies a sealed
-# \EFI\Forge\boot.cfg (either way) and the command line (`incudela.iommu=strict` only tightens).
+# \EFI\Incudela\boot.cfg (either way) and the command line (`incudela.iommu=strict` only tightens).
 IOMMU_STRICT_DEFAULT = 0
 iommu_strict: u64 = IOMMU_STRICT_DEFAULT
 POL_DEFAULT = 0

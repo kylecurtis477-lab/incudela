@@ -1,7 +1,7 @@
 # cuditor: no-runtime
 # cuditor: caps()
 # Phase 11.1c Linux-ABI file test (docs/linux-compat.md). Built and sealed like lxtest (EI_OSABI = 3,
-# runs only through `run lxfs`); its manifest grants one handle, fd 4 = /efi/forge/docs (dir).
+# runs only through `run lxfs`); its manifest grants one handle, fd 4 = /efi/incudela/docs (dir).
 # Raw Linux syscalls only: fstat on the console and the directory, getdents64 of the granted
 # directory (linux_dirent64 records), openat of a file under it + fstat + read, and the refusals:
 # AT_FDCWD, absolute and ".." paths (no ambient authority), write opens (EROFS), O_DIRECTORY on a
@@ -142,24 +142,24 @@ def lx_main(sp: u64):
     put("\n")
     flush()
     check(lsys(257, AT_FDCWD, u64("big.bin"), 0, 0, 0) == EACCES, "openat(AT_FDCWD) -> EACCES")
-    check(lsys(257, DOCS, u64("/efi/forge/bin/cat"), 0, 0, 0) == EACCES, "openat absolute -> EACCES")
+    check(lsys(257, DOCS, u64("/efi/incudela/bin/cat"), 0, 0, 0) == EACCES, "openat absolute -> EACCES")
     check(lsys(257, DOCS, u64("../bin/cat"), 0, 0, 0) == EACCES, "openat .. -> EACCES")
     check(lsys(257, DOCS, u64("big.bin"), 1, 0, 0) == EROFS, "openat O_WRONLY -> EROFS")
     check(lsys(257, DOCS, u64("big.bin"), 0x10000, 0, 0) == ENOTDIR, "openat O_DIRECTORY on a file -> ENOTDIR")
     check(lsys(257, DOCS, u64("nosuch"), 0, 0, 0) == ENOENT, "openat missing -> ENOENT")
     # 11.1e open(2): absolute paths at or under the granted directory's label only
-    o1 = lsys(2, u64("/efi/forge/docs/big.bin"), 0, 0, 0, 0)
-    o2 = lsys(2, u64("/efi/forge/docs"), 0x10000, 0, 0, 0)
+    o1 = lsys(2, u64("/efi/incudela/docs/big.bin"), 0, 0, 0, 0)
+    o2 = lsys(2, u64("/efi/incudela/docs"), 0x10000, 0, 0, 0)
     check(o1 < 64 and o2 < 64 and lsys(3, o1, 0, 0, 0, 0) == 0 and lsys(3, o2, 0, 0, 0, 0) == 0, "open absolute under / at the grant")
-    check(lsys(2, u64("/efi/forge/bin/cat"), 0, 0, 0, 0) == EACCES and lsys(2, u64("big.bin"), 0, 0, 0, 0) == EACCES, "open outside the grant / relative -> EACCES")
-    check(lsys(2, u64("/efi/forge/docs/../bin/cat"), 0, 0, 0, 0) == EACCES and lsys(2, u64("/efi/forge/docsx"), 0, 0, 0, 0) == EACCES, "open .. / label prefix -> EACCES")
-    check(lsys(2, u64("/efi/forge/docs/big.bin"), 0x241, 0, 0, 0) == EROFS and lsys(257, AT_FDCWD, u64("/efi/forge/docs/nosuch"), 0, 0, 0) == ENOENT, "open O_CREAT -> EROFS, openat(AT_FDCWD, abs) missing -> ENOENT")
+    check(lsys(2, u64("/efi/incudela/bin/cat"), 0, 0, 0, 0) == EACCES and lsys(2, u64("big.bin"), 0, 0, 0, 0) == EACCES, "open outside the grant / relative -> EACCES")
+    check(lsys(2, u64("/efi/incudela/docs/../bin/cat"), 0, 0, 0, 0) == EACCES and lsys(2, u64("/efi/incudela/docsx"), 0, 0, 0, 0) == EACCES, "open .. / label prefix -> EACCES")
+    check(lsys(2, u64("/efi/incudela/docs/big.bin"), 0x241, 0, 0, 0) == EROFS and lsys(257, AT_FDCWD, u64("/efi/incudela/docs/nosuch"), 0, 0, 0) == ENOENT, "open O_CREAT -> EROFS, openat(AT_FDCWD, abs) missing -> ENOENT")
     # 11.1e stat(2): same path rules as open, then fstat
-    check(lsys(4, u64("/efi/forge/docs/big.bin"), u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x8000 and st[6] == 98304, "stat file")
-    check(lsys(4, u64("/efi/forge/docs"), u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x4000, "stat granted dir")
-    check(lsys(4, u64("/efi/forge/bin/cat"), u64(addr(st[0])), 0, 0, 0) == EACCES and lsys(4, u64("/efi/forge/docs/nosuch"), u64(addr(st[0])), 0, 0, 0) == ENOENT, "stat outside -> EACCES, missing -> ENOENT")
-    check(lsys(4, u64("/efi/forge/docs/big.bin"), 0x10, 0, 0, 0) == EFAULT, "stat bad buffer -> EFAULT")
-    check(lsys(6, u64("/efi/forge/docs/big.bin"), u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x8000 and st[6] == 98304 and lsys(6, u64("/efi/forge/bin/cat"), u64(addr(st[0])), 0, 0, 0) == EACCES, "lstat file, outside -> EACCES")
+    check(lsys(4, u64("/efi/incudela/docs/big.bin"), u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x8000 and st[6] == 98304, "stat file")
+    check(lsys(4, u64("/efi/incudela/docs"), u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x4000, "stat granted dir")
+    check(lsys(4, u64("/efi/incudela/bin/cat"), u64(addr(st[0])), 0, 0, 0) == EACCES and lsys(4, u64("/efi/incudela/docs/nosuch"), u64(addr(st[0])), 0, 0, 0) == ENOENT, "stat outside -> EACCES, missing -> ENOENT")
+    check(lsys(4, u64("/efi/incudela/docs/big.bin"), 0x10, 0, 0, 0) == EFAULT, "stat bad buffer -> EFAULT")
+    check(lsys(6, u64("/efi/incudela/docs/big.bin"), u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x8000 and st[6] == 98304 and lsys(6, u64("/efi/incudela/bin/cat"), u64(addr(st[0])), 0, 0, 0) == EACCES, "lstat file, outside -> EACCES")
     # 11.1e fcntl(72)
     check(lsys(72, 1, 3, 0, 0, 0) == 2 and lsys(72, DOCS, 3, 0, 0, 0) == 0, "F_GETFL console O_RDWR, docs O_RDONLY")
     check(lsys(72, DOCS, 2, 1, 0, 0) == 0 and lsys(72, DOCS, 1, 0, 0, 0) == 1 and lsys(72, DOCS, 2, 0, 0, 0) == 0 and lsys(72, DOCS, 1, 0, 0, 0) == 0, "F_SETFD / F_GETFD FD_CLOEXEC")
@@ -168,14 +168,14 @@ def lx_main(sp: u64):
     check(dfd >= 3 and dfd < 16 and dfd != DOCS and lsys(72, dfd, 1, 0, 0, 0) == 1 and lsys(3, dfd, 0, 0, 0, 0) == 0, "F_DUPFD_CLOEXEC")
     check(lsys(72, 1, 4, 0x800, 0, 0) == EINVAL and lsys(72, 1, 4, 2, 0, 0) == 0 and lsys(72, 99, 1, 0, 0, 0) == EBADF and lsys(72, DOCS, 999, 0, 0, 0) == EINVAL and lsys(72, DOCS, 0, 16, 0, 0) == EINVAL, "F_SETFL change -> EINVAL, no-op ok, EBADF, bad cmd / min -> EINVAL")
     # 11.1e dup2(33)
-    bf = lsys(2, u64("/efi/forge/docs/big.bin"), 0, 0, 0, 0)
+    bf = lsys(2, u64("/efi/incudela/docs/big.bin"), 0, 0, 0, 0)
     check(bf < 16 and lsys(33, bf, 12, 0, 0, 0) == 12 and lsys(5, 12, u64(addr(st[0])), 0, 0, 0) == 0 and st[6] == 98304, "dup2 to a free fd")
     check(lsys(72, 12, 2, 1, 0, 0) == 0 and lsys(33, DOCS, 12, 0, 0, 0) == 12 and lsys(5, 12, u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x4000 and lsys(72, 12, 1, 0, 0, 0) == 0, "dup2 over an open fd replaces it, clears FD_CLOEXEC")
     check(lsys(33, bf, bf, 0, 0, 0) == bf and lsys(33, 99, 5, 0, 0, 0) == EBADF and lsys(33, bf, 64, 0, 0, 0) == EBADF, "dup2 same fd, EBADF")
     check(lsys(3, 12, 0, 0, 0, 0) == 0 and lsys(3, bf, 0, 0, 0, 0) == 0, "dup2 copies close")
     put("lxfs: dup2: to a free fd, over an open fd (replaced, FD_CLOEXEC cleared), same fd, EBADF ok\n")
     # 11.1e lseek(8)
-    lf = lsys(2, u64("/efi/forge/docs/big.bin"), 0, 0, 0, 0)
+    lf = lsys(2, u64("/efi/incudela/docs/big.bin"), 0, 0, 0, 0)
     lb: u8[4]
     check(lf < 16 and lsys(8, lf, 100, 0, 0, 0) == 100 and lsys(0, lf, u64(addr(lb[0])), 1, 0, 0) == 1 and lb[0] == 188 and lsys(8, lf, 0, 1, 0, 0) == 101, "lseek SEEK_SET 100, read byte 188, SEEK_CUR")
     check(lsys(8, lf, 0xFFFFFFFFFFFFFFFD, 2, 0, 0) == 98301 and lsys(0, lf, u64(addr(lb[0])), 4, 0, 0) == 3 and lb[0] == 170 and lb[2] == 184, "lseek SEEK_END -3, read the last 3 bytes")

@@ -1,7 +1,7 @@
 # cuditor: no-runtime
-# forgex64.efi: native UEFI boot loader for the Incudela kernel, written in Cuditor (PE32+, EFI subsystem 10).
-# Lives in \EFI\Forge\ on an existing ESP next to Windows Boot Manager / shim / GRUB / systemd-boot and
-# only reads \EFI\Forge\kernel.elf from the same volume: nothing else on the disk is touched.
+# incudelax64.efi: native UEFI boot loader for the Incudela kernel, written in Cuditor (PE32+, EFI subsystem 10).
+# Lives in \EFI\Incudela\ on an existing ESP next to Windows Boot Manager / shim / GRUB / systemd-boot and
+# only reads \EFI\Incudela\kernel.elf from the same volume: nothing else on the disk is touched.
 #   1. read kernel.elf via LoadedImage -> SimpleFileSystem
 #   2. load PT_LOAD segments at a 2 MiB-congruent physical base (LoaderData pages below 1 GiB)
 #   3. GOP mode (1024x768 if offered) + framebuffer, ACPI RSDP from the configuration table
@@ -119,7 +119,7 @@ def print_hex(v: u64):
 
 @unsafe
 def fail(msg: ptr[u8], status: u64) -> u64:
-    print("forgex64: ")
+    print("incudelax64: ")
     print(msg)
     print(" status=")
     print_hex(status)
@@ -157,20 +157,30 @@ def read_kernel(image: u64, size_out: ptr[u64]) -> u64:
     st = call_efi(load64(sfs + 8), sfs, u64(addr(root)))
     if st != EFI_SUCCESS:
         return fail("OpenVolume failed", st) & 0
-    name = "/EFI/Forge/kernel.elf"
+    # \EFI\Incudela\ first; a disk not yet migrated by tools/espmigrate.cud still has the old \EFI\Forge\
     path: u16[64]
-    i = 0
-    while name[i] != 0:
-        c = u16(name[i])
-        if c == 47:
-            c = 92
-        path[i] = c
-        i += 1
-    path[i] = 0
     fh: u64 = 0
-    st = call_efi(load64(root + 8), root, u64(addr(fh)), u64(addr(path[0])), 1, 0)
+    k = 0
+    while k < 2:
+        name = "/EFI/Incudela/kernel.elf"
+        if k == 1:
+            name = "/EFI/Forge/kernel.elf"
+        i = 0
+        while name[i] != 0:
+            c = u16(name[i])
+            if c == 47:
+                c = 92
+            path[i] = c
+            i += 1
+        path[i] = 0
+        st = call_efi(load64(root + 8), root, u64(addr(fh)), u64(addr(path[0])), 1, 0)
+        if st == EFI_SUCCESS:
+            break
+        k += 1
     if st != EFI_SUCCESS:
-        return fail("cannot open \\EFI\\Forge\\kernel.elf", st) & 0
+        return fail("cannot open \\EFI\\Incudela\\kernel.elf (nor the old \\EFI\\Forge\\kernel.elf)", st) & 0
+    if k == 1:
+        print("Incudela UEFI loader: no \\EFI\\Incudela\\, booting the old \\EFI\\Forge\\kernel.elf\r\n")
     cap: u64 = 4 * 1024 * 1024
     buf = alloc_pages(cap / 4096, 0xFFFFFFFF)
     if buf == 0:

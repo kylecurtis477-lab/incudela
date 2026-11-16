@@ -4,6 +4,7 @@ fs_spc: u64
 fs_fat: u64  # FAT start LBA
 fs_data: u64  # cluster 2 LBA
 fs_root: u64
+fs_alias: u64  # 1 after fs_mount: EFI/Incudela may resolve to the old EFI/Forge (fs_lookup_at)
 fs_sec: u64  # scratch sector (kmalloc 512)
 fs_fatsec_lba: u64
 fs_fatsec: u64
@@ -78,6 +79,15 @@ def fs_mount() -> u64:
     puts(" sector(s)/cluster, root cluster ")
     put_u64(fs_root)
     putc(10)
+    # the ESP folder was \EFI\Forge\ before the Incudela rename; a disk tools/espmigrate.cud has not migrated
+    # yet is read through the alias in fs_lookup_at (EFI/Incudela -> EFI/Forge), never written
+    ent: u8[32]
+    fs_alias = 0
+    if fs_lookup("EFI/Incudela", u64(addr(ent[0]))) == 1:
+        puts("ESP: kernel files under \\EFI\\Incudela\\\n")
+    elif fs_lookup("EFI/Forge", u64(addr(ent[0]))) == 1:
+        puts("ESP: no \\EFI\\Incudela\\ yet, reading the old \\EFI\\Forge\\ (tools/espmigrate.cud migrates it)\n")
+    fs_alias = 1
     return 1
 
 def fat_next(c: u64) -> u64:
@@ -201,7 +211,8 @@ def name_eq(a: ptr[u8], b: ptr[u8], blen: u64) -> u64:
 def ent_cluster(ent: u64) -> u64:
     return (le16(ent + 20) << 16) | le16(ent + 26)
 
-# walks a path like "/EFI/Forge/bin/Read Me.txt" (case-insensitive, long names); returns 1 with the
+# walks a path like "/EFI/Incudela/bin/Read Me.txt" (case-insensitive, long names; EFI/Incudela falls back to the
+# old EFI/Forge, see fs_mount); returns 1 with the
 # entry in ent. The root itself ("" or "/") returns 2 (no entry).
 def fs_lookup(path: ptr[u8], ent: u64) -> u64:
     return fs_lookup_at(fs_root, path, ent)
@@ -215,21 +226,37 @@ def fs_lookup_at(c: u64, path: ptr[u8], ent: u64) -> u64:
         i += 1
     if path[i] == 0:
         return 2
+    d: u64 = 0
+    efi0: u64 = 0
     while 1:
         j = i
         while path[j] != 0 and path[j] != 47:
             j += 1
         found = 0
+        cp = ptr[u8](u64(path) + i)
         idx: u64 = 0
         while 1:
             idx = dir_next(c, idx, addr(nm[0]), ent)
             if idx == 0:
                 break
-            if name_eq(addr(nm[0]), ptr[u8](u64(path) + i), j - i):
+            if name_eq(addr(nm[0]), cp, j - i):
                 found = 1
                 break
+        # EFI/Incudela on a disk that still has only the old EFI/Forge (from the root only)
+        if found == 0 and fs_alias == 1 and d == 1 and efi0 == 1 and name_eq("Incudela", cp, j - i):
+            idx = 0
+            while 1:
+                idx = dir_next(c, idx, addr(nm[0]), ent)
+                if idx == 0:
+                    break
+                if name_eq(addr(nm[0]), "Forge", 5):
+                    found = 1
+                    break
         if found == 0:
             return 0
+        if d == 0 and c == fs_root and name_eq("EFI", cp, j - i):
+            efi0 = 1
+        d += 1
         while path[j] == 47:
             j += 1
         if path[j] == 0:

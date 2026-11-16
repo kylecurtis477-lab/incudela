@@ -46,18 +46,18 @@ def _start():
     ch: u64[2]
     h: u64 = 0
     b = u64(addr(buf[0]))
-    fd = sys_open("/efi/forge/docs/big.bin")
-    dir = sys_open("/efi/forge")
+    fd = sys_open("/efi/incudela/docs/big.bin")
+    dir = sys_open("/efi/incudela")
     each(SYS_READ, fd, 2, 512, 0)
     chk(SYS_READ, syscall3(SYS_READ, fd, b + 8, 0xFFFFFFFFFFFFFFF0))  # length wraps
     each(SYS_WRITE, 1, 2, 16, 0)
     each(SYS_OPEN, 0, 1, 0, 0)
     each(SYS_STAT, u64(addr(st[0])), 1, 0, 0)
-    chk(SYS_STAT, syscall3(SYS_STAT, u64("/efi/forge/docs/big.bin"), 0xFFFF800000001000, 0))
+    chk(SYS_STAT, syscall3(SYS_STAT, u64("/efi/incudela/docs/big.bin"), 0xFFFF800000001000, 0))
     each(SYS_GETDENTS, dir, 2, 512, 0)
     each(SYS_GETARGS, 64, 1, 0, 0)
     each(SYS_EXEC, 0, 1, 0, 0)
-    chk(SYS_EXEC, syscall3(SYS_EXEC, u64("/efi/forge/bin/hello"), 0xFFFF800000001000, 0))
+    chk(SYS_EXEC, syscall3(SYS_EXEC, u64("/efi/incudela/bin/hello"), 0xFFFF800000001000, 0))
     each(SYS_OPENAT, dir, 2, 0, 0)
     each(SYS_EXEC_SB, 0, 1, 0, 0)
     each(SYS_CHAN, 0, 1, 0, 0)

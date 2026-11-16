@@ -356,24 +356,24 @@ def seal_check(path: ptr[u8], want: u64) -> u64:
 
 def seal_test():
     n0 = seal_refused
-    seal_check("EFI/Forge/bin/hello", SEAL_OK)
-    seal_check("EFI/Forge/bin/cat", SEAL_OK | 1)
-    seal_check("EFI/Forge/bin/fault", SEAL_OK | 32)
-    if seal_check("EFI/Forge/bin/unsealed", 0) != 1:
+    seal_check("EFI/Incudela/bin/hello", SEAL_OK)
+    seal_check("EFI/Incudela/bin/cat", SEAL_OK | 1)
+    seal_check("EFI/Incudela/bin/fault", SEAL_OK | 32)
+    if seal_check("EFI/Incudela/bin/unsealed", 0) != 1:
         panic("unsealed image refused for the wrong reason")
-    if seal_check("EFI/Forge/bin/tampered", 0) != 5:
+    if seal_check("EFI/Incudela/bin/tampered", 0) != 5:
         panic("tampered image refused for the wrong reason")
-    if seal_check("EFI/Forge/bin/forged", 0) != 4:
+    if seal_check("EFI/Incudela/bin/forged", 0) != 4:
         panic("forged manifest refused for the wrong reason")
-    if seal_check("EFI/Forge/bin/linuxabi", 0) != 6:
+    if seal_check("EFI/Incudela/bin/linuxabi", 0) != 6:
         panic("Linux ABI image refused for the wrong reason")
     v0 = seal_v2_count
-    seal_check("EFI/Forge/bin/hellov2", SEAL_OK)
+    seal_check("EFI/Incudela/bin/hellov2", SEAL_OK)
     if seal_v2_count - v0 != 1:
         panic("v2 seal not read as v2")
-    if seal_check("EFI/Forge/bin/algbad", 0) != 9:
+    if seal_check("EFI/Incudela/bin/algbad", 0) != 9:
         panic("unknown signature algorithm refused for the wrong reason")
-    if seal_check("EFI/Forge/bin/proofset", 0) != 10:
+    if seal_check("EFI/Incudela/bin/proofset", 0) != 10:
         panic("filled proof slot refused for the wrong reason")
     if seal_refused - n0 != 6:
         panic("seal refusals not counted")
@@ -448,7 +448,7 @@ def cap_sys_deny(p: ptr[Proc], nr: u64, need: u64) -> u64:
 def cap_test():
 # a sealed program declaring only fs: open works, fork and probe are refused by syscall_dispatch
     sz: u64 = 0
-    buf = fs_read_file("EFI/Forge/bin/capdeny", addr(sz))
+    buf = fs_read_file("EFI/Incudela/bin/capdeny", addr(sz))
     if buf == 0:
         panic("cap test: capdeny missing")
     d0 = cap_sys_denials

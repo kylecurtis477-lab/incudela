@@ -33,7 +33,7 @@ def _start():
     while i < 2048:
         mem_set64(m + i * 8, pid * 0x9E3779B97F4A7C15 + i)
         i += 1
-    fd = sys_open("/efi/forge/docs/big.bin")
+    fd = sys_open("/efi/incudela/docs/big.bin")
     if is_err(fd):
         sys_exit(3)
     h: u64 = 0xcbf29ce484222325
@@ -61,7 +61,7 @@ def _start():
         h = fnv(h, n)
         tot += n
     sys_close(fd)
-    fd2 = sys_open("/efi/forge/docs/big.bin")
+    fd2 = sys_open("/efi/incudela/docs/big.bin")
     h2: u64 = 0xcbf29ce484222325
     t2: u64 = 0
     while 1:

@@ -70,8 +70,8 @@ def _start():
     out(" ticks\n")
     flush()
     # handle transfer
-    f = sys_openat(3, "efi/forge/docs/big.bin")
-    g = sys_openat(3, "efi/forge/docs/big.bin")
+    f = sys_openat(3, "efi/incudela/docs/big.bin")
+    g = sys_openat(3, "efi/incudela/docs/big.bin")
     if is_err(f) or is_err(g) or sys_read(g, u64(addr(refb[0])), 64) != 64:
         fail("open")
     nx = sys_dup(f, CAP_READ)

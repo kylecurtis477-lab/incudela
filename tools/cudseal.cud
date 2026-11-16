@@ -2,7 +2,7 @@
 # Seal proof manifests (Phase 6.1, Seal v3): Cuditor port of tools/cudseal.py, byte-identical output.
 #   cudseal [--module] [--v2] [--extra-key KEY2] [--alg-id N] [--proof-byte] SRC.cud IMAGE KEYFILE BASELINE
 #   cudseal --foreign IMAGE KEYFILE        level-3 seal of a Linux-ABI (EI_OSABI = 3) foreign ELF
-#   cudseal --config FILE KEYFILE          kind-2 seal of a boot config (\EFI\Forge\boot.cfg, bootpol.cudi)
+#   cudseal --config FILE KEYFILE          kind-2 seal of a boot config (\EFI\Incudela\boot.cfg, bootpol.cudi)
 #   cudseal --pub KEYFILE                  32-byte Ed25519 public key on stdout
 # Runs build/cudc SRC /dev/null --unsafe-report in SRC's directory (the verifier), checks the counts
 # against the audited BASELINE, reads `# cuditor: caps(...)` and appends the 384-byte v3 trailer (or

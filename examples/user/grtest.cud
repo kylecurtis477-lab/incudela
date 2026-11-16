@@ -1,8 +1,8 @@
 # cuditor: safe
 # cuditor: no-runtime
 # cuditor: caps(fs)
-# Phase 10.2: launched in the background by `run grtest &` through /efi/forge/apps/grtest.mf, so it
-# holds one grant (fd 4 = /efi/forge/docs/big.bin, read-only). It reads the first half, checking every
+# Phase 10.2: launched in the background by `run grtest &` through /efi/incudela/apps/grtest.mf, so it
+# holds one grant (fd 4 = /efi/incudela/docs/big.bin, read-only). It reads the first half, checking every
 # byte, announces "halfway", then keeps polling the handle with zero-length reads while sh lists the
 # ledger and runs `revoke grtest`. The revocation must cut it off mid-file: the next read on fd 4 and on
 # a dup made before the revocation both fail with EACCES, and dup itself is refused.

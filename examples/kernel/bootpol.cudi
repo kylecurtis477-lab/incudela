@@ -3,7 +3,7 @@
 # remapping unit. Three inputs, applied in this order by boot_policy (called from fs_test once the ESP is
 # mounted, before any user-mode driver starts):
 #   1. the build default, IOMMU_STRICT_DEFAULT (unchanged: permissive);
-#   2. \EFI\Forge\boot.cfg, only when it carries a valid kind-2 seal (cudseal --config, checked by
+#   2. \EFI\Incudela\boot.cfg, only when it carries a valid kind-2 seal (cudseal --config, checked by
 #      image_verify with SEAL_CONFIG): `iommu=strict` or `iommu=permissive` may set the policy either way.
 #      An unsealed, tampered or malformed config is refused whole and logged; the policy stays as it was;
 #   3. the boot command line (bi.cmdline: the multiboot2 tag, kept across kexec): `incudela.iommu=strict`
@@ -103,14 +103,14 @@ def cfg_line_eq(buf: u64, s: u64, n: u64, lit: ptr[u8]) -> u64:
     return ffs_ch(lit, n) == 0
 
 def pol_config() -> u64:
-# PCFG_* from a sealed \EFI\Forge\boot.cfg; PCFG_NONE when absent or refused (logged either way)
+# PCFG_* from a sealed \EFI\Incudela\boot.cfg; PCFG_NONE when absent or refused (logged either way)
     sz: u64 = 0
-    buf = fs_read_file("EFI/Forge/boot.cfg", addr(sz))
+    buf = fs_read_file("EFI/Incudela/boot.cfg", addr(sz))
     if buf == 0:
-        puts("boot policy: no \\EFI\\Forge\\boot.cfg\n")
+        puts("boot policy: no \\EFI\\Incudela\\boot.cfg\n")
         return PCFG_NONE
     if image_verify(buf, sz, SEAL_CONFIG) == 0:
-        puts("boot policy: \\EFI\\Forge\\boot.cfg refused (")
+        puts("boot policy: \\EFI\\Incudela\\boot.cfg refused (")
         puts(seal_reason(seal_why))
         puts("), ignored\n")
         kfree(buf)
@@ -145,9 +145,9 @@ def pol_config() -> u64:
             bad = 1
     kfree(buf)
     if bad != 0:
-        puts("boot policy: \\EFI\\Forge\\boot.cfg is sealed but malformed (unknown or repeated line), ignored\n")
+        puts("boot policy: \\EFI\\Incudela\\boot.cfg is sealed but malformed (unknown or repeated line), ignored\n")
         return PCFG_NONE
-    puts("boot policy: sealed \\EFI\\Forge\\boot.cfg verified: ")
+    puts("boot policy: sealed \\EFI\\Incudela\\boot.cfg verified: ")
     if r == PCFG_STRICT:
         puts("iommu=strict\n")
     elif r == PCFG_PERMISSIVE:

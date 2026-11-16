@@ -1,8 +1,8 @@
 # cuditor: safe
 # cuditor: no-runtime
 # cuditor: caps(fs, spawn)
-# Phase 5.3: launched by `sh: run sbtest` through /efi/forge/apps/sbtest.mf. It holds exactly the
-# manifest's handles (fd 4 = /efi/forge/bin/hello read-only, fd 5 = /efi/forge/docs lookup) and
+# Phase 5.3: launched by `sh: run sbtest` through /efi/incudela/apps/sbtest.mf. It holds exactly the
+# manifest's handles (fd 4 = /efi/incudela/bin/hello read-only, fd 5 = /efi/incudela/docs lookup) and
 # nothing else: no root capability, so any other path is denied (and the kernel logs it).
 include "ulib.cudi"
 
@@ -38,12 +38,12 @@ def _start():
         fail("escape from granted dir")
     out("sbtest: manifest handles work: file read-only, dir lookup confined\n")
     flush()
-    if sys_open("/efi/forge/bin/cat") != EACCES:
+    if sys_open("/efi/incudela/bin/cat") != EACCES:
         fail("open outside manifest")
     st: u64[2]
-    if sys_stat("/efi/forge/kernel.elf", addr(st[0])) != EACCES:
+    if sys_stat("/efi/incudela/kernel.elf", addr(st[0])) != EACCES:
         fail("stat outside manifest")
-    if sys_exec("/efi/forge/bin/hello", "x") != EACCES:
+    if sys_exec("/efi/incudela/bin/hello", "x") != EACCES:
         fail("exec outside manifest")
     out("sbtest: access outside the manifest denied (open, stat, exec)\n")
     out("sbtest: PASS\n")

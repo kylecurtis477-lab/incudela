@@ -3,7 +3,7 @@
 # Two ways in:
 #  * multiboot2 (GRUB on BIOS or UEFI): 32-bit protected mode at _start (low, identity-linked .boot section).
 #    The trampoline maps 0..1 GiB both at 0 and at -2 GiB with 2 MiB pages, enters long mode and jumps high.
-#  * forgex64.efi loader (native UEFI, after ExitBootServices): already in long mode with the loader's
+#  * incudelax64.efi loader (native UEFI, after ExitBootServices): already in long mode with the loader's
 #    page tables (identity 0..4 GiB + -2 GiB -> kernel phys); it finds `kentry64` through the FORGEKRN header
 #    and calls it with rdi = physical address of a BootInfo.
 asm(

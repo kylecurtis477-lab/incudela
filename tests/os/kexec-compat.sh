@@ -10,7 +10,8 @@
 #                         both kernels trust the same images; the old kernel differs from this tree's kernel.elf
 #   kexec-old-to-new      BIOS boot of the old ISO, the usual shell session, `kexec next` into the new kernel
 #                         (generation 1) and again (generation 2), with the processes, the fd and the input
-#                         service state carried across
+#                         service state carried across; the old ESP still has \EFI\Forge\ only, so the new
+#                         kernel also shows it reads that layout through its EFI/Incudela -> EFI/Forge alias
 # KXC_BUILD_ONLY=1 stops after the build (no QEMU).
 cd "$(dirname "$0")/../.."
 OLD=${KXC_OLD:-61b3e85}
@@ -59,6 +60,6 @@ echo "PASS os/kexec-compat-build (old $OLD = $(git rev-parse --short "$OLD"), ke
 VD="-drive file=$T/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio-blk-pci,drive=vd"
 M="multiboot2 (BIOS)|kernel version: forge-kernel 0.2.6|KERNEL OK|kexec: generation 1 kernel (kernel-next.elf) loaded at"
 M="$M|kexec: handoff format v5 from forge-kernel 0.2.6 (this kernel, incudela-kernel 0.2.6-next, adopts v5..v5)"
-M="$M|kexec: generation 1 kernel adopted|hashes ok; handoff region|sh: survived kexec: |hello: args = 'after kexec'"
+M="$M|ESP: no \\EFI\\Incudela\\ yet, reading the old \\EFI\\Forge\\ (tools/espmigrate.cud migrates it)|kexec: generation 1 kernel adopted|hashes ok; handoff region|sh: survived kexec: |hello: args = 'after kexec'"
 M="$M|driver state carried across kexec OK|kexec handoff OK|kexec: generation 2 kernel adopted"
 FORGE_BOOT_KEXEC=2 $B kexec-old-to-new $L/kxcompat.log 200 "$M" "$FB" -- $Q $VD -boot d -cdrom $O/build/kernel/forge.iso

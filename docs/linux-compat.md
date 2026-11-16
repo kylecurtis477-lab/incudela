@@ -15,7 +15,7 @@ A Linux image is one whose ELF header says EI_OSABI = 3. It runs only if **all**
 2. The Linux layer is up (`compat_sandbox_ready`, set by `lx_init` at boot).
 3. It was launched **in the compat sandbox**: sh `run app`, i.e. syscall 426 (exec with sandbox),
    which verifies with `SEAL_USER | SEAL_COMPAT`. The process gets only the handles its
-   `/efi/forge/apps/<app>.mf` manifest grants (Phase 5.3 / 10.2), plus its sealed capabilities.
+   `/efi/incudela/apps/<app>.mf` manifest grants (Phase 5.3 / 10.2), plus its sealed capabilities.
 
 Every other path still refuses it with reason 6 ("Linux ABI image needs the compatibility sandbox"):
 plain `exec` from sh, the boot loader's init, the seal self-test (`linuxabi`). Today the only Linux
@@ -133,7 +133,7 @@ AT_RANDOM bytes are rdtsc-seeded splitmix64. That is enough for a test program's
 `_start` hands rsp to `lx_main`, and every call is a raw `syscall` with Linux numbers. build.sh
 compiles it with cudc/fas/fld, sets EI_OSABI = 3, then seals it. tests/os/run.sh checks:
 
-- `lxtest` from plain sh -> `verify: /efi/forge/bin/lxtest refused: Linux ABI image needs the compatibility sandbox`
+- `lxtest` from plain sh -> `verify: /efi/incudela/bin/lxtest refused: Linux ABI image needs the compatibility sandbox`
 - `run lxtest` -> argc/argv, 9 auxv entries (AT_PAGESZ, AT_ENTRY == &_start, AT_SECURE, AT_RANDOM),
   brk grow/touch/shrink, mmap/munmap, the PROT_EXEC and MAP_FIXED refusals, TCGETS/TIOCGWINSZ,
   ENOTTY/EBADF, getpid/gettid/set_tid_address/getppid, 12 registers preserved across a syscall,
@@ -154,7 +154,7 @@ from the handle's type, size and first cluster.
 
 ## Test: lxfs
 
-`run lxfs` (manifest `examples/apps/lxfs.mf`: `dir /efi/forge/docs`, fd 4) fstats the console
+`run lxfs` (manifest `examples/apps/lxfs.mf`: `dir /efi/incudela/docs`, fd 4) fstats the console
 (S_IFCHR) and the dir (S_IFDIR), lists it with getdents64 (2 records: `Long File Name Notes.txt`,
 `big.bin`, both DT_REG; a second call returns 0), opens `big.bin` with openat + O_CLOEXEC, fstats it
 (S_IFREG, 98304 bytes) and reads 4096 bytes, then checks the refusals: AT_FDCWD, absolute and `..`
@@ -185,11 +185,11 @@ yet).
 
 ## Test: lxexec
 
-`run lxexec` (manifest `examples/apps/lxexec.mf`: `dir /efi/forge/bin`, fd 4) runs three images in
+`run lxexec` (manifest `examples/apps/lxexec.mf`: `dir /efi/incudela/bin`, fd 4) runs three images in
 one process. Stage 1 checks the refusals (Forge `cat`, `unsealed`, `tampered` -> ENOEXEC;
-`/efi/forge/docs/big.bin`, a relative path, `..`, AT_FDCWD -> EACCES; bad path / argv pointers ->
+`/efi/incudela/docs/big.bin`, a relative path, `..`, AT_FDCWD -> EACCES; bad path / argv pointers ->
 EFAULT; an argument with a space -> EINVAL), opens `hello` twice (once O_CLOEXEC) and execve()s
-`/efi/forge/bin/lxexec stage2 ...`. Stage 2 checks the same pid, the O_CLOEXEC fd gone (EBADF), the
+`/efi/incudela/bin/lxexec stage2 ...`. Stage 2 checks the same pid, the O_CLOEXEC fd gone (EBADF), the
 plain fd and fd 4 still there, AT_FDCWD still refused, then `execveat(4, "lxexec")` -> stage 3, which
 checks fexecve (AT_EMPTY_PATH) of the held Forge `hello` -> ENOEXEC and an unknown flag -> EINVAL.
 21 checks across the three images.
@@ -253,6 +253,6 @@ BusyBox is built from source only; no prebuilt third-party binary is used.
 - Host compiler: Debian gcc 14.2.0, used to build make and musl; BusyBox is compiled with `musl-gcc --static`. bzip2 decompression uses Python's bz2 (`tools/busybox/bzip2` shim). The build runs as `build/busybox-build` (tools/busybox/build.cud); `tools/busybox/build.sh` is kept as the reference.
 - Config: `tools/busybox/busybox.config` (allnoconfig + a small applet set).
 - Image: static EXEC at 0x400000, EI_OSABI set to 3, sealed `cudseal.py --foreign` (level 3, unsafe 0, caps 0). `image_verify` refuses a level-3 seal on anything but a capability-free Linux image (reason 8); the 6.4 gate still refuses it outside the compat sandbox.
-- Manifest `examples/apps/busybox.mf`: one `dir /efi/forge/docs` grant.
+- Manifest `examples/apps/busybox.mf`: one `dir /efi/incudela/docs` grant.
 
-Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; seq, expr now work; lxtest checks it); uname 63 (11.1e part 3: sysname Linux, nodename forge, release 0.2.6-forge, machine x86_64; `uname -s -m` works). open 2 (11.1e part 4: absolute paths under a grant; wc, sha256sum and cat of granted files work, a file outside is EACCES). stat 4 (11.1e part 5; `ls` of a directory outside the grant -> Permission denied). lstat 6 (11.1e part 6; same as stat, no symlinks). fcntl 72 (11.1e part 7; `ls` of the granted directory and `printf` work). getcwd 79 (11.1e part 8; `pwd` prints /). nanosleep 35 (11.1e part 9; `sleep 1` works). geteuid 107 (11.1e part 10; ash starts without an ENOSYS, `sh -c exit 3` exits 3). dup2 33 (11.1e part 11; ash `<` / `>` redirections). lseek 8 (11.1e part 12; `tail` works). ppoll 271 (11.1e part 13; ash's `read` builtin). 11.1 accepted: `busybox sh /efi/forge/docs/hello.sh` (functions, loops, arithmetic, case, test, a `while read` over a redirected file, printf) runs to completion in the sandbox; the config also enables grep, test and head/tail options. Ash cannot run external commands or pipelines yet (needs fork, pipe 22).
+Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; seq, expr now work; lxtest checks it); uname 63 (11.1e part 3: sysname Linux, nodename forge, release 0.2.6-forge, machine x86_64; `uname -s -m` works). open 2 (11.1e part 4: absolute paths under a grant; wc, sha256sum and cat of granted files work, a file outside is EACCES). stat 4 (11.1e part 5; `ls` of a directory outside the grant -> Permission denied). lstat 6 (11.1e part 6; same as stat, no symlinks). fcntl 72 (11.1e part 7; `ls` of the granted directory and `printf` work). getcwd 79 (11.1e part 8; `pwd` prints /). nanosleep 35 (11.1e part 9; `sleep 1` works). geteuid 107 (11.1e part 10; ash starts without an ENOSYS, `sh -c exit 3` exits 3). dup2 33 (11.1e part 11; ash `<` / `>` redirections). lseek 8 (11.1e part 12; `tail` works). ppoll 271 (11.1e part 13; ash's `read` builtin). 11.1 accepted: `busybox sh /efi/incudela/docs/hello.sh` (functions, loops, arithmetic, case, test, a `while read` over a redirected file, printf) runs to completion in the sandbox; the config also enables grep, test and head/tail options. Ash cannot run external commands or pipelines yet (needs fork, pipe 22).

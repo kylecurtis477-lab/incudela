@@ -167,7 +167,7 @@ gate, are pinned by `examples/user/captest.cud` (`captest: PASS`) and `capdeny` 
 gate: undeclared spawn and probe denied at the syscall boundary`). Channel move, XFER, EOF on
 peer close, and `EFAULT` leaving a message queued are pinned by `chantest.cud` (`chantest: PASS`)
 and `badptr`. Grants and revocation: `sbtest: PASS`, `grtest:` mid-read cut-off, `audit: ledger
-check`. W^X in user space: `wxtest: PASS`. Sealed images: boot lines `verify: /efi/forge/bin/unsealed
+check`. W^X in user space: `wxtest: PASS`. Sealed images: boot lines `verify: /efi/incudela/bin/unsealed
 refused: no proof manifest`, `tampered` / `forged` / `linuxabi` refusals; `os/seal-private-key-not-shipped`;
 `tests/ed25519/run.sh` and `tests/cudseal/run.sh`.
 
@@ -187,7 +187,7 @@ Incudela FS and the object store have their own result names (`os/drivers`, `os/
 following. Also required: `os/boot-harness-self-test` (the harness's own stall and drain checks, no QEMU),
 `os/drivers-no-disk-write` (the driver boot leaves its disk image byte-identical), the boot-policy boots
 `os/bootpol-cmdline-strict`, `os/bootpol-config-strict` and `os/bootpol-iommu-kexec` (tests/os/bootpol.sh: the
-sealed `\EFI\Forge\boot.cfg` and `incudela.iommu=strict` only tighten the DMA policy, also across kexec),
+sealed `\EFI\Incudela\boot.cfg` and `incudela.iommu=strict` only tighten the DMA policy, also across kexec),
 `dwarf/image-unchanged-by-g`, `dwarf/line-table` and `dwarf/gdb-schedule` (`-g` debug info leaves the loaded
 image unchanged and gdb resolves kernel lines), and `os/desktop` (tests/os/desktop.sh: colour bars, window
 drag, the app canvas, taskbar and launcher checked from a screendump).
@@ -265,7 +265,7 @@ named test or marker in A.1 is not a verification claim.
    default: drivers keep working with host physical addresses (drv 403 returns the host PA) and
    the boot log states that DMA is unconfined. The strict policy (`iommu_strict`) refuses drv 402
    with `EPERM` in that case. Since 2026-11-12 the policy is chosen at boot (bootpol.cudi): the build
-   default (permissive), then a sealed `\EFI\Forge\boot.cfg` (`cudseal --config`, either way), then
+   default (permissive), then a sealed `\EFI\Incudela\boot.cfg` (`cudseal --config`, either way), then
    the command line, which can only tighten (`incudela.iommu=strict`; `incudela.iommu=permissive` is refused).
    The command line lives in `BootInfo.cmdline` and survives kexec. Remaining limit: strict gates
    user-mode driver grants only, not kernel-driven devices.

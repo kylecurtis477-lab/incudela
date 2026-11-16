@@ -1,0 +1,194 @@
+# espmigrate: move an ESP from the old \EFI\Forge\ folder (before the Incudela rename) to \EFI\Incudela\.
+# usage: espmigrate copy IMG           copy \EFI\Forge\ to \EFI\Incudela\ and verify it; \EFI\Forge\ is kept
+#        espmigrate finish IMG BOOTLOG  remove \EFI\Forge\, only if BOOTLOG shows a kernel that booted from
+#                                       \EFI\Incudela\ and the two folders are still identical
+#        espmigrate status IMG          print which folders exist (writes nothing)
+#        espmigrate --guard-selftest    check the write guard's decisions (no image)
+# IMG is a FAT ESP in mtools syntax (a file, or file@@OFFSET for a partition inside a disk image).
+# The write guard: every write goes through guard(); it allows creating and copying into \EFI\Incudela\ (and
+# below), and one delete, of \EFI\Forge\, in the finish step. Any other path is refused (exit 3) before mtools
+# runs, so nothing outside those two folders is ever written. Reads of \EFI\Forge\ are unrestricted.
+# Exit codes: 0 done, 1 refused (state not right; nothing written), 2 usage, 3 guard refusal, 4 mtools failed.
+import os
+import sys
+
+NEW = "::/EFI/Incudela"
+OLD = "::/EFI/Forge"
+TMP = ["/tmp/espmigrate." + str(os.getpid())]
+BOOTED = "ESP: kernel files under \\EFI\\Incudela\\"
+LOADER_OLD = "Incudela UEFI loader: no \\EFI\\Incudela\\"
+
+def die(code, msg):
+    print("espmigrate: " + msg)
+    cleanup()
+    sys.exit(code)
+
+def cleanup():
+    if os.path.isdir(TMP[0]):
+        os.run(["rm", "-rf", TMP[0]])
+
+def norm(p):
+# lower-cased, slashes collapsed; None when the path is not ::/... or has an empty, "." or ".." component
+    if not p.startswith("::/"):
+        return None
+    parts = []
+    for c in p[3:].split("/"):
+        if c == "":
+            continue
+        if c == "." or c == "..":
+            return None
+        parts.append(c.lower())
+    return "::/" + "/".join(parts)
+
+def guard_ok(p, op, finishing):
+    n = norm(p)
+    if n is None:
+        return False
+    if op == "write":
+        return n == "::/efi/incudela" or n.startswith("::/efi/incudela/")
+    if op == "delete":
+        return finishing and n == "::/efi/forge"
+    return False
+
+def guard(p, op, finishing):
+    if not guard_ok(p, op, finishing):
+        die(3, "refused to " + op + " " + p + ": only \\EFI\\Incudela\\ may be written, and \\EFI\\Forge\\ removed once (finish)")
+
+def mt(args):
+    r = os.run(args)
+    if r[0] != 0:
+        die(4, "mtools failed (" + str(r[0]) + "): " + " ".join(args) + "\n" + r[1] + r[2])
+    return r
+
+def exists(img, p):
+    return os.run(["mdir", "-b", "-i", img, p])[0] == 0
+
+def extract(img, p, dst):
+# the whole folder p into the new host directory dst (read only)
+    os.mkdir(dst)
+    mt(["mcopy", "-s", "-n", "-m", "-i", img, p + "/*", dst + "/"])
+
+def tree(d, rel, out):
+# rel path -> file bytes (directories as "/"), sorted walk
+    names = os.listdir(d)
+    names.sort()
+    for n in names:
+        p = d + "/" + n
+        r = n if rel == "" else rel + "/" + n
+        if os.path.isdir(p):
+            out[r] = "/"
+            tree(p, r, out)
+        else:
+            out[r] = read_file(p)
+    return out
+
+def same(a, b):
+    if len(a) != len(b):
+        return False
+    for k in a:
+        if k not in b or a[k] != b[k]:
+            return False
+    return True
+
+def summary(t):
+    nf = 0
+    nb = 0
+    for k in t:
+        if t[k] != "/":
+            nf += 1
+            nb += len(t[k])
+    return str(nf) + " files, " + str(nb) + " bytes"
+
+def copy(img):
+    if not exists(img, OLD):
+        if exists(img, NEW):
+            die(0, "nothing to do: only \\EFI\\Incudela\\ exists")
+        die(1, "no \\EFI\\Forge\\ on " + img + ", nothing written")
+    os.mkdir(TMP[0])
+    extract(img, OLD, TMP[0] + "/old")
+    old = tree(TMP[0] + "/old", "", {})
+    if exists(img, NEW):
+        extract(img, NEW, TMP[0] + "/new")
+        if same(old, tree(TMP[0] + "/new", "", {})):
+            die(0, "already copied: \\EFI\\Incudela\\ matches \\EFI\\Forge\\ (" + summary(old) + "); run finish after a boot")
+        die(1, "\\EFI\\Incudela\\ exists and differs from \\EFI\\Forge\\, nothing written")
+    guard(NEW, "write", False)
+    mt(["mmd", "-i", img, NEW])
+    keys = []
+    for k in old:
+        keys.append(k)
+    keys.sort()
+    for k in keys:
+        t = NEW + "/" + k
+        guard(t, "write", False)
+        if old[k] == "/":
+            mt(["mmd", "-i", img, t])
+        else:
+            mt(["mcopy", "-n", "-m", "-i", img, TMP[0] + "/old/" + k, t])
+    extract(img, NEW, TMP[0] + "/check")
+    if not same(old, tree(TMP[0] + "/check", "", {})):
+        die(4, "\\EFI\\Incudela\\ read back differs from \\EFI\\Forge\\ (both kept)")
+    print("espmigrate: copied \\EFI\\Forge\\ to \\EFI\\Incudela\\ (" + summary(old) + "), read back identical; \\EFI\\Forge\\ kept until a boot from \\EFI\\Incudela\\ (espmigrate finish)")
+    cleanup()
+
+def finish(img, log):
+    if not exists(img, OLD):
+        die(0, "nothing to do: no \\EFI\\Forge\\")
+    if not exists(img, NEW):
+        die(1, "no \\EFI\\Incudela\\ yet (run copy first), \\EFI\\Forge\\ kept")
+    if not os.path.isfile(log):
+        die(1, "no boot log " + log + ", \\EFI\\Forge\\ kept")
+    b = read_file(log)
+    if b.find(BOOTED) < 0 or b.find("KERNEL OK") < 0 or b.find(LOADER_OLD) >= 0:
+        die(1, "the boot log does not show a kernel booted from \\EFI\\Incudela\\ (needs \"" + BOOTED + "\" and KERNEL OK), \\EFI\\Forge\\ kept")
+    os.mkdir(TMP[0])
+    extract(img, OLD, TMP[0] + "/old")
+    extract(img, NEW, TMP[0] + "/new")
+    old = tree(TMP[0] + "/old", "", {})
+    if not same(old, tree(TMP[0] + "/new", "", {})):
+        die(1, "\\EFI\\Incudela\\ differs from \\EFI\\Forge\\ (changed since copy?), \\EFI\\Forge\\ kept")
+    guard(OLD, "delete", True)
+    mt(["mdeltree", "-i", img, OLD])
+    if exists(img, OLD) or not exists(img, NEW):
+        die(4, "after removing \\EFI\\Forge\\ the folders are not as expected")
+    print("espmigrate: removed \\EFI\\Forge\\ (" + summary(old) + ", identical to \\EFI\\Incudela\\, which booted)")
+    cleanup()
+
+def status(img):
+    print("espmigrate: \\EFI\\Incudela\\ " + ("present" if exists(img, NEW) else "absent") + ", \\EFI\\Forge\\ " + ("present" if exists(img, OLD) else "absent"))
+
+def selftest():
+    cases = [["::/EFI/Incudela", "write", False, True], ["::/EFI/Incudela/bin/sh", "write", False, True],
+             ["::/efi/INCUDELA/docs/a b.txt", "write", False, True], ["::/EFI//Incudela///x", "write", False, True],
+             ["::/EFI/BOOT/BOOTX64.EFI", "write", False, False], ["::/EFI/Microsoft/x", "write", False, False],
+             ["::/x", "write", False, False], ["::/EFI", "write", False, False], ["::/EFI/Forge/x", "write", False, False],
+             ["::/EFI/Forge/x", "write", True, False], ["::/EFI/IncudelaX/x", "write", False, False],
+             ["::/EFI/Incudela/../BOOT/x", "write", False, False], ["::/EFI/Incudela/./x", "write", False, False],
+             ["/EFI/Incudela/x", "write", False, False], ["::/EFI/Forge", "delete", False, False],
+             ["::/EFI/Forge", "delete", True, True], ["::/efi/forge/", "delete", True, True],
+             ["::/EFI/Forge/bin", "delete", True, False], ["::/EFI/Incudela", "delete", True, False],
+             ["::/EFI/BOOT", "delete", True, False], ["::/EFI/Forge", "rename", True, False]]
+    bad = 0
+    for c in cases:
+        got = guard_ok(c[0], c[1], c[2])
+        if got != c[3]:
+            bad += 1
+            print("espmigrate: guard wrong for " + c[1] + " " + c[0] + " (finish " + str(c[2]) + ")")
+    print("espmigrate: guard self-test " + str(len(cases) - bad) + "/" + str(len(cases)) + " decisions right")
+    sys.exit(0 if bad == 0 else 1)
+
+def main():
+    a = sys.argv
+    if len(a) == 2 and a[1] == "--guard-selftest":
+        selftest()
+    if len(a) == 3 and a[1] == "copy":
+        copy(a[2])
+    elif len(a) == 4 and a[1] == "finish":
+        finish(a[2], a[3])
+    elif len(a) == 3 and a[1] == "status":
+        status(a[2])
+    else:
+        print("usage: espmigrate copy IMG | finish IMG BOOTLOG | status IMG | --guard-selftest")
+        sys.exit(2)
+
+main()

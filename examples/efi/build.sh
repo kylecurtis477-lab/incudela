@@ -5,30 +5,30 @@ cd "$(dirname "$0")"
 B=../../build/efi; mkdir -p $B
 ../../build/cudc loader.cud $B/loader.s --fs-opt $CUDC_FLAGS
 ../../build/fas -o $B/loader.o $B/loader.s
-../../build/fld --format pe --subsystem 10 --image-base 0x10000000 -e efi_main -o $B/forgex64.efi $B/loader.o
+../../build/fld --format pe --subsystem 10 --image-base 0x10000000 -e efi_main -o $B/incudelax64.efi $B/loader.o
 ../kernel/build.sh >/dev/null
 rm -f $B/esp.fat
 # volume serial: tools/repro-mformat uses SOURCE_DATE_EPOCH when set (else random, like mformat)
 ../../tools/repro-mformat -C -F -c 1 -i $B/esp.fat -T 131072 -v FORGE_ESP ::
-mmd -i $B/esp.fat ::/EFI ::/EFI/BOOT ::/EFI/Forge ::/EFI/Microsoft ::/EFI/debian
+mmd -i $B/esp.fat ::/EFI ::/EFI/BOOT ::/EFI/Incudela ::/EFI/Microsoft ::/EFI/debian
 # our loader lives in its own vendor directory; BOOT/BOOTX64.EFI is only the removable-media fallback for this test disk
-mcopy -i $B/esp.fat $B/forgex64.efi ::/EFI/Forge/forgex64.efi
-mcopy -i $B/esp.fat ../../build/kernel/kernel.elf ::/EFI/Forge/kernel.elf
-mcopy -i $B/esp.fat ../../build/kernel/kernel-next.elf ::/EFI/Forge/kernel-next.elf
-mcopy -i $B/esp.fat ../../build/user/hello.elf ::/EFI/Forge/init.elf
-mmd -i $B/esp.fat ::/EFI/Forge/bin ::/EFI/Forge/docs ::/EFI/Forge/mod
-for m in hello badabi unresolved newer tty1 tty2 getpid2 unsealed tty1u tampered userimg; do mcopy -i $B/esp.fat ../../build/modules/$m.ko ::/EFI/Forge/mod/$m.ko; done
-for p in sh hello cat forktest fault blkd crash sum bg captest chantest sbtest grtest wxtest capdeny badptr kbdd kbdd2 nvmed nvmed2 gfxapp gfxdeny unsealed tampered forged hellov2 algbad proofset linuxabi lxtest lxthreads lxfs lxexec lxsig; do mcopy -i $B/esp.fat ../../build/user/$p.elf ::/EFI/Forge/bin/$p; done
-[ -f ../../build/user/busybox.elf ] && mcopy -i $B/esp.fat ../../build/user/busybox.elf ::/EFI/Forge/bin/busybox
-printf 'Forge long file name test: this file lives at \\EFI\\Forge\\docs\\Long File Name Notes.txt\nIt spans more than one 13-character LFN entry and is read with open/read/stat/close.\n' > $B/notes.txt
-mcopy -i $B/esp.fat $B/notes.txt "::/EFI/Forge/docs/Long File Name Notes.txt"
+mcopy -i $B/esp.fat $B/incudelax64.efi ::/EFI/Incudela/incudelax64.efi
+mcopy -i $B/esp.fat ../../build/kernel/kernel.elf ::/EFI/Incudela/kernel.elf
+mcopy -i $B/esp.fat ../../build/kernel/kernel-next.elf ::/EFI/Incudela/kernel-next.elf
+mcopy -i $B/esp.fat ../../build/user/hello.elf ::/EFI/Incudela/init.elf
+mmd -i $B/esp.fat ::/EFI/Incudela/bin ::/EFI/Incudela/docs ::/EFI/Incudela/mod
+for m in hello badabi unresolved newer tty1 tty2 getpid2 unsealed tty1u tampered userimg; do mcopy -i $B/esp.fat ../../build/modules/$m.ko ::/EFI/Incudela/mod/$m.ko; done
+for p in sh hello cat forktest fault blkd crash sum bg captest chantest sbtest grtest wxtest capdeny badptr kbdd kbdd2 nvmed nvmed2 gfxapp gfxdeny unsealed tampered forged hellov2 algbad proofset linuxabi lxtest lxthreads lxfs lxexec lxsig; do mcopy -i $B/esp.fat ../../build/user/$p.elf ::/EFI/Incudela/bin/$p; done
+[ -f ../../build/user/busybox.elf ] && mcopy -i $B/esp.fat ../../build/user/busybox.elf ::/EFI/Incudela/bin/busybox
+printf 'Forge long file name test: this file lives at \\EFI\\Incudela\\docs\\Long File Name Notes.txt\nIt spans more than one 13-character LFN entry and is read with open/read/stat/close.\n' > $B/notes.txt
+mcopy -i $B/esp.fat $B/notes.txt "::/EFI/Incudela/docs/Long File Name Notes.txt"
 python3 -c "import sys; sys.stdout.buffer.write(bytes((i * 7 + (i >> 9)) & 255 for i in range(98304)))" > $B/big.bin
-mcopy -i $B/esp.fat $B/big.bin ::/EFI/Forge/docs/big.bin
-mcopy -i $B/esp.fat scripts/hello.sh ::/EFI/Forge/docs/hello.sh
-mmd -i $B/esp.fat ::/EFI/Forge/apps
-for a in ../apps/*.mf; do mcopy -i $B/esp.fat $a ::/EFI/Forge/apps/$(basename $a); done
-mcopy -i $B/esp.fat $B/forgex64.efi ::/EFI/BOOT/BOOTX64.EFI
+mcopy -i $B/esp.fat $B/big.bin ::/EFI/Incudela/docs/big.bin
+mcopy -i $B/esp.fat scripts/hello.sh ::/EFI/Incudela/docs/hello.sh
+mmd -i $B/esp.fat ::/EFI/Incudela/apps
+for a in ../apps/*.mf; do mcopy -i $B/esp.fat $a ::/EFI/Incudela/apps/$(basename $a); done
+mcopy -i $B/esp.fat $B/incudelax64.efi ::/EFI/BOOT/BOOTX64.EFI
 # GPT disk: mkgpt.cud (byte-identical to mkgpt.py with INCUDELA_GUID_SEED, tests/mkgpt)
 ../../build/cudc mkgpt.cud $B/mkgpt.s && ../../build/fas -o $B/mkgpt.o $B/mkgpt.s && ../../build/fld --base 0x100000000000 -o $B/mkgpt $B/mkgpt.o
 $B/mkgpt $B/disk.img $B/esp.fat 128
-echo "built $B/forgex64.efi and $B/disk.img"
+echo "built $B/incudelax64.efi and $B/disk.img"

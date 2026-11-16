@@ -14,11 +14,11 @@ SPDX-License-Identifier = "MIT"
 path = [
   "examples/kernel/**", "examples/efi/**", "examples/user/**", "examples/modules/**", "examples/apps/**",
   "tools/cudseal*", "tools/incudela-part*", "tools/krel*", "tools/mkfont*", "tools/ostools.cud",
-  "tools/repro-*", "tools/ed25519*", "tools/busybox/**",
+  "tools/repro-*", "tools/ed25519*", "tools/busybox/**", "tools/espmigrate*",
   "tests/os/**", "tests/dwarf/**", "tests/cudseal/**", "tests/incudela-part/**", "tests/krel/**",
   "tests/mkfont/**", "tests/mkgpt/**", "tests/ed25519/**", "tests/ed25519-tool/**", "tests/efi-build/**",
   "tests/kernel-build/**", "tests/modules-build/**", "tests/user-build/**", "tests/busybox-build/**",
-  "tests/bzip2/**", "tests/pecheck/**", "tests/memimg/**",
+  "tests/bzip2/**", "tests/pecheck/**", "tests/memimg/**", "tests/espmigrate/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Kyle Curtis"

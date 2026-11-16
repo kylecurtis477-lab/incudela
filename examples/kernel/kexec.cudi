@@ -1,7 +1,7 @@
 # ---- kexec-style handoff (Phase 2 item 6) ----
 # sys_kexec (syscall 409, test/debug only: needs ktest_hooks) replaces the running kernel with a fresh copy
-# of \EFI\Forge\kernel.elf read from the ESP, without a reboot and without writing anything to disk.
-# a = 0: \EFI\Forge\kernel.elf, a = 1: \EFI\Forge\kernel-next.elf (a different build).
+# of \EFI\Incudela\kernel.elf read from the ESP, without a reboot and without writing anything to disk.
+# a = 0: \EFI\Incudela\kernel.elf, a = 1: \EFI\Incudela\kernel-next.elf (a different build).
 # Every user process survives (driver services are restarted by the new kernel instead): all of them
 # are first collected at a syscall boundary (kx_park), then their user pages, brk/mmap state, args,
 # syscall frame, the syscall in progress, FPU state, parent and fds (open files keep their position;
@@ -321,9 +321,9 @@ def sys_kexec(frame: u64, which: u64) -> u64:
         return EINVAL
     sz: u64 = 0
     if which == 1:
-        img = fs_read_file("/EFI/Forge/kernel-next.elf", addr(sz))
+        img = fs_read_file("/EFI/Incudela/kernel-next.elf", addr(sz))
     else:
-        img = fs_read_file("/EFI/Forge/kernel.elf", addr(sz))
+        img = fs_read_file("/EFI/Incudela/kernel.elf", addr(sz))
     if img == 0:
         return kx_fail("cannot read the kernel image", 0)
     if sz < 64 or vload32(img) != 0x464C457F or vload16(img + 18) != 62:
@@ -545,7 +545,7 @@ def sys_kexec(frame: u64, which: u64) -> u64:
         else:
             kx_region(nb, rg.base, rg.len, rg.typ)
         i += 1
-    # boot page tables: identity 0..4 GiB + -2 GiB -> new kernel, exactly what forgex64.efi builds
+    # boot page tables: identity 0..4 GiB + -2 GiB -> new kernel, exactly what incudelax64.efi builds
     tb = hb + 3 * PAGE
     tv = h + 3 * PAGE
     i = 0

@@ -38,7 +38,7 @@ def _start():
     while i < 8:
         win_fill(win, 16 + i * 34, 56, 30, 24, bar_col(i))
         i += 1
-    fd = sys_open("/efi/forge/docs/big.bin")
+    fd = sys_open("/efi/incudela/docs/big.bin")
     fs_denied = fd >= 0x8000000000000000
     if fs_denied:
         win_text(win, 8, 88, "open file: denied (no fs cap)", 0xFFC080)

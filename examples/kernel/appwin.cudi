@@ -132,9 +132,9 @@ def desktop_app():
 # before the desktop starts (scheduler running): gfxdeny (caps(fs), no gfx) must be refused a window, then gfxapp
 # (caps(gfx) only) opens one and draws in it, and is refused a file; the compositor shows its window
     d0 = cap_sys_denials
-    if app_run("EFI/Forge/bin/gfxdeny") != 0:
+    if app_run("EFI/Incudela/bin/gfxdeny") != 0:
         panic("desktop app: a program without gfx got a window")
-    if app_run("EFI/Forge/bin/gfxapp") != 0 or app_pid == 0:
+    if app_run("EFI/Incudela/bin/gfxapp") != 0 or app_pid == 0:
         panic("desktop app: gfxapp failed")
     if cap_sys_denials - d0 != 2 or app_badh != 1:
         panic("desktop app: undeclared capabilities not denied")

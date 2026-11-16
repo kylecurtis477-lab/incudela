@@ -2,7 +2,7 @@
 # cuditor: no-runtime
 # cuditor: caps(fs, spawn, ipc, drv, kexec, probe, ktest, grant)
 # sh: the first interactive program. Reads lines from the console (keyboard or serial),
-# runs builtins (ls, exit) or fork+exec /efi/forge/bin/<cmd> and waits for it.
+# runs builtins (ls, exit) or fork+exec /efi/incudela/bin/<cmd> and waits for it.
 # 10.2: `run app &` launches a sandboxed app in the background; `grants` prints the kernel's grant
 # ledger and `revoke app` revokes every active grant of that app (sys 428/429, capability 'grant').
 # 10.3: `audit` prints the kernel's grant audit log and its cross-check against the ledger (sys 430).
@@ -34,9 +34,9 @@ def setpath(dst: ptr[u8], pre: ptr[u8], name: ptr[u8], suf: ptr[u8]):
     mem_set8(u64(dst) + pl, 0)
 
 def run_app(name: ptr[u8], args: ptr[u8], bgr: u64) -> u64:
-# launch through /efi/forge/apps/<name>.mf: each "read PATH" / "dir PATH" line becomes a handle
+# launch through /efi/incudela/apps/<name>.mf: each "read PATH" / "dir PATH" line becomes a handle
 # (fds 4.. in manifest order) with only READ (+LOOKUP for dirs); the app gets nothing else
-    setpath(addr(mpath[0]), "/efi/forge/apps/", name, ".mf")
+    setpath(addr(mpath[0]), "/efi/incudela/apps/", name, ".mf")
     fd = sys_open(addr(mpath[0]))
     if is_err(fd):
         out("sh: run: no manifest ")
@@ -82,7 +82,7 @@ def run_app(name: ptr[u8], args: ptr[u8], bgr: u64) -> u64:
         out_u64(ng)
         out(" grants from its manifest\n")
         flush()
-        setpath(addr(mpath[0]), "/efi/forge/bin/", name, "")
+        setpath(addr(mpath[0]), "/efi/incudela/bin/", name, "")
         sys_exec_sandboxed(addr(mpath[0]), args)
         out("sh: run: exec failed\n")
         flush()
@@ -152,7 +152,7 @@ def do_ls(dir: ptr[u8]):
 
 @export
 def _start():
-    out("Incudela sh: builtins ls, wait, run app [&] (manifest sandbox), grants, revoke app, audit, kexec [next], exit, cmd &; programs from /efi/forge/bin\n")
+    out("Incudela sh: builtins ls, wait, run app [&] (manifest sandbox), grants, revoke app, audit, kexec [next], exit, cmd &; programs from /efi/incudela/bin\n")
     flush()
     ncmd: u64 = 0
     while 1:
@@ -250,12 +250,12 @@ def _start():
             continue
         if streq(cmd, "ls"):
             if line[a] == 0:
-                do_ls("/efi/forge/bin")
+                do_ls("/efi/incudela/bin")
             else:
                 do_ls(addr(line[a]))
             continue
         pl: u64 = 0
-        pre = "/efi/forge/bin/"
+        pre = "/efi/incudela/bin/"
         while mem_get8(u64(pre) + pl) != 0:
             path[pl] = u8(mem_get8(u64(pre) + pl))
             pl += 1

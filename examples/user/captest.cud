@@ -41,7 +41,7 @@ def _start():
         fail("dup without DUP right")
     ok("read-only handle: write denied, widening denied")
     # directory capabilities: lookup is relative to the handle, needs LOOKUP, and cannot climb out
-    forge = sys_openat(3, "efi/forge")
+    forge = sys_openat(3, "efi/incudela")
     if is_err(forge) or (sys_rights(forge) & CAP_LOOKUP) == 0:
         fail("openat dir")
     f = sys_openat(forge, "docs/big.bin")
@@ -67,11 +67,11 @@ def _start():
         r = 0
         if sys_writefd(ro, u64(addr(buf[0])), 1) != EPERM:
             r = 2
-        if sys_open("/efi/forge/docs/big.bin") != EACCES:
+        if sys_open("/efi/incudela/docs/big.bin") != EACCES:
             r = 3
         if sys_openat(3, "efi") != 0xFFFFFFFFFFFFFFF7:
             r = 4
-        if sys_exec("/efi/forge/bin/hello", "x") != EACCES:
+        if sys_exec("/efi/incudela/bin/hello", "x") != EACCES:
             r = 5
         sys_exit(r)
     st: u64 = 9

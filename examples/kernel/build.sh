@@ -21,7 +21,7 @@ klink() {
 ../../build/fas -I ../../build/user -o $B/kernel.o $B/kernel.s
 klink $B/kernel
 grub-file --is-x86-multiboot2 $B/kernel.elf
-# a genuinely different build for the kexec test (\EFI\Forge\kernel-next.elf): another version string
+# a genuinely different build for the kexec test (\EFI\Incudela\kernel-next.elf): another version string
 sed 's/"incudela-kernel 0.2.6"/"incudela-kernel 0.2.6-next"/' kernel.cud > .kernel_next.cud
 grep -q '"incudela-kernel 0.2.6-next"' .kernel_next.cud
 ../../build/cudc .kernel_next.cud $B/kernel-next.s --fs-temps $CUDC_FLAGS; rm -f .kernel_next.cud

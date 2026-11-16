@@ -95,7 +95,7 @@ Not protected against:
 
 ## 10.2 The grant ledger: revocable permissions on open handles
 
-Phase 5.3 sandboxes an app launched with `run app`: sh opens the handles that `/efi/forge/apps/app.mf`
+Phase 5.3 sandboxes an app launched with `run app`: sh opens the handles that `/efi/incudela/apps/app.mf`
 lists (`read PATH`, `dir PATH`), restricts their rights, and calls `sys_exec_sandboxed`, which drops the
 root capability. 10.2 turns each of those handles into a **grant** that the user can list and revoke while
 the app runs.
@@ -126,11 +126,11 @@ the app runs.
 - Ledger messages are printed whole under the console lock, so they never interleave with app output.
 
 ### Tests (tests/os/run.sh, QEMU, BIOS and UEFI boots)
-`run grtest &` holds one grant, `/efi/forge/docs/big.bin` (96 KiB). grtest makes a dup of the handle and
+`run grtest &` holds one grant, `/efi/incudela/docs/big.bin` (96 KiB). grtest makes a dup of the handle and
 reads the first 48 KiB, checking every byte. It prints `halfway`, then polls the handle with zero-length
 reads. sh then runs `grants` (the entry is active), `revoke grtest` (sent only after `halfway` has
 appeared), `wait` and `grants` again. Required log lines:
-- `grants: grant 3 (grtest: read /efi/forge/docs/big.bin) active for pid N`
+- `grants: grant 3 (grtest: read /efi/incudela/docs/big.bin) active for pid N`
 - `grtest: halfway, 49152 of 98304 bytes read through grant fd 4`
 - `grants: revoked grant 3 (...) from pid N after K uses` and `sh: revoked 1 grant(s) of grtest`
 - the kernel's denial line `grant 3 (...): revoked; pid N read denied (EACCES)`
@@ -170,7 +170,7 @@ must equal the ledger's counters. If records were evicted, the check is skipped 
 ### Tests (tests/os/run.sh)
 After the 10.2 revocation, the boot script runs `audit`. Required log lines include
 `audit: N records, 0 evicted`, sbtest's `granted` / `openat x1` / `ended (app exited)` records, grtest's
-`granted to grtest, /efi/forge/docs/big.bin`, `read x12, 49152 bytes`, `revoked by pid N`,
+`granted to grtest, /efi/incudela/docs/big.bin`, `read x12, 49152 bytes`, `revoked by pid N`,
 `poll denied x1`, `read denied x2`, `dup denied x1`, and
 `audit: ledger check: uses and denials match the ledger for all 3 grants`.
 
