@@ -43,6 +43,10 @@
 - `7632ffe` `nown[T]` globals and global `nown[T][N]` arrays (designed with ChatGPT, implemented here):
   they start none; a global and each element `a[i]` are places for `take`/`replace`/`swap` (index
   evaluated once) or a test for none, nothing else.
+- `5d743d2` Stage 3e, kernel run queue (designed with ChatGPT, implemented here): `rq_head`, `current`
+  and `idle_thr` are `nown[Thread][8]`, linked through `Thread.rq_next: nown[Thread]`; `rq_pop` is safe
+  code, `schedule_l` has one transfer point, `thread_adopt` panics on a second owner. Kernel unsafe
+  report 170 / 708 -> 168 / 701.
 
 ### Optimizer: Phase 12.1 steps 4a-4c
 - `be09366` step 4a, `--fs-opt` promotes scalar locals in safe functions that also take frame addresses;
