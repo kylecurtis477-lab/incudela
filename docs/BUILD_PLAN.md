@@ -469,6 +469,41 @@ one commit in five, in this order, each its own commit with a visual and docs:
 
 ---
 
+## Dated schedule (2026-11-15 assessment)
+
+Estimates, not commitments. Pace basis: build/quota-log.txt shows 11 passing batches (39 items) between
+2026-11-13 02:01 and 15:49 CST, about 1.25 h per batch of 3-4 items with a 61-minute full gate. The schedule
+assumes 8 passing batches (about 24 items) per day the bots run, and that a failed gate costs half a day. Days
+without bot usage (as on 2026-11-13 16:30 to 2026-11-15 18:21) move every later date by the same amount. Items
+marked *Kyle* need him (hardware, licence, accounts). The core order above is unchanged; the extra items from
+the 2026-11-15 assessment (ours and ChatGPT's review, verified against the code) are slotted in where they cost
+least.
+
+| Dates (CST) | Item | Size | Notes |
+|---|---|---|---|
+| Nov 15 | 2: `nown` globals and arrays | 1 batch | gating as inv159 |
+| Nov 15-16 | assessment fixes (unsafe ceiling 708, unsafe result names, run_tests OS fail-closed) | 1 batch | in g185 |
+| Nov 16 | 2 / 3e: run-queue conversion (`rq_head`/`rq_tail`/`current` to owners, `rq_push`/`rq_pop` move owners) | 2 batches | first real kernel use of own/nown (the kernel has 0 today) |
+| Nov 16-17 | 2 / 3f: handoff-record conversion (kexec.fsi, pstate.fsi) | 2 batches | finishes item 2 |
+| Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
+| Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
+| Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
+| Nov 17 | kernel O0 variant: one boot test of a kernel built without `--fs-temps` | 1 item | today -O0 still names `--fs-temps` for the kernel (documented) |
+| Nov 18 | data-at-rest keys: RDRAND/RDSEED mixed into the data key, a salted iterated KDF for the passphrase key, key rotation | 2 batches | objd.fsi; TPM sealing stays open (no TPM in QEMU tests) |
+| Nov 18 | per-CPU run-queue locks plus an SMP scaling benchmark (1/2/4 CPUs) | 1 batch | one `rq_lock` today; measure before and after |
+| Nov 18 | early USB smoke image and checklist | 1 item | *Kyle* boots it once |
+| Nov 19-21 | 4: SSA backend for fs/kernel mode, gated by optcov and fsfuzz --combos | 8-10 batches | also a `sqrt` intrinsic (benchmarks need asm today) |
+| Nov 22 | 5: language server: incremental checks, diagnostics, definition | 3 batches | tools/lsp.forge exists (45 checks) |
+| Nov 23-24 | 6: package manager: resolution, signed index with publish time and yank flag, reproducible builds | 4 batches | tools/pkg.forge exists (12 checks) |
+| Nov 25-26 | 7: sustained adversarial testing: a soak harness (there is none today), a syscall and capability fuzzer, fault injection, multi-hour runs | 4 batches + runs | |
+| Nov 27- | 8: real-hardware boot | open | *Kyle*: needs his PC |
+| Nov 28-Dec 1 | 9: Linux compatibility by real apps (fork, pipe, file-backed mmap first; app list with pass/fail) | 6+ batches | 39 Linux syscalls today |
+| Dec 2-3 | 10: diverse double-compilation of the seed | 2-3 batches | needs an independent compiler path |
+| Dec 4- | Phase 8 leftovers; desktop limits (WM_N = 6 windows, one 320x160 app canvas) | open | |
+
+Decisions for Kyle: a root LICENSE (none today), versioned releases on GitHub (none today), and turning on the
+public CI workflow.
+
 ## Phase 1 — Interactive multi-process kernel (done)
 *Pillars: C, D, F. Closes SYSTEMS.md items 3–5.*
 
