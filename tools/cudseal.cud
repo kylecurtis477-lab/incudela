@@ -896,7 +896,10 @@ def main(sp: u64) -> u64:
             r += 1
             while r < q and is_ws(u64(pb(r)[0])):
                 r += 1
-            n1 = lit(r, q, "forge:")
+            # "cuditor:", or "forge:" from before the Cuditor rename (accepted for one release)
+            n1 = lit(r, q, "cuditor:")
+            if n1 == 0:
+                n1 = lit(r, q, "forge:")
             if n1:
                 r += n1
                 while r < q and is_ws(u64(pb(r)[0])):

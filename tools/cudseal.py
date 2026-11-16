@@ -105,7 +105,7 @@ def main():
         sys.exit(f'cudseal: {src}: unsafe counts {cnt} are not in the audited baseline; refusing to seal')
     caps = 0
     for l in open(src):
-        mm = re.match(r'#\s*forge:\s*caps\((.*)\)', l)
+        mm = re.match(r'#\s*(?:cuditor|forge):\s*caps\((.*)\)', l)  # forge: is the pre-rename spelling (one release)
         if mm:
             for c in filter(None, (x.strip() for x in mm.group(1).split(','))):
                 if c not in CAPS:
