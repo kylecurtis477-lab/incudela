@@ -1,7 +1,8 @@
 # cuditor: no-runtime
 # --fs-ssa (Phase 12.1 step 4d): every comparison kind as a branch and as a value, constants folded into add,
 # sub, and, or, xor and cmp (imm32 edges included, 2**31 must stay in %rcx), compares with 0, and loops whose
-# values meet in phis. The output must be the same under every fs optimizer level.
+# values meet in phis. Step 4e: ssa_dead returns 0 from inside a loop and at its end (a register write that is
+# overwritten before any read is removed). The output must be the same under every fs optimizer level.
 include "linux.cudi"
 
 def ssa_cmp(a: i64, b: i64, u: u64, v: u64) -> i64:
@@ -69,6 +70,19 @@ def ssa_loop(n: i64) -> i64:
         i += 1
     return s
 
+def ssa_dead(a: i64, n: i64) -> i64:
+    i: i64 = 0
+    while i < n:
+        if a == i:
+            return 0
+        i += 1
+    if a < 0:
+        return 0
+    return a * 3
+
+def ssa_drop(x: i64):
+    ssa_loop(x)
+
 def show(x: i64):
     put_i64(x)
     nl()
@@ -89,4 +103,8 @@ def main() -> i64:
     show(ssa_loop(0))
     show(ssa_loop(1))
     show(ssa_loop(100))
+    show(ssa_dead(2, 5))
+    show(ssa_dead(-4, 5))
+    show(ssa_dead(9, 5))
+    ssa_drop(4)
     return 0

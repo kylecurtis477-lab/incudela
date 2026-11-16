@@ -21795,7 +21795,8 @@ def fs_ssa_run(s0):
                 r += 1
         p += 1
     fs_ssa_phis(n, s1, s2, df, vi, cnt)
-    return fs_ssa_fold(n, ln, vi, cnt)
+    nf = fs_ssa_fold(n, ln, vi, cnt)
+    return nf + fs_ssa_dead(n, ln, vi, cnt)
 
 def fs_ssa_phis(n, s1, s2, df, vi, cnt):
 # A phi is live if a line reads it or a live phi takes it as an operand (fixpoint); each operand of a live phi
@@ -21933,6 +21934,59 @@ def fs_ssa_fold(n, ln, vi, cnt):
                     p += 3
         p += 1
     return nf
+
+def fs_ssa_dreg(a):
+# a (one instruction line) only writes one tracked register, from an immediate or another tracked register:
+# `mov`/`movq`/`movabs` to a 64-bit register, `movl` to a 32-bit one, `movzbl %al,%eax`, `xor %eR,%eR`.
+# Returns that register's index, -1 for any other line (a memory operand, a partial register, anything else).
+    if find_char(a, 10) != len(a) - 1 or find_char(a, 40) >= 0:
+        return -1
+    t = substr(a, 4, len(a) - 1)
+    sp = find_char(t, 32)
+    if sp < 0:
+        return -1
+    mn = substr(t, 0, sp)
+    ops = substr(t, sp + 1, len(t))
+    cm = find_char(ops, 44)
+    if cm < 0:
+        return -1
+    s = substr(ops, 0, cm)
+    d = substr(ops, cm + 1, len(ops))
+    if find_char(d, 44) >= 0:
+        return -1
+    if str_eq(mn, "mov") or str_eq(mn, "movq") or str_eq(mn, "movabs"):
+        r = find(FS_SSR, 9, d)
+        if r >= 0 and (starts(s, "$") or find(FS_SSR, 9, s) >= 0):
+            return r
+    elif str_eq(mn, "movl"):
+        r = find(FS_SSR32, 9, d)
+        if r >= 0 and (starts(s, "$") or find(FS_SSR32, 9, s) >= 0):
+            return r
+    elif str_eq(mn, "movzbl"):
+        if str_eq(s, "%al") and str_eq(d, "%eax"):
+            return 0
+    elif str_eq(mn, "xor"):
+        r = find(FS_SSR32, 9, d)
+        if r >= 0 and str_eq(s, d):
+            return r
+    return -1
+
+def fs_ssa_dead(n, ln, vi, cnt):
+# Step 4e: a write no instruction reads is removed. A reached line that fs_ssa_dreg accepts, whose register value
+# has no use (no instruction and no live phi reads it), and, for `xor`, whose flags are not read either, is
+# deleted. Removing a line only takes uses away, so the counts stay an upper bound for the folds of the same round.
+    nd = 0
+    p = 0
+    while p < n:
+        a = out[ln[p]]
+        if vi[p * 10] >= 0 and starts(a, "    "):
+            r = fs_ssa_dreg(a)
+            if r >= 0 and cnt[p * 10 + r] == 0:
+                if not starts(a, "    xor ") or cnt[p * 10 + 9] == 0:
+                    out[ln[p]] = ""
+                    nd += 1
+        p += 1
+    return nd
 
 FS_SAVE = ["%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11"]
 

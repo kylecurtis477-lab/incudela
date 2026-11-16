@@ -415,7 +415,9 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    Steps 4b (`--fs-live`) and 4c (`--fs-temps`) are done and the kernel is built with both. Step 4d
    (`--fs-ssa`, 2026-11-16, opt-in): SSA values over the control-flow graph for the scratch registers and the
    flags, with a verifier, and three use-count folds; the first pass landed under item 3's rule. The kernel is
-   built with it since the step 4d kernel switch (2026-11-16). Next: SSA-based allocation of the remaining
+   built with it since the step 4d kernel switch (2026-11-16). Step 4e (2026-11-16, under `--fs-ssa`) starts
+   the SSA-based clean-up of the remaining temporaries: register writes no instruction reads are removed. Next:
+   copy propagation of the `mov %rax,%rN` / `mov %rN,%rax` chains, then SSA-based allocation of the remaining
    %rax/%rcx temporaries.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
@@ -492,6 +494,7 @@ least.
 | Nov 16 | rename and licences: the OS becomes Incudela (Apache-2.0), the language becomes Cuditor (MIT); repo (`kylecurtis477-lab/incudela`), binaries, file extensions, docs; the ESP folder moves from `\EFI\Forge\` to `\EFI\Incudela\` with a one-time migration that keeps the old folder until the new one boots (tools/espmigrate.cud; the loader and kernel read an unmigrated `\EFI\Forge\` meanwhile) | 3 commits + the ESP migration commit (inv165) | *Kyle* approved 2026-11-15; names screened on the web, GitHub, package registries and domains, not a legal clearance |
 | Nov 16 | kexec from an older kernel build to the new one (the gate only swaps same-source kernels) | 1 item | tests/os/kexec-compat.sh, results `os/kexec-compat-build`, `os/kexec-old-to-new` (inv164) |
 | Nov 16 | SSA step 4d: `--fs-ssa` (opt-in), fsfuzz conditions with `not`/`and`/`or`, CHANGELOG for 0.20.1-0.21.1 | 1 batch | first optimizer pass under the item 3 landing rule (inv175) |
+| Nov 16 | SSA: the kernel built with `--fs-ssa` (step 4d kernel switch), dead register writes (step 4e) | 1 batch | QEMU boot suite at O2 and O0 (inv176) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -949,6 +952,23 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      `--fs-ssa` kernel: 45 PASS, 0 FAIL (BIOS, SMP1, IOMMU, UEFI, GPT loader, kexec, old-to-new kexec, drivers,
      boot policy, ForgeFS, object store, desktop, DWARF/gdb); the gate runs it at O2 and O0.
      The loader, modules and user programs stay on `--fs-opt` for now.
+   - *Step 4e (2026-11-16): dead register writes, under `--fs-ssa`.* The first use of the SSA use counts beyond
+     the step 4d pattern folds. `fs_ssa_dead` runs after `fs_ssa_fold` in every round and deletes a reached
+     one-instruction line that only writes one tracked register from an immediate or another tracked register
+     (`mov`/`movq`/`movabs` to a 64-bit register, `movl` to a 32-bit one, `movzbl %al,%eax`, `xor %eR,%eR`), when
+     no instruction and no live phi reads that value and, for `xor`, nothing reads its flags. Lines with a memory
+     operand stay (a load can fault). Deleting a line only removes uses, so the same round's counts stay a safe
+     upper bound for the folds. Code built without `--fs-ssa` is byte-identical (the kernel default, `--fs-opt`,
+     `--fs-live`, `--fs-temps` compared against the previous compiler). On the kernel: instructions 120,544 to
+     119,967, .text 457,536 to 456,237 bytes; the deleted lines are 470 `xor %eax,%eax` (a dropped call result
+     overwritten by the implicit return value), 77 `mov %rdx/%rcx,%rax` and 29 `mov %rax,%rN`. Tests:
+     tests/fs/ssa.cud gains ssa_dead (returns from inside a loop) and ssa_drop (a dropped call result at the end of
+     a function; `fs-ssa-dead-shape`: two `xor %eax,%eax` under `--fs-temps`, one under `--fs-ssa`); every
+     tests/fs program under default, `--fs-temps`, `--fs-ssa`, `-O0 --fs-ssa` and `-g --fs-ssa`: 23/23. Landing
+     rule: `optcov --check` OK (fs-ssa 162/184 blocks, every new block hit, no new allow-list entry); `fsfuzz
+     --combos` seeds 1-3 x 25 (10,800 builds, 4,236 distinct assemblies) and the ten-way form seeds 1-6 x 80:
+     0 differ.
+     Next: copy propagation, which the kernel's remaining `mov %rdi,%rax; mov %rax,%r9` pairs call for.
    - *fsfuzz conditions (2026-11-16).* tools/fsfuzz.cud's generator now negates one condition in eight
      (`not (a < b)`) and joins two compares with `and`/`or` in another one in eight, so the 0/1 comparison values
      and short-circuit jumps that step 4d works on are in every fuzz run (the programs of every seed change). On
