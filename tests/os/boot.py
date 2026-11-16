@@ -82,8 +82,8 @@ def type_keys(line):
 def monitor(cmd, wait=1.0):
     try:
         s = socket.socket(socket.AF_UNIX); s.settimeout(wait); s.connect(mon)
-        s.sendall(cmd.encode() + b'\n'); out, t = b'', time.time()
-        while time.time() - t < wait:
+        s.sendall(cmd.encode() + b'\n'); out, t = b'', time.monotonic()
+        while time.monotonic() - t < wait:
             try:
                 c = s.recv(65536)
                 if not c: break
@@ -122,7 +122,7 @@ def boot(attempt):
     p = subprocess.Popen(['qemu-system-x86_64'] + qargs + ['-monitor', f'unix:{mon},server,nowait'],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     os.set_blocking(p.stdout.fileno(), False)
-    buf, t0, shot_ok, fbmsg, sent = b'', time.time(), False, '', 0
+    buf, t0, shot_ok, fbmsg, sent = b'', time.monotonic(), False, '', 0
     tlast, deadline, kind, dump = t0, t0 + float(tmo), '', ''
     while p.poll() is None:
         try:
@@ -130,8 +130,8 @@ def boot(attempt):
         except Exception:
             chunk = None
         if chunk:
-            buf += chunk; tlast = time.time()
-        now = time.time()
+            buf += chunk; tlast = time.monotonic()
+        now = time.monotonic()
         if now - tlast >= STALL:
             # Drain once more before HMP so a full stdio pipe cannot block QEMU, and so last_line is current.
             try:
@@ -139,7 +139,7 @@ def boot(attempt):
             except Exception:
                 chunk = None
             if chunk:
-                buf += chunk; tlast = time.time(); now = time.time()
+                buf += chunk; tlast = time.monotonic(); now = time.monotonic()
             if now - tlast >= STALL:
                 kind = 'hang'
                 dump = f'{log}.hang{attempt}'
@@ -191,7 +191,7 @@ def boot(attempt):
     except Exception:
         pass
     rc = p.returncode
-    el = time.time() - t0
+    el = time.monotonic() - t0
     text = buf.decode('latin-1')
     why = ''
     if kind == 'hang':
