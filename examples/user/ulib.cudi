@@ -1,4 +1,4 @@
-# Minimal user-space runtime for Forge programs running on the Forge kernel (ring 3, syscall ABI:
+# Minimal user-space runtime for Forge programs running on the Incudela kernel (ring 3, syscall ABI:
 # rax = number, rdi/rsi/rdx = args, result in rax; rcx/r11 clobbered).
 SYS_WRITE = 1
 SYS_YIELD = 24

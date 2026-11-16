@@ -1,4 +1,4 @@
-# tools/busybox/build.cud: Forge port of tools/busybox/build.sh (kept as the reference;
+# tools/busybox/build.cud: Cuditor port of tools/busybox/build.sh (kept as the reference;
 # tests/busybox-build/run.sh checks both give the same busybox.elf bytes, output and exit code).
 # Phase 11.1e: build BusyBox from verified source as a static musl Linux-ABI image, tag it EI_OSABI = 3 and
 # seal it --foreign. The tarballs in $BB_SRC (default /workspace/bb) are pinned by SHA-256 and checked against

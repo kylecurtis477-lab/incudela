@@ -52,7 +52,7 @@ def wm_title(w: u64, x: u64, y: u64, fg: u64, bg: u64) -> u64:
     if k == WM_TERM:
         return gfx_text(x, y, "Terminal: kernel console", fg, bg)
     if k == WM_ABOUT:
-        return gfx_text(x, y, "About Forge", fg, bg)
+        return gfx_text(x, y, "About Incudela", fg, bg)
     if k == WM_APP:
         return gfx_text(x, y, addr(app_title[0]), fg, bg)
     return gfx_text(x, y, "Help", fg, bg)
@@ -62,7 +62,7 @@ def wm_name(w: u64):
     if k == WM_TERM:
         puts("Terminal")
     elif k == WM_ABOUT:
-        puts("About Forge")
+        puts("About Incudela")
     elif k == WM_APP:
         puts(addr(app_title[0]))
     else:
@@ -112,8 +112,8 @@ def wm_draw(w: u64):
     cx = x + 16
     cy = y + WM_TB + 16
     if wm_kind[w] == WM_ABOUT:
-        gfx_text(cx, cy, "Forge OS: kernel, language and tools", 0xFFFFFF, WM_BODY)
-        gfx_text(cx, cy + 16, "written in Forge.", 0xFFFFFF, WM_BODY)
+        gfx_text(cx, cy, "Incudela: kernel, language and tools", 0xFFFFFF, WM_BODY)
+        gfx_text(cx, cy + 16, "written in Cuditor.", 0xFFFFFF, WM_BODY)
         gfx_text(cx, cy + 48, "Screen step 6: desktop shell", 0xC8D0E0, WM_BODY)
         gfx_text(cx, cy + 64, "(taskbar, launcher, minimize)", 0xC8D0E0, WM_BODY)
     else:

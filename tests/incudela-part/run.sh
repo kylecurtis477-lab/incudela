@@ -40,7 +40,7 @@ python3 tools/incudela-part.py create $T/d64.img 16 --yes-add-incudela-partition
 chk already-exists $T/d64.img create $T/a.img 8 --yes-add-incudela-partition
 chk read-unformatted $T/d64.img read $T/a.img hello.txt
 chk read-no-forge $T/d128.img read $T/a.img hello.txt
-# format the Forge partition like the kernel: superblock FORGEFS1, 64-byte entries (name[40], size, start, nblocks)
+# format the Incudela partition like the kernel: superblock FORGEFS1, 64-byte entries (name[40], size, start, nblocks)
 python3 - $T/d64.img <<'P'
 import struct, sys
 f = open(sys.argv[1], 'r+b'); lo = None
@@ -51,7 +51,7 @@ for i in range(128):
     if e[:4] == bytes.fromhex('a1e3c2d0'): lo = struct.unpack_from('<Q', e, 32)[0]
 f.seek(lo * 512); f.write(b'FORGEFS1' + b'\0' * 4088)
 it = b''
-files = [(b'hello.txt', b'written by the Forge kernel\n', 2), (b'bin.dat', bytes(range(256)) * 20, 3), (b'empty', b'', 5)]
+files = [(b'hello.txt', b'written by the Incudela kernel\n', 2), (b'bin.dat', bytes(range(256)) * 20, 3), (b'empty', b'', 5)]
 for name, data, st in files:
     it += name.ljust(40, b'\0') + struct.pack('<QQQ', len(data), st, (len(data) + 4095) // 4096)
     f.seek(lo * 512 + st * 4096); f.write(data)

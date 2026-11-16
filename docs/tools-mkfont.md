@@ -1,6 +1,6 @@
 # mkfont (tools/mkfont.cud)
 
-This is the Forge port of `tools/mkfont.py`, which builds the kernel's 8×16 console font.
+This is the Cuditor port of `tools/mkfont.py`, which builds the kernel's 8×16 console font.
 
     mkfont FONT.ttf OUT.cudi      writes OUT.cudi (u8[1520], ASCII 32..126) and previews 'F' and 'g' on stdout
 

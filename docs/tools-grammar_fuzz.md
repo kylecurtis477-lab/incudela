@@ -1,6 +1,6 @@
 # grammar_fuzz (tools/grammar_fuzz.cud)
 
-This is the Forge port of `tools/grammar_fuzz.py`. For the same seed it produces identical output: the same stdout, exit
+This is the Cuditor port of `tools/grammar_fuzz.py`. For the same seed it produces identical output: the same stdout, exit
 code and build/fuzz files.
 
     grammar_fuzz [--seed N] [--n COUNT]       (defaults: seed 1, 200 programs)

@@ -6,7 +6,7 @@
 # Text: gfx_char / gfx_text draw the 8x16 font (font.cudi) at any pixel position in any fg/bg colour.
 # Terminal (screen step 2): a cell grid at any pixel origin, drawn into the back buffer with its own colours,
 # scrolling by moving back-buffer rows; once the desktop is up, console text (putc) lands in it.
-# The desktop runs when the boot command line has `forge.desktop` (tests/os/desktop.sh).
+# The desktop runs when the boot command line has `incudela.desktop` (tests/os/desktop.sh).
 GFX_MAXW = 1024
 GFX_MAXH = 768
 gfx_buf: u32[786432]
@@ -388,7 +388,7 @@ def gfx_selftest() -> u64:
     return 1
 
 def desktop_wanted() -> u64:
-# `forge.desktop` on the boot command line
+# `incudela.desktop` (or the old `forge.desktop`) on the boot command line
     i: u64 = 0
     while i < 255 and bi.cmdline[i] != 0:
         while i < 255 and bi.cmdline[i] == 32:
@@ -396,7 +396,7 @@ def desktop_wanted() -> u64:
         s = i
         while i < 255 and bi.cmdline[i] != 0 and bi.cmdline[i] != 32:
             i += 1
-        if i > s and cmd_tok_eq(s, i - s, "forge.desktop"):
+        if i > s and (cmd_tok_eq(s, i - s, "incudela.desktop") or cmd_tok_eq(s, i - s, "forge.desktop")):
             return 1
     return 0
 
@@ -412,7 +412,7 @@ def desk_bg(x0: u64, y0: u64, x1: u64, y1: u64):
             gfx_fill(i * bw, 0, bw, 96, gfx_bars[i])
             i += 1
     if y0 < 128 and y1 > 96:
-        gfx_text(0, 96, "Forge desktop (screen step 6: a desktop shell)", 0xFFFFFF, GFX_DESK)
+        gfx_text(0, 96, "Incudela desktop (screen step 6: a desktop shell)", 0xFFFFFF, GFX_DESK)
         x = gfx_text(0, 112, "gfx: ", 0xFFFFFF, GFX_DESK)
         x = gfx_num(x, 112, gfx_w, 0xFFFFFF, GFX_DESK)
         x = gfx_text(x, 112, "x", 0xFFFFFF, GFX_DESK)

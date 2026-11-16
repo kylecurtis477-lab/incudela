@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the Forge kernel (ELF64 multiboot2) and a BIOS+UEFI hybrid GRUB ISO.
+# Build the Incudela kernel (ELF64 multiboot2) and a BIOS+UEFI hybrid GRUB ISO.
 set -e
 cd "$(dirname "$0")"
 B=../../build/kernel; mkdir -p $B/iso/boot/grub
@@ -22,8 +22,8 @@ klink() {
 klink $B/kernel
 grub-file --is-x86-multiboot2 $B/kernel.elf
 # a genuinely different build for the kexec test (\EFI\Forge\kernel-next.elf): another version string
-sed 's/"forge-kernel 0.2.6"/"forge-kernel 0.2.6-next"/' kernel.cud > .kernel_next.cud
-grep -q '"forge-kernel 0.2.6-next"' .kernel_next.cud
+sed 's/"incudela-kernel 0.2.6"/"incudela-kernel 0.2.6-next"/' kernel.cud > .kernel_next.cud
+grep -q '"incudela-kernel 0.2.6-next"' .kernel_next.cud
 ../../build/cudc .kernel_next.cud $B/kernel-next.s --fs-temps $CUDC_FLAGS; rm -f .kernel_next.cud
 ../../build/fas -I ../../build/user -o $B/kernel-next.o $B/kernel-next.s
 klink $B/kernel-next

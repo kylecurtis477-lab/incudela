@@ -1,4 +1,4 @@
-# cuditor test [files...]: Forge port of tools/cud_test.sh (kept as the reference; tests/testblocks/run.sh
+# cuditor test [files...]: Cuditor port of tools/cud_test.sh (kept as the reference; tests/testblocks/run.sh
 # compares them). Builds each file with `cudc --test` (plus $CUDC_FLAGS), runs every `test "name":`
 # block in its own process (10 s timeout, from the file's directory) and prints one JSON report on stdout.
 # Exit 1 if any test fails or a file does not build. Default file set: tests/unit/*.cud.

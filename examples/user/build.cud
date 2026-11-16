@@ -1,6 +1,6 @@
-# examples/user/build.cud: Forge port of examples/user/build.sh (kept as the reference;
+# examples/user/build.cud: Cuditor port of examples/user/build.sh (kept as the reference;
 # tests/user-build/run.sh checks both produce byte-identical artifacts, the same output and exit code).
-# Builds the Forge user programs as static ELF64 executables (ring 3, loaded by the kernel's ELF loader)
+# Builds the Incudela user programs as static ELF64 executables (ring 3, loaded by the kernel's ELF loader)
 # and seals them with tools/cudseal.cud under build/user/seal.key (an Ed25519 seed made once per build
 # tree from /dev/urandom, never committed; the kernel embeds only seal.pub). cat also carries a second
 # signature (seal2.key). Then the seal v3/v2 and 6.3/6.4 negative images, the 11.1 Linux-ABI test programs

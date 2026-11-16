@@ -1,6 +1,6 @@
 # mkgpt (examples/efi/mkgpt.cud)
 
-Forge port of `examples/efi/mkgpt.py`. With the same `INCUDELA_GUID_SEED`, the two write byte-identical images (tests/mkgpt/run.sh).
+Cuditor port of `examples/efi/mkgpt.py`. With the same `INCUDELA_GUID_SEED`, the two write byte-identical images (tests/mkgpt/run.sh).
 
     mkgpt out.img esp.fat [size_mib]      (default 128)
 

@@ -141,7 +141,7 @@ or a kernel self-test. A result name is one of the 41 entries in `tests/os/expec
 and IOMMU boots requires `back == front` and a row that decodes as `KERNEL OK`.
 
 **Boot and memory.** `os/kernel-bios`, `os/kernel-bios-smp1`, `os/kernel-uefi` and
-`os/efi-loader-gpt` each reach `KERNEL OK` through GRUB BIOS, GRUB UEFI, or the Forge UEFI loader.
+`os/efi-loader-gpt` each reach `KERNEL OK` through GRUB BIOS, GRUB UEFI, or the Incudela UEFI loader.
 After `KERNEL OK` the kernel prints `debug-exit N ms after KERNEL OK` (TSC-bounded 5 s wait for the
 harness screenshot); `os/efi-loader-gpt-post-ok` requires N < 8000, so a 60 s stall after `KERNEL OK`
 fails the suite.
@@ -180,14 +180,14 @@ virtio-blk (`disable-legacy=on,iommu_platform=on`) and requires `VT-d: 1 remappi
 `slpt maps only the grant`, and `KERNEL OK`. Default deny and table coverage (A.2 gaps 1, 3, 6, closed): `translation on, 1 of 1 remapping unit programmed (default deny`, `VT-d: default deny: `, `scanned device(s) and every unscanned requester ID blocked`, `context audit: 65536 requester IDs, `, `0 stray, 0 missing`, and the negative case `context audit catches a stray pass-through entry`. Observed faults and aliasing (A.2 gaps 4, 5, closed): the same boot adds QEMU's `edu` device behind a root port and a PCIe-to-PCI bridge; `(alias via PCIe-to-PCI bridge `, `denied edu DMA faulted: source ` (an unclaimed device's DMA is recorded by the hardware model with the alias as source), `requester-ID context(s): 64 bytes into edu and back`, `identical, 0 faults` (DMA through the alias context arrives intact), and `out-of-grant edu DMA faulted at IOVA 0x0000000000810000: source ` (DMA outside the mapping faults at that address). DMA policy (A.2 gap 7, closed): `VT-d policy: remapping active (deny by default, grants confined)` on `os/kernel-iommu`; `VT-d policy: no remapping unit, DMA unconfined (permissive default` and the negative case `strict mode refuses drv 402 without a remapping unit: EPERM` on `os/kernel-bios`, `os/kernel-uefi` and `os/efi-loader-gpt`. Interrupt remapping (A.2 gap 2, closed): `VT-d: interrupt remapping on (256-entry table`, `vector 0x50 -> IRTE 0 (source ` (virtio-blk MSI-X through a source-validated IRTE; blkd keeps serving the disk), `VT-d IR: edu MSI via IRTE 1 (source `, `delivered 1; via an IRTE validated for `, and `blocked; via a not-present IRTE blocked`. The IOVA in that report is not the host PA
 (`iommu_grant_ok` refuses an identity grant). Without a remapping unit the existing BIOS/UEFI
 boots still reach `KERNEL OK` and 403 still returns a host PA. Input and NVMe services,
-Forge FS and the object store have their own result names (`os/drivers`, `os/forgefs-*`,
+Incudela FS and the object store have their own result names (`os/drivers`, `os/forgefs-*`,
 `os/objstore-*`, `os/objfs-*`, `os/nvme-service-swap-restart-boot1` / `boot2`).
 
 **Other result names (count corrected 2026-11-15).** The list grew from 35 to 39 without this appendix
 following. Also required: `os/boot-harness-self-test` (the harness's own stall and drain checks, no QEMU),
 `os/drivers-no-disk-write` (the driver boot leaves its disk image byte-identical), the boot-policy boots
 `os/bootpol-cmdline-strict`, `os/bootpol-config-strict` and `os/bootpol-iommu-kexec` (tests/os/bootpol.sh: the
-sealed `\EFI\Forge\boot.cfg` and `forge.iommu=strict` only tighten the DMA policy, also across kexec),
+sealed `\EFI\Forge\boot.cfg` and `incudela.iommu=strict` only tighten the DMA policy, also across kexec),
 `dwarf/image-unchanged-by-g`, `dwarf/line-table` and `dwarf/gdb-schedule` (`-g` debug info leaves the loaded
 image unchanged and gdb resolves kernel lines), and `os/desktop` (tests/os/desktop.sh: colour bars, window
 drag, the app canvas, taskbar and launcher checked from a screendump).
@@ -266,7 +266,7 @@ named test or marker in A.1 is not a verification claim.
    the boot log states that DMA is unconfined. The strict policy (`iommu_strict`) refuses drv 402
    with `EPERM` in that case. Since 2026-11-12 the policy is chosen at boot (bootpol.cudi): the build
    default (permissive), then a sealed `\EFI\Forge\boot.cfg` (`cudseal --config`, either way), then
-   the command line, which can only tighten (`forge.iommu=strict`; `forge.iommu=permissive` is refused).
+   the command line, which can only tighten (`incudela.iommu=strict`; `incudela.iommu=permissive` is refused).
    The command line lives in `BootInfo.cmdline` and survives kexec. Remaining limit: strict gates
    user-mode driver grants only, not kernel-driven devices.
 

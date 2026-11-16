@@ -1,19 +1,19 @@
-# incudela-part: Forge port of tools/incudela-part.py (byte-identical disk images and output; tests/incudela-part/run.sh).
+# incudela-part: Cuditor port of tools/incudela-part.py (byte-identical disk images and output; tests/incudela-part/run.sh).
 # USAGE is the Python tool's __doc__, printed verbatim. The image is read whole,
 # patched in memory and written back; only GPT structures and the new partition's first 4 KiB differ.
 import os
 import sys
 
 USAGE = "\n".join([
-    "Create the Forge FS partition on a GPT disk image, explicitly.",
+    "Create the Incudela FS partition on a GPT disk image, explicitly.",
     "",
     "usage: incudela-part.py create DISK SIZE_MIB --yes-add-incudela-partition",
-    "       incudela-part.py read DISK NAME          (print a Forge FS file to stdout)",
+    "       incudela-part.py read DISK NAME          (print an Incudela FS file to stdout)",
     "",
     "'create' adds one partition with the Forge type GUID D0C2E3A1-6B7F-4F0A-9E11-466F72676546 in the",
     "largest free gap, rewrites only the primary and backup GPT headers and entry arrays, and zeroes the",
     "first 4 KiB of the new partition (so the kernel will format it). It refuses without the flag, on a",
-    "disk without a valid GPT, if a Forge partition already exists, or if no gap is large enough.",
+    "disk without a valid GPT, if an Incudela partition already exists, or if no gap is large enough.",
     "No existing partition and no byte outside the GPT structures and the new partition is changed.",
     "INCUDELA_GUID_SEED=N (testing only): the new partition's unique GUID is bytes_le = pack('<QQ', N, 0)",
     "instead of uuid4, so output is reproducible (tests/incudela-part compares against tools/incudela-part.cud).",
@@ -141,7 +141,7 @@ def create(disk, mib):
     used = sorted([[p[2], p[3]] for p in ps])
     for p in ps:
         if p[1] == FORGE:
-            die("a Forge partition already exists")
+            die("an Incudela partition already exists")
     free = [i for i in range(n) if ents[i * 128:i * 128 + 16] == ZERO16]
     if len(free) == 0:
         die("no free GPT entry")
@@ -176,7 +176,7 @@ def create(disk, mib):
     d = put(d, (nsec - 1) * SEC, hdr(h, hs, nsec - 1, 1, bel, ecrc))
     d = put(d, s * SEC, "\x00" * 4096)
     write_file(disk, d)
-    print("incudela-part: created Forge FS partition " + str(i + 1) + ": LBA " + str(s) + ".." + str(e) + " (" + str(mib) + " MiB)")
+    print("incudela-part: created Incudela FS partition " + str(i + 1) + ": LBA " + str(s) + ".." + str(e) + " (" + str(mib) + " MiB)")
 
 def read(disk, name):
     d = read_file(disk)
@@ -185,7 +185,7 @@ def read(disk, name):
     g = load(d)
     p = [q for q in parts(g[6], g[5]) if q[1] == FORGE]
     if len(p) != 1:
-        die("need exactly one Forge partition")
+        die("need exactly one Incudela partition")
     lo = p[0][2]
     sb = d[lo * SEC:lo * SEC + 4096]
     it = d[lo * SEC + 4096:lo * SEC + 8192]

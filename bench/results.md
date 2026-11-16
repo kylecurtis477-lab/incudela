@@ -1,7 +1,7 @@
 # Benchmarks (best of 5, 2026-11-01 20:05 CST)
 
 ## Default (-O), after the int-band fix (commit 447b1d7)
-| bench | Forge run | Rust -O3 run | CPython run | Forge compile | Rust compile | Forge bin | Rust bin | output |
+| bench | Cuditor run | Rust -O3 run | CPython run | Forge compile | Rust compile | Forge bin | Rust bin | output |
 |---|---|---|---|---|---|---|---|---|
 | fib | 0.010s | 0.006s | 0.18s | 172ms | 233ms | 137,296 B | 11,395,072 B | 2178309 |
 | loop | 0.094s | 0.073s | 5.50s | 203ms | 184ms | 137,264 B | 11,395,024 B | 199999997 |
@@ -16,7 +16,7 @@ Band checks (2**62..2**62+3 alias bool/None) are done where a value leaves int a
 ## Previous runs (2026-10-31 22:52 CT)
 
 ## Default (-O, optimizing IR backend)
-| bench | Forge run | Rust -O3 run | CPython run | Forge compile | Rust compile | Forge bin | Rust bin | output |
+| bench | Cuditor run | Rust -O3 run | CPython run | Forge compile | Rust compile | Forge bin | Rust bin | output |
 |---|---|---|---|---|---|---|---|---|
 | fib | 0.008s | 0.006s | 0.19s | 194ms | 211ms | 137,184 B | 11,395,072 B | 2178309 |
 | loop | 0.095s | 0.073s | 5.55s | 203ms | 196ms | 137,184 B | 11,395,024 B | 199999997 |
@@ -24,7 +24,7 @@ Band checks (2**62..2**62+3 alias bool/None) are done where a value leaves int a
 | lists | 0.064s | 0.056s | 3.07s | 204ms | 236ms | 137,272 B | 11,399,120 B | 49950000000 |
 
 ## -O0 (direct token codegen, fallback)
-| bench | Forge run | Rust -O3 run | CPython run | Forge compile | Rust compile | Forge bin | Rust bin | output |
+| bench | Cuditor run | Rust -O3 run | CPython run | Forge compile | Rust compile | Forge bin | Rust bin | output |
 |---|---|---|---|---|---|---|---|---|
 | fib | 0.009s | 0.006s | 0.19s | 237ms | 253ms | 137,208 B | 11,395,072 B | 2178309 |
 | loop | 0.097s | 0.072s | 5.53s | 189ms | 206ms | 137,208 B | 11,395,024 B | 199999997 |
@@ -48,7 +48,7 @@ The hybrid-function recompile is replaced by in-place register compaction (hyb_c
 ## Tracking starts (2026-11-11 18:30 CST, at 2aba6e2)
 `./cuditor bench run` (tools/bench.cud) replaces hand runs of run_bench.py; records go to bench/history.tsv and
 `./cuditor bench check` compares them with bench/baseline.tsv. Best of 5 on the shared box while another worker ran QEMU:
-| bench | Forge run | Rust -O3 run | ratio |
+| bench | Cuditor run | Rust -O3 run | ratio |
 |---|---|---|---|
 | fib | 11.4 ms | 7.5 ms | 1.51 |
 | loop | 113.7 ms | 86.1 ms | 1.31 |
@@ -67,7 +67,7 @@ Self-compile best of 5: **1560 ms** (was 2354 ms on the same loaded box). bench/
 ## Freestanding twins and --fs-opt step 1 (2026-11-11 18:47 CST)
 bench/fsloop.cud and bench/fsfib.cud are freestanding copies of loop and fib (same output; their Rust
 references are loop.rs and fib.rs). `bench run` builds each with `--fs-opt` (fsloop, fsfib) and without (fsloop0, fsfib0).
-| bench | Forge run | Rust -O3 run | ratio |
+| bench | Cuditor run | Rust -O3 run | ratio |
 |---|---|---|---|
 | fsloop (--fs-opt) | 292.2 ms | 86.8 ms | 3.36 |
 | fsloop0 | 297.5 ms | 86.8 ms | 3.42 |
@@ -78,7 +78,7 @@ The fs backend is far behind the hosted IR backend on loop (hosted 113 ms): its 
 more than all the stack traffic that step 1 removes.
 
 ## --fs-opt constant division (2026-11-11 18:52 CST)
-| bench | Forge run | Rust -O3 run | ratio |
+| bench | Cuditor run | Rust -O3 run | ratio |
 |---|---|---|---|
 | fsloop (--fs-opt) | 184.2 ms | 83.3 ms | 2.21 |
 | fsloop0 | 296.7 ms | 83.3 ms | 3.56 |

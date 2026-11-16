@@ -1,4 +1,4 @@
-# pecheck: Forge port of tests/fld/pecheck.py (kept as the reference; tests/pecheck/run.sh compares them).
+# pecheck: Cuditor port of tests/fld/pecheck.py (kept as the reference; tests/pecheck/run.sh compares them).
 # usage: pecheck IMAGE.efi -- structural checks on the fld PE32+ image (what UEFI firmware relies on).
 # On success prints the same PASS line as the Python; a failed check prints `pecheck: MSG` and exits 1
 # (Python exits 1 with an AssertionError traceback).

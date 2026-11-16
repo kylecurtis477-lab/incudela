@@ -81,7 +81,7 @@ out=$($T/c2cud $T/pi.c $T/pi.cud); rc=$?
 [ $rc = 1 ] && [ "$out" = "c2cud: line 1: cannot convert i32 to ptr[i32] without a cast (at ';')" ] && echo "PASS c2cud ptr-int-error" || { echo "FAIL c2cud ptr-int-error (rc=$rc)"; fail=1; }
 printf 'union u { int a; };\n' > $T/un.c
 out=$($T/c2cud $T/un.c $T/un.cud); rc=$?
-[ $rc = 1 ] && [ "$out" = "c2cud: line 1: unions are not supported (Forge has no unions) (at 'union')" ] && echo "PASS c2cud union-error" || { echo "FAIL c2cud union-error (rc=$rc)"; fail=1; }
+[ $rc = 1 ] && [ "$out" = "c2cud: line 1: unions are not supported (Cuditor has no unions) (at 'union')" ] && echo "PASS c2cud union-error" || { echo "FAIL c2cud union-error (rc=$rc)"; fail=1; }
 printf 'int main(void) { double d = 1.0; int x = d %% 2; return 0; }\n' > $T/fm.c
 out=$($T/c2cud $T/fm.c $T/fm.cud); rc=$?
 [ $rc = 1 ] && [ "$out" = "c2cud: line 1: invalid float operands to % (at ';')" ] && echo "PASS c2cud float-mod-error" || { echo "FAIL c2cud float-mod-error (rc=$rc)"; fail=1; }

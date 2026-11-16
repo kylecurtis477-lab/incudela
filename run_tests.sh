@@ -149,7 +149,7 @@ build/cudc build/t_inc.cud build/t_inc.s --freestanding > build/t_inc.txt 2>&1; 
 [ $rc = 1 ] && grep -q "^error: cannot read include file .*no_such_file.cudi" build/t_inc.txt && echo "PASS include-missing" || { echo "FAIL include-missing (rc=$rc)"; fail=1; }
 build/cudc build/no_such_input.cud build/t_inc.s > build/t_inc.txt 2>&1; rc=$?
 [ $rc = 1 ] && grep -q "^error: cannot read input file" build/t_inc.txt && echo "PASS input-missing" || { echo "FAIL input-missing (rc=$rc)"; fail=1; }
-# tests/os: boot the Forge kernel (BIOS + UEFI via GRUB multiboot2) and the native EFI app in headless QEMU
+# tests/os: boot the Incudela kernel (BIOS + UEFI via GRUB multiboot2) and the native EFI app in headless QEMU
 if [ -z "$SKIP_OS" ] && command -v qemu-system-x86_64 >/dev/null && command -v grub-mkrescue >/dev/null; then
   # capture through a regular file, not $(...): a child that sets O_NONBLOCK on the shared pipe made later
   # writes fail with EAGAIN, silently dropping result lines (inv83: 14 os/dwarf results missing at O0)

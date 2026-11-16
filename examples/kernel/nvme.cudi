@@ -2,7 +2,7 @@
 # completions arrive on MSI-X vector 0x53 once nv_irq_init has run: a reader with interrupts on and the
 # scheduler running sleeps on nv_wq until the completion queue entry's phase flips (the handler wakes it, both
 # under rq_lock, so no wakeup is lost); early boot and interrupts-off callers keep polling. The driver has no
-# write path: nvme_write (end of file) only writes inside the range Forge FS claimed (its validated GPT partition).
+# write path: nvme_write (end of file) only writes inside the range Incudela FS claimed (its validated GPT partition).
 nv_regs: u64
 nv_dstrd: u64
 nv_asq: u64
@@ -274,7 +274,7 @@ def nvme_read(lba: u64) -> u64:
     nv_reads += 1
     return nv_buf
 
-# Write path: only inside the LBA range claimed by Forge FS (nvme_claim), which only claims a validated
+# Write path: only inside the LBA range claimed by Incudela FS (nvme_claim), which only claims a validated
 # Forge-type GPT partition. Everything else is refused and counted.
 nv_own_lo: u64
 nv_own_hi: u64  # exclusive; 0 = owns nothing, all writes refused

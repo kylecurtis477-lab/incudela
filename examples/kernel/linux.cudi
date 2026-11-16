@@ -958,7 +958,7 @@ def lx_execve(frame: u64, dirfd: u64, upath: u64, uargv: u64, flags: u64) -> u64
         return ENOEXEC
     if lx_osabi(img) != 3:
         kfree(img)
-        return lx_exec_refuse(p, path[:], "not a Linux image (Forge images run only through Forge exec)", ENOEXEC)
+        return lx_exec_refuse(p, path[:], "not a Linux image (Incudela images run only through Incudela exec)", ENOEXEC)
     # past every check: drop O_CLOEXEC handles, then replace the image
     i2: u64 = 0
     while i2 < NFD:

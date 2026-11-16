@@ -1,7 +1,7 @@
 # The living object store (Phase 9)
 
 Sources: `examples/kernel/obj.cudi` (the store core and write-ahead log, in fully safe Forge and shared by the
-kernel and hosted tests) and `examples/kernel/objd.cudi` (persistence on the Forge partition, kernel only).
+kernel and hosted tests) and `examples/kernel/objd.cudi` (persistence on the Incudela partition, kernel only).
 Tests: `tests/fs/objstore.cud`, `tests/fs/objlog.cud`, and `os/objstore-crash-recover` in `tests/os/forgefs.sh`.
 
 ## Model
@@ -58,8 +58,8 @@ Records only refer to earlier ones, so any prefix of the log is a consistent sto
 arrives out of order, and truncates the log there.
 
 ## On disk (9.2b)
-`objd.cudi` keeps the log in a single Forge FS file, `objects.log`. The file is `OD_NB` logical blocks (65, two encrypted slots each since Phase 10.1, see docs/privacy.md), reserved and zero-filled
-up front. It lives on the explicitly created Forge-owned partition (see the Forge FS) and is never written anywhere else.
+`objd.cudi` keeps the log in a single Incudela FS file, `objects.log`. The file is `OD_NB` logical blocks (65, two encrypted slots each since Phase 10.1, see docs/privacy.md), reserved and zero-filled
+up front. It lives on the explicitly created Forge-owned partition (see the Incudela FS) and is never written anywhere else.
 - `od_open()` replays an existing log. If the log ends in a torn tail, it zeroes the tail both in memory and on disk, so later appends
   can't revive stale records. If there's no log, it creates one.
 - Since Phase 10.1 every block is ChaCha20-encrypted and HMAC-SHA256 authenticated (encrypt-then-MAC), and written alternately to two slots; a slot whose tag fails reads as

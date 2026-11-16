@@ -21,7 +21,7 @@ def describe(v):
 s = "foo" + "bar"
 s += "!"
 print(s, len(s))
-name = "Forge"
+name = "Incudela"
 n = 3
 print(f"hello {name}, n={n}, n*2={n * 2}, list={[1, 2]}")
 total = 0

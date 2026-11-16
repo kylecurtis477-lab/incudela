@@ -1,5 +1,5 @@
 # cuditor: no-runtime
-# Seal proof manifests (Phase 6.1, Seal v3): Forge port of tools/cudseal.py, byte-identical output.
+# Seal proof manifests (Phase 6.1, Seal v3): Cuditor port of tools/cudseal.py, byte-identical output.
 #   cudseal [--module] [--v2] [--extra-key KEY2] [--alg-id N] [--proof-byte] SRC.cud IMAGE KEYFILE BASELINE
 #   cudseal --foreign IMAGE KEYFILE        level-3 seal of a Linux-ABI (EI_OSABI = 3) foreign ELF
 #   cudseal --config FILE KEYFILE          kind-2 seal of a boot config (\EFI\Forge\boot.cfg, bootpol.cudi)

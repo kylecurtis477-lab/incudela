@@ -1,4 +1,4 @@
-# Grammar-based fuzzer for docs/GRAMMAR.md: Forge port of tools/grammar_fuzz.py.
+# Grammar-based fuzzer for docs/GRAMMAR.md: Cuditor port of tools/grammar_fuzz.py.
 # Valid programs are generated from the grammar; each must parse (--emit=ast-json), and its
 # pretty-printed form must parse back to the same AST. Invalid programs are a valid program with
 # one top-level line broken in a way the grammar forbids; each must be rejected with a parse

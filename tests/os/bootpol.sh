@@ -1,6 +1,6 @@
 #!/bin/bash
 # tests/os/bootpol.sh: boot-time DMA policy switch (examples/kernel/bootpol.cudi), one boot per mode.
-#   bootpol-cmdline-strict  GRUB (BIOS, no IOMMU) with `forge.iommu=strict` on the multiboot2 command line and a
+#   bootpol-cmdline-strict  GRUB (BIOS, no IOMMU) with `incudela.iommu=strict` on the multiboot2 command line and a
 #                           tampered boot.cfg on the ESP: the config is refused, the command line tightens, and the
 #                           user-mode block driver is refused its DMA region end to end (blkd exits 1, the kernel
 #                           driver keeps the disk, nothing leaks).
@@ -24,8 +24,8 @@ fail_all() { for n in bootpol-cmdline-strict bootpol-iommu-kexec bootpol-config-
 [ -x $B ] && [ -f $L/vdisk.img ] && [ -x build/cudseal ] && [ -f build/user/seal.key ] || fail_all "needs tests/os/run.sh outputs"
 # the ISO with a command line (a test copy; build/kernel/forge.iso is untouched)
 cp -r build/kernel/iso $T/iso
-sed -i 's|multiboot2 /boot/kernel.elf$|multiboot2 /boot/kernel.elf forge.iommu=strict|' $T/iso/boot/grub/grub.cfg
-grep -q 'forge.iommu=strict' $T/iso/boot/grub/grub.cfg || fail_all "grub.cfg edit"
+sed -i 's|multiboot2 /boot/kernel.elf$|multiboot2 /boot/kernel.elf incudela.iommu=strict|' $T/iso/boot/grub/grub.cfg
+grep -q 'incudela.iommu=strict' $T/iso/boot/grub/grub.cfg || fail_all "grub.cfg edit"
 env -u SOURCE_DATE_EPOCH grub-mkrescue -o $T/strict.iso $T/iso >/dev/null 2>&1 || fail_all "grub-mkrescue"
 # boot configs: sealed strict, sealed permissive, and a sealed one edited afterwards (hash mismatch)
 for m in strict permissive; do
@@ -45,9 +45,9 @@ for v in tampered permissive strict; do
 done
 vd() { echo "-drive file=$T/$1.img,format=raw,if=none,id=vd,readonly=on -device virtio-blk-pci,drive=vd$2"; }
 STRICT="strict mode refuses drv 402 without a remapping unit: EPERM|blkd: no DMA region|blkd: DMA region refused under the strict policy (no remapping unit), driver exit 1; the in-kernel driver reads \\EFI\\Forge\\init.elf, identical; frames leaked 0, heap leaked 0|shell and kexec sessions skipped: both need the user-mode block driver|live patching OK|KERNEL OK"
-$B bootpol-cmdline-strict $L/bootpol1.log 200 "boot policy: \\EFI\\Forge\\boot.cfg refused (image hash mismatch), ignored|boot policy: forge.iommu=strict on the command line (tightens)|boot policy: DMA policy strict (command line); resolver truth table 18/18|VT-d policy: no remapping unit, strict (command line): drv 402 DMA grants refused|$STRICT" "$FB" -- $Q $(vd tampered) -boot d -cdrom $T/strict.iso
-$B bootpol-iommu-kexec $L/bootpol2.log 200 "boot policy: sealed \\EFI\\Forge\\boot.cfg verified: iommu=permissive|boot policy: forge.iommu=strict on the command line (tightens)|boot policy: DMA policy strict (command line); resolver truth table 18/18|VT-d policy: remapping active (deny by default, grants confined)|isolated driver service OK|kexec handoff from the previous kernel (generation 1)|boot policy: DMA policy strict (command line, kexec generation 1); resolver truth table 18/18|kexec handoff OK|KERNEL OK" "$FB" -- $Q -machine q35 -device intel-iommu,intremap=on $(vd permissive ",disable-legacy=on,iommu_platform=on") -device pcie-root-port,id=rp1,bus=pcie.0,addr=0x5,chassis=1 -device pcie-pci-bridge,id=pb1,bus=rp1 -device edu,bus=pb1,addr=0x1 -boot d -cdrom $T/strict.iso
+$B bootpol-cmdline-strict $L/bootpol1.log 200 "boot policy: \\EFI\\Forge\\boot.cfg refused (image hash mismatch), ignored|boot policy: incudela.iommu=strict on the command line (tightens)|boot policy: DMA policy strict (command line); resolver truth table 18/18|VT-d policy: no remapping unit, strict (command line): drv 402 DMA grants refused|$STRICT" "$FB" -- $Q $(vd tampered) -boot d -cdrom $T/strict.iso
+$B bootpol-iommu-kexec $L/bootpol2.log 200 "boot policy: sealed \\EFI\\Forge\\boot.cfg verified: iommu=permissive|boot policy: incudela.iommu=strict on the command line (tightens)|boot policy: DMA policy strict (command line); resolver truth table 18/18|VT-d policy: remapping active (deny by default, grants confined)|isolated driver service OK|kexec handoff from the previous kernel (generation 1)|boot policy: DMA policy strict (command line, kexec generation 1); resolver truth table 18/18|kexec handoff OK|KERNEL OK" "$FB" -- $Q -machine q35 -device intel-iommu,intremap=on $(vd permissive ",disable-legacy=on,iommu_platform=on") -device pcie-root-port,id=rp1,bus=pcie.0,addr=0x5,chassis=1 -device pcie-pci-bridge,id=pb1,bus=rp1 -device edu,bus=pb1,addr=0x1 -boot d -cdrom $T/strict.iso
 cp $OVMF_VARS $T/vars.fd
 cp build/efi/disk.img $T/disk.img
 UEFI="-machine q35 -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE -drive if=pflash,format=raw,file=$T/vars.fd"
-$B bootpol-config-strict $L/bootpol3.log 360 "Forge UEFI loader (ExitBootServices done)|boot policy: sealed \\EFI\\Forge\\boot.cfg verified: iommu=strict|boot policy: DMA policy strict (sealed boot config); resolver truth table 18/18|VT-d policy: no remapping unit, strict (sealed boot config): drv 402 DMA grants refused|$STRICT" "$FB" -- $Q $UEFI $(vd strict) -drive file=$T/disk.img,format=raw
+$B bootpol-config-strict $L/bootpol3.log 360 "Incudela UEFI loader (ExitBootServices done)|boot policy: sealed \\EFI\\Forge\\boot.cfg verified: iommu=strict|boot policy: DMA policy strict (sealed boot config); resolver truth table 18/18|VT-d policy: no remapping unit, strict (sealed boot config): drv 402 DMA grants refused|$STRICT" "$FB" -- $Q $UEFI $(vd strict) -drive file=$T/disk.img,format=raw

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the Forge user programs as static ELF64 executables (ring 3, loaded by the kernel's ELF loader),
+# Build the Incudela user programs as static ELF64 executables (ring 3, loaded by the kernel's ELF loader),
 # with --fs-opt (fs-mode register allocation; Phase 12.1 step 3c) and then $CUDC_FLAGS.
 set -e
 cd "$(dirname "$0")"

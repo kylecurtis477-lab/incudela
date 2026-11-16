@@ -1,4 +1,4 @@
-# Forge grammar (frozen, version 1; additive v1.1 test blocks, v1.2 reserved effects, v1.3 reserved allocation effects)
+# Cuditor grammar (the language was named Forge until 2026-11-16; frozen, version 1; additive v1.1 test blocks, v1.2 reserved effects, v1.3 reserved allocation effects)
 
 This is the normative grammar of Forge source. It is the grammar accepted by the strict
 AST parser (`cudc F out --emit=ast-json`, the `a_*` functions in selfhost/compiler.cud);

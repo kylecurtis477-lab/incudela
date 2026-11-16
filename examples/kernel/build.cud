@@ -1,6 +1,6 @@
-# examples/kernel/build.cud: Forge port of examples/kernel/build.sh (kept as the reference;
+# examples/kernel/build.cud: Cuditor port of examples/kernel/build.sh (kept as the reference;
 # tests/kernel-build/run.sh checks both give the same build/kernel artifacts, output and exit code).
-# Builds the Forge kernel (ELF64 multiboot2, image KASLR: fld --format kernel lays out the low boot stub at
+# Builds the Incudela kernel (ELF64 multiboot2, image KASLR: fld --format kernel lays out the low boot stub at
 # 1 MiB and the rest at -2 GiB + phys and writes the .krel self-relocation table), the user programs
 # (build/user-build, examples/user/build.cud, which builds BusyBox via build/busybox-build), the test modules
 # (build/modules-build), a second kernel with another version string for the kexec test (kernel-next.elf, must
@@ -69,8 +69,8 @@ def main():
     # a genuinely different build for the kexec test (\EFI\Forge\kernel-next.elf): another version string
     # (the script's sed, first match per line, and its grep -q check)
     src = need("kernel.cud")
-    old = "\"forge-kernel 0.2.6\""
-    new = "\"forge-kernel 0.2.6-next\""
+    old = "\"incudela-kernel 0.2.6\""
+    new = "\"incudela-kernel 0.2.6-next\""
     lines = []
     for l in src.split("\n"):
         i = l.find(old)

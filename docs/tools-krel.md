@@ -1,7 +1,7 @@
 # krel (tools/krel.cud)
 
 `krel KERNEL.ELF OUT.s` builds the image-KASLR self-relocation table from a kernel linked with `ld -q`
-(relocations kept). It's a Forge port of `tools/krel.py`. The output is the same byte-for-byte.
+(relocations kept). It's a Cuditor port of `tools/krel.py`. The output is the same byte-for-byte.
 
 Each relocation whose place is in the high half (>= 0xFFFFFFFF80000000) and whose symbol isn't absolute becomes
 one `.quad (offset_from_KBASE) | (kind << 56)`. The kinds are: 1 = R_X86_64_64 to the high half (u64 += slide),

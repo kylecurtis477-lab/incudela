@@ -49,7 +49,7 @@ struct Proc:
     dma_n: u64
     dma_va: u64
     caps: u64  # Phase 6.2: capabilities granted from the sealed manifest
-    abi: u64  # 11.1: 0 Forge syscalls, LX_ABI = the Linux personality (linux.cudi)
+    abi: u64  # 11.1: 0 Incudela syscalls, LX_ABI = the Linux personality (linux.cudi)
     lx_calls: u64  # Linux syscalls made
     lx_unsup: u64  # ... of which answered ENOSYS
     lx_dino: u64  # 11.1c: synthetic d_ino counter for getdents64

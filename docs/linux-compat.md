@@ -129,7 +129,7 @@ AT_RANDOM bytes are rdtsc-seeded splitmix64. That is enough for a test program's
 
 ## Test: lxtest
 
-`examples/user/lxtest.cud` is a Linux program written in Forge with no Forge runtime: a naked
+`examples/user/lxtest.cud` is a Linux program written in Cuditor with no Forge runtime: a naked
 `_start` hands rsp to `lx_main`, and every call is a raw `syscall` with Linux numbers. build.sh
 compiles it with cudc/fas/fld, sets EI_OSABI = 3, then seals it. tests/os/run.sh checks:
 
@@ -176,7 +176,7 @@ handle the process already holds:
 
 The file needs READ on its handle, is charged to its grant as an `exec` use in `audit`, and is
 verified with SEAL_USER | SEAL_COMPAT: an unsealed or tampered image fails the seal, and a sealed
-Forge image (OSABI 0) is refused because a Linux process may only become another Linux process. After
+Incudela image (OSABI 0) is refused because a Linux process may only become another Linux process. After
 the checks, handles opened with O_CLOEXEC are closed; all others (including the manifest grants) are
 kept, and `caps &= new seal's caps` -- carried or narrowed, never widened. argv[1..] are passed
 (space-joined, at most 16 / 127 bytes), envp is not (the new image starts with an empty

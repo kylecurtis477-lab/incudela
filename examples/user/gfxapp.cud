@@ -26,13 +26,13 @@ def bar_col(i: u64) -> u64:
 
 @export
 def _start():
-    win = win_open(300, 120, "Forge app (sandboxed, caps: gfx)")
+    win = win_open(300, 120, "Incudela app (sandboxed, caps: gfx)")
     if win >= 0x8000000000000000:
         out("gfxapp: no window\n")
         flush()
         sys_exit(1)
     win_fill(win, 0, 0, 300, 120, 0x203040)
-    win_text(win, 8, 8, "Hello from a sandboxed Forge", 0xFFFFFF)
+    win_text(win, 8, 8, "Hello from a sandboxed Incudela", 0xFFFFFF)
     win_text(win, 8, 24, "program in its own window.", 0xFFFFFF)
     i: u64 = 0
     while i < 8:

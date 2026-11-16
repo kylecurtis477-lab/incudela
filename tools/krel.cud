@@ -1,4 +1,4 @@
-# krel: Forge port of tools/krel.py (byte-identical output; checked by tests/krel/run.sh).
+# krel: Cuditor port of tools/krel.py (byte-identical output; checked by tests/krel/run.sh).
 # usage: krel KERNEL.ELF OUT.s -- build the kernel's self-relocation table for image KASLR.
 # Reference implementation only: the build uses tools/fld --format kernel; tests/fld/run.sh checks they agree.
 # Input: a kernel linked with `ld -q` (relocations kept). Every place in the high half (-2 GiB) image that

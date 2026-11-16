@@ -1,8 +1,8 @@
-# Phase 9.2b: the object store's write-ahead log persisted on the Forge partition. The log is one Forge FS
+# Phase 9.2b: the object store's write-ahead log persisted on the Incudela partition. The log is one Incudela FS
 # file, objects.log (OD_NB blocks, reserved zero-filled); each commit writes the log blocks it dirtied and
 # flushes before returning, so a returned commit is durable. Mount replays the log (obj.cudi ob_replay),
 # drops a torn or corrupt tail and zeroes it on disk so later appends can never revive stale records.
-# Only Forge FS calls are used, so every write stays inside the explicitly created Forge partition.
+# Only Incudela FS calls are used, so every write stays inside the explicitly created Incudela partition.
 # Phase 10.1: every log block is encrypted at rest and authenticated, encrypt-then-MAC: ChaCha20 under the
 # enc key with nonce = (64-bit write counter, block number), then a full 256-bit HMAC-SHA256 under the
 # separate MAC key over (block, counter, ciphertext), compared in constant time (crypt.cudi ct_eq4). Enc and
@@ -132,7 +132,7 @@ def od_keys_from_dk():
         i += 1
 
 def od_mkfile(name: ptr[u8], nb: u64) -> u64:
-# reserve a zero-filled nb-block Forge FS file; its first block (0 on failure)
+# reserve a zero-filled nb-block Incudela FS file; its first block (0 on failure)
     if ffs_ok == 0 or ffs_find(name) != FFS_NI:
         return 0
     slot: u64 = 0
@@ -645,7 +645,7 @@ def objstore_test():
                 od_put3(j, 1000 + j, 8)
                 od_commit(b)
             j += 1
-        puts("objstore: objects.log created on the Forge partition, ")
+        puts("objstore: objects.log created on the Incudela partition, ")
         put_u64(od_commits)
         puts(" durable commits, clock ")
         put_u64(ob_clock)

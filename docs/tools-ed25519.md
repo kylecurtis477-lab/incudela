@@ -1,6 +1,6 @@
 # ed25519 (tools/ed25519.cud)
 
-This is the Forge port of the signing side of `tools/ed25519.py` (RFC 8032 Ed25519).
+This is the Cuditor port of the signing side of `tools/ed25519.py` (RFC 8032 Ed25519).
 
     ed25519 public SEEDFILE          32-byte public key on stdout   (= ed25519.public(seed))
     ed25519 sign SEEDFILE MSGFILE    64-byte signature on stdout    (= ed25519.sign(seed, msg))

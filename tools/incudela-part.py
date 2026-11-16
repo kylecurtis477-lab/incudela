@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Create the Forge FS partition on a GPT disk image, explicitly.
+"""Create the Incudela FS partition on a GPT disk image, explicitly.
 
 usage: incudela-part.py create DISK SIZE_MIB --yes-add-incudela-partition
-       incudela-part.py read DISK NAME          (print a Forge FS file to stdout)
+       incudela-part.py read DISK NAME          (print an Incudela FS file to stdout)
 
 'create' adds one partition with the Forge type GUID D0C2E3A1-6B7F-4F0A-9E11-466F72676546 in the
 largest free gap, rewrites only the primary and backup GPT headers and entry arrays, and zeroes the
 first 4 KiB of the new partition (so the kernel will format it). It refuses without the flag, on a
-disk without a valid GPT, if a Forge partition already exists, or if no gap is large enough.
+disk without a valid GPT, if an Incudela partition already exists, or if no gap is large enough.
 No existing partition and no byte outside the GPT structures and the new partition is changed.
 INCUDELA_GUID_SEED=N (testing only): the new partition's unique GUID is bytes_le = pack('<QQ', N, 0)
 instead of uuid4, so output is reproducible (tests/incudela-part compares against tools/incudela-part.cud)."""
@@ -47,7 +47,7 @@ def create(disk, mib):
     with open(disk, 'r+b') as f:
         h, hs, first, last, elba, n, ents = load(f)
         used = sorted(r for _, _, r in parts(ents, n))
-        if any(t == FORGE for _, t, _ in parts(ents, n)): die('a Forge partition already exists')
+        if any(t == FORGE for _, t, _ in parts(ents, n)): die('an Incudela partition already exists')
         free = [i for i in range(n) if ents[i * 128:i * 128 + 16] == b'\0' * 16]
         if not free: die('no free GPT entry')
         need = mib * 2048
@@ -63,7 +63,7 @@ def create(disk, mib):
         if not best: die('no free gap of %d MiB' % mib)
         s, e = best[0], best[0] + need - 1
         i = free[0]
-        ents[i * 128:(i + 1) * 128] = FORGE.bytes_le + newguid(0).bytes_le + struct.pack('<QQQ', s, e, 0) + 'Forge FS'.encode('utf-16-le').ljust(72, b'\0')
+        ents[i * 128:(i + 1) * 128] = FORGE.bytes_le + newguid(0).bytes_le + struct.pack('<QQQ', s, e, 0) + 'Incudela FS'.encode('utf-16-le').ljust(72, b'\0')
         ecrc = zlib.crc32(ents)
         f.seek(0, 2); nsec = f.tell() // SEC
         def hdr(my, alt, el):
@@ -80,13 +80,13 @@ def create(disk, mib):
         f.seek(bel * SEC); f.write(ents)
         f.seek((nsec - 1) * SEC); f.write(hdr(nsec - 1, 1, bel))
         f.seek(s * SEC); f.write(b'\0' * 4096)
-        print('incudela-part: created Forge FS partition %d: LBA %d..%d (%d MiB)' % (i + 1, s, e, mib))
+        print('incudela-part: created Incudela FS partition %d: LBA %d..%d (%d MiB)' % (i + 1, s, e, mib))
 
 def read(disk, name):
     with open(disk, 'rb') as f:
         h, hs, first, last, elba, n, ents = load(f)
         p = [r for _, t, r in parts(ents, n) if t == FORGE]
-        if len(p) != 1: die('need exactly one Forge partition')
+        if len(p) != 1: die('need exactly one Incudela partition')
         lo = p[0][0]
         f.seek(lo * SEC); sb = f.read(4096); it = f.read(4096)
         if sb[:8] != b'FORGEFS1': die('not formatted')

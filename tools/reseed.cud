@@ -1,4 +1,4 @@
-# reseed: Forge port of tools/reseed.sh (kept as the reference). Refresh the checked-in seed from a green
+# reseed: Cuditor port of tools/reseed.sh (kept as the reference). Refresh the checked-in seed from a green
 # build (run ./build.sh first; commit the result): require build/stage2.s == build/stage4.s (a mismatch
 # prints cmp's message, "differ" on stdout and "EOF on" on stderr, and exits 1), copy build/cudc, fas and fld to
 # seed/cudc-seed, fas-seed and fld-seed (mode 0755), write seed/seed.sha256 in sha256sum format and

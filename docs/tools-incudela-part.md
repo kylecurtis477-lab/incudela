@@ -1,14 +1,14 @@
 # incudela-part (tools/incudela-part.cud)
 
-Forge port of `tools/incudela-part.py`. The images, stdout, stderr and exit codes are byte-identical (tests/incudela-part/run.sh).
+Cuditor port of `tools/incudela-part.py`. The images, stdout, stderr and exit codes are byte-identical (tests/incudela-part/run.sh).
 
     incudela-part create DISK SIZE_MIB --yes-add-incudela-partition
-    incudela-part read DISK NAME          (print a Forge FS file to stdout)
+    incudela-part read DISK NAME          (print an Incudela FS file to stdout)
 
 `create` adds one partition with the Forge type GUID D0C2E3A1-6B7F-4F0A-9E11-466F72676546 in the largest free gap
 (start aligned to 1 MiB). It rewrites only the primary and backup GPT headers and entry arrays, and zeroes the first
 4 KiB of the new partition so the kernel will format it. It refuses to run without the flag, on a disk without a
-valid GPT (bad signature, header CRC or entry CRC), when a Forge partition already exists, when no GPT entry is free,
+valid GPT (bad signature, header CRC or entry CRC), when an Incudela partition already exists, when no GPT entry is free,
 or when no gap is large enough. `read` looks up NAME in the 64 64-byte entries after the FORGEFS1 superblock and
 writes the file's bytes to stdout.
 

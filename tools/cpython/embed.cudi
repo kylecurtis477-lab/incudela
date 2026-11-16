@@ -1,4 +1,4 @@
-# tools/cpython/embed.cudi: hosted CPython embed API, written in Forge (Phase 11.5(a) step 2).
+# tools/cpython/embed.cudi: hosted CPython embed API, written in Cuditor (Phase 11.5(a) step 2).
 # Calls libpython's exported C API through the 11.2 SysV C ABI. No C shim: macros are
 # avoided by using the function forms CPython also exports (PyRun_SimpleString,
 # PyCMethod_New, PyModule_New, Py_IncRef / Py_DecRef, Py_InitializeFromConfig, …) and

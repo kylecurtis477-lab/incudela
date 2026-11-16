@@ -1,4 +1,4 @@
-# cuditor verify [--unsafe-report] [files...]: Forge port of tools/cud_verify.sh (kept as the reference;
+# cuditor verify [--unsafe-report] [files...]: Cuditor port of tools/cud_verify.sh (kept as the reference;
 # tests/testblocks/run.sh compares them). One gate over the checkers that exist today, per file:
 #   parse  - strict frozen-grammar parser (cudc --emit=ast-json)
 #   fmt    - canonical formatting (build/fmt --check)

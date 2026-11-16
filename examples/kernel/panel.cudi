@@ -1,5 +1,5 @@
 # panel.cudi: the desktop shell (screen step 6), a taskbar along the bottom of the screen and a launcher menu,
-# drawn by the compositor (wm.cudi) above every window. The taskbar holds a "Forge" button that opens the
+# drawn by the compositor (wm.cudi) above every window. The taskbar holds a "Incudela" button that opens the
 # launcher, then one button per window (the focused window's button is highlighted). Pressing a window's button
 # raises and focuses it; pressing the focused window's button minimizes it (hidden from the screen and from
 # clicks, focus moves to the topmost visible window). The launcher lists every window; choosing one restores it
@@ -45,7 +45,7 @@ def pn_draw():
     y = pn_y()
     gfx_fill(0, y, gfx_w, PN_H, PN_BG)
     gfx_fill(4, y + 4, 80, PN_H - 8, PN_START)
-    gfx_text(24, y + 8, "Forge", 0xFFFFFF, PN_START)
+    gfx_text(24, y + 8, "Incudela", 0xFFFFFF, PN_START)
     i: u64 = 0
     while i < wm_n:
         bx = PN_X0 + i * (PN_BW + 8)

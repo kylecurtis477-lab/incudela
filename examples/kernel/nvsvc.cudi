@@ -5,7 +5,7 @@
 # and its state word (served count), which the kernel keeps (418) for the next instance.
 # There is no IOMMU, so the driver never gets the BAR or a DMA address: the kernel writes the SQE
 # only if it matches the posted request exactly (opcode for the op, namespace 1, the kernel's DMA
-# buffer, LBA, block count, writes only inside the claimed Forge partition) and refuses anything
+# buffer, LBA, block count, writes only inside the claimed Incudela partition) and refuses anything
 # else (counted). A request the driver took but did not reply to stays posted: when the driver dies
 # the kernel drains any completion it left in the queue, and the restarted or swapped-in instance
 # replays the request (reads and writes of the same buffer are idempotent). A swap asks the driver

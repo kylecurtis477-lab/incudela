@@ -1,4 +1,4 @@
-# Generate the tests/ed25519 vectors: Forge port of tests/ed25519/gen.py.
+# Generate the tests/ed25519 vectors: Cuditor port of tests/ed25519/gen.py.
 #   gen OUT.cud SIGNER    writes the verifier test program to OUT.cud and prints the expected
 #                           1/0 string (one digit per vector)
 # SIGNER is a build of tools/ed25519.cud (`public SEED` / `sign SEED MSG`). The output must be

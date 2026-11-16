@@ -1,5 +1,5 @@
 # cuditor: no-runtime
-# forgex64.efi: native UEFI boot loader for the Forge kernel, written in Forge (PE32+, EFI subsystem 10).
+# forgex64.efi: native UEFI boot loader for the Incudela kernel, written in Cuditor (PE32+, EFI subsystem 10).
 # Lives in \EFI\Forge\ on an existing ESP next to Windows Boot Manager / shim / GRUB / systemd-boot and
 # only reads \EFI\Forge\kernel.elf from the same volume: nothing else on the disk is touched.
 #   1. read kernel.elf via LoadedImage -> SimpleFileSystem
@@ -321,7 +321,7 @@ def build_tables(kdelta: u64) -> u64:
 def efi_main(image: u64, st: ptr[SystemTable]) -> u64:
     con = st.con_out
     bs = st.boot_services
-    print("Forge UEFI loader: hello from PE32+\r\n")
+    print("Incudela UEFI loader: hello from PE32+\r\n")
     if st.hdr.signature != 0x5453595320494249:
         return fail("bad system table signature", 0)
     print("EFI system table signature OK, revision ")

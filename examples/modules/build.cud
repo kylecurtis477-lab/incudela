@@ -1,4 +1,4 @@
-# examples/modules/build.cud: Forge port of examples/modules/build.sh (kept as the reference;
+# examples/modules/build.cud: Cuditor port of examples/modules/build.sh (kept as the reference;
 # tests/modules-build/run.sh checks both produce byte-identical artifacts, the same output and exit code).
 # Builds the test kernel modules as relocatable ELF64 objects (.ko = tools/fas output, ET_REL), sealed
 # with tools/cudseal.cud (--module) under build/user/seal.key, plus the negative modules: unsealed,

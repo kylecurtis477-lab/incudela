@@ -1,4 +1,4 @@
-# mkgpt: Forge port of examples/efi/mkgpt.py (byte-identical images with INCUDELA_GUID_SEED; tests/mkgpt/run.sh).
+# mkgpt: Cuditor port of examples/efi/mkgpt.py (byte-identical images with INCUDELA_GUID_SEED; tests/mkgpt/run.sh).
 # Build a GPT disk image: protective MBR + primary/backup GPT with
 #   1: EFI System Partition (FAT image given on the command line)
 #   2: Microsoft basic data (empty placeholder, simulates an existing Windows install)

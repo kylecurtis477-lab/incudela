@@ -1,7 +1,7 @@
 #!/bin/sh
 # tests/cpython-embed: Python calls into Forge @export functions, and Forge calls
 # back into Python (eval, object calls, and a Python function that calls Forge),
-# through the 11.5(a) embed API (tools/cpython/embed.cudi, written in Forge) and
+# through the 11.5(a) embed API (tools/cpython/embed.cudi, written in Cuditor) and
 # the 11.2 C ABI. Also: tools/cpython/pylayout.cudi must match what tools/cpython/pylayout.cud
 # generates from the pinned headers (and the generator refuses non-pinned, free-threaded and debug
 # header sets), and the libpython guard refuses non-pinned and free-threaded Py_GetVersion strings.

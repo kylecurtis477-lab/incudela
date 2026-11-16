@@ -1,4 +1,4 @@
-# memimg: Forge port of tests/fld/memimg.py (kept as the reference; tests/memimg/run.sh compares them).
+# memimg: Cuditor port of tests/fld/memimg.py (kept as the reference; tests/memimg/run.sh compares them).
 # usage: memimg A.elf B.elf -- the two executables load identical bytes at identical addresses (PT_LOAD by
 # PT_LOAD: vaddr, size, flags, contents with .bss zero-fill) and have the same entry point.
 # Prints exactly what the Python prints (SAME/DIFF line, SEGS differ / bytes differ details); always exit 0.

@@ -152,7 +152,7 @@ def do_ls(dir: ptr[u8]):
 
 @export
 def _start():
-    out("Forge sh: builtins ls, wait, run app [&] (manifest sandbox), grants, revoke app, audit, kexec [next], exit, cmd &; programs from /efi/forge/bin\n")
+    out("Incudela sh: builtins ls, wait, run app [&] (manifest sandbox), grants, revoke app, audit, kexec [next], exit, cmd &; programs from /efi/forge/bin\n")
     flush()
     ncmd: u64 = 0
     while 1:

@@ -1,6 +1,6 @@
-# examples/efi/build.cud: Forge port of examples/efi/build.sh (kept as the reference; tests/efi-build/run.sh
+# examples/efi/build.cud: Cuditor port of examples/efi/build.sh (kept as the reference; tests/efi-build/run.sh
 # checks both give the same build/efi artifacts byte for byte, the same output and exit code).
-# Builds the Forge UEFI loader (PE32+, EFI application) plus the kernel (build/kernel-build, examples/kernel/build.cud; examples/kernel/build.sh is kept as the reference), then a
+# Builds the Incudela UEFI loader (PE32+, EFI application) plus the kernel (build/kernel-build, examples/kernel/build.cud; examples/kernel/build.sh is kept as the reference), then a
 # FAT32 ESP image (mtools) holding the loader, kernels, init, the user programs, the test modules and test
 # files under \EFI\Forge\ next to empty Microsoft/debian vendor directories (BOOT\BOOTX64.EFI is only this
 # test disk's removable-media fallback), and a GPT test disk around it with build/efi/mkgpt (mkgpt.cud).

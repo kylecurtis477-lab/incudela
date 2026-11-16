@@ -1,4 +1,4 @@
-# mkfont: Forge port of tools/mkfont.py (byte-identical font.cudi and stdout; tests/mkfont/run.sh).
+# mkfont: Cuditor port of tools/mkfont.py (byte-identical font.cudi and stdout; tests/mkfont/run.sh).
 # usage: mkfont font.ttf out.cudi -- render ASCII 32..126 of DejaVu Sans Mono at 13 px into an 8x16
 # 1-bpp bitmap font (u8[1520], 16 bytes per glyph, MSB = leftmost pixel), then preview 'F' and 'g'.
 # The Python tool uses PIL, i.e. FreeType with default (hinted) loading and the smooth rasterizer.

@@ -1,4 +1,4 @@
-# c2cud: C-to-Forge translator (plan item 11.4), written in Forge.
+# c2cud: C-to-Forge translator (plan item 11.4), written in Cuditor.
 # usage: c2cud --tokens IN.c         dump the C token stream (one "line kind text" per token)
 #        c2cud IN.c OUT.cud        translate IN.c to freestanding (no runtime) @unsafe Forge
 # Lexer (step 1): identifiers, keywords, integer/float/char/string literals, all C operators (longest
@@ -38,7 +38,7 @@
 # Array sizes and integer global initializers may be integer constant expressions (literals, character
 # constants, sizeof(type), parentheses, unary + - ~, * / % as in C (truncating), + -, << >>, &, ^, |, and
 # #define expanding to those), evaluated in 64-bit; an unsigned operand mixed with a negative value is a
-# clean error (C's unsigned conversions are not modelled). Also rejected: unions (Forge has none; the plan does not add them),
+# clean error (C's unsigned conversions are not modelled). Also rejected: unions (Cuditor has none; the plan does not add them),
 # hex floats, long double, the comma operator, compound literals, continue in a switch, enum, goto,
 # varargs, local typedef, bit-fields, K&R, attributes, GNU statement-expressions, _Bool, _Complex,
 # static local variables, and an inner-block declaration of the same name and type as an outer
@@ -522,7 +522,7 @@ class Parser:
                 seen = True
                 self.pos += 1
             elif t[0] == "kw" and t[1] == "union":
-                self.err("unions are not supported (Forge has no unions)")
+                self.err("unions are not supported (Cuditor has no unions)")
             elif t[0] == "kw" and t[1] in ["void", "char", "short", "int", "float", "double"]:
                 if size != "" and not (t[1] == "int" and (size == "short")):
                     self.err("bad type")

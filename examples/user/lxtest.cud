@@ -1,6 +1,6 @@
 # cuditor: no-runtime
 # cuditor: caps()
-# Phase 11.1 Linux-ABI test program (docs/linux-compat.md). Built like every Forge user program
+# Phase 11.1 Linux-ABI test program (docs/linux-compat.md). Built like every Incudela user program
 # (cudc -> fas -> fld), then tagged EI_OSABI = 3 and sealed (examples/user/build.sh), so the kernel
 # runs it under the Linux syscall personality -- and only when sh launches it in the compat sandbox
 # (`run lxtest`). It uses no Forge runtime and no Forge syscall: everything below is a raw Linux
@@ -235,7 +235,7 @@ def lx_main(sp: u64):
     check(lsys(107, 0, 0, 0, 0, 0) == 1000, "geteuid 1000 (= AT_EUID)")
     check(regs_kept() == 0, "registers preserved across syscall")
     # Forge-only syscalls are not visible from the Linux personality
-    check(lsys(409, 0, 0, 0, 0, 0) == ENOSYS and lsys(39 + 1000, 0, 0, 0, 0, 0) == ENOSYS, "Forge syscalls unreachable")
+    check(lsys(409, 0, 0, 0, 0, 0) == ENOSYS and lsys(39 + 1000, 0, 0, 0, 0, 0) == ENOSYS, "Incudela syscalls unreachable")
     # TLS: arch_prctl(ARCH_SET_FS) on an mmap'd block whose first word points at itself (the x86-64
     # TLS convention); the FS base must survive yields and timer preemptions (sched.cudi reloads it)
     tls = lsys(9, 0, 4096, 3, 0x22, 0xFFFFFFFFFFFFFFFF)

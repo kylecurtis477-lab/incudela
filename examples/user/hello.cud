@@ -1,7 +1,7 @@
 # cuditor: safe
 # cuditor: no-runtime
 # cuditor: caps()
-# A Forge user program: runs in ring 3 in its own address space, talks to the kernel only through syscalls.
+# A Incudela user program: runs in ring 3 in its own address space, talks to the kernel only through syscalls.
 include "ulib.cudi"
 
 marker: u64
@@ -25,7 +25,7 @@ def count_primes(n: u64) -> u64:
 def _start():
     pid = sys_getpid()
     marker = pid * 1000 + 7
-    out("hello from ring 3: Forge user program, pid ")
+    out("hello from ring 3: Incudela user program, pid ")
     out_u64(pid)
     out(", cpl ")
     out_u64(read_cs() & 3)

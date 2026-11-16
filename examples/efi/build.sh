@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the Forge UEFI loader (+ kernel) and a GPT test disk whose ESP holds it next to other loaders' directories.
+# Build the Incudela UEFI loader (+ kernel) and a GPT test disk whose ESP holds it next to other loaders' directories.
 set -e
 cd "$(dirname "$0")"
 B=../../build/efi; mkdir -p $B

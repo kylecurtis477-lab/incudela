@@ -3,12 +3,12 @@
 # Phase 11.1d Linux-ABI execve test (docs/linux-compat.md). Built and sealed like lxtest (EI_OSABI = 3,
 # runs only through `run lxexec`); its manifest grants fd 4 = /efi/forge/bin (dir: lookup + read).
 # One process, three images, chosen by argv[1]:
-#   stage 1: the refusals (a Forge image, unsealed and tampered images, a path outside every held handle,
+#   stage 1: the refusals (an Incudela image, unsealed and tampered images, a path outside every held handle,
 #            a relative or ".." path, bad pointers), then opens hello twice (one O_CLOEXEC) and
 #            execve()s itself by absolute path under fd 4 with argv "stage2 <cloexec fd> <fd> <pid> <checks>"
 #   stage 2: same pid, the O_CLOEXEC handle is gone, the other handle and the grant are still there, no
 #            ambient authority came back; then execveat(4, "lxexec") with argv "stage3 <checks>"
-#   stage 3: fexecve-style execveat(AT_EMPTY_PATH) of a held Forge image -> ENOEXEC, then PASS.
+#   stage 3: fexecve-style execveat(AT_EMPTY_PATH) of a held Incudela image -> ENOEXEC, then PASS.
 
 EACCES = 0xFFFFFFFFFFFFFFF3
 ENOEXEC = 0xFFFFFFFFFFFFFFF8
@@ -120,7 +120,7 @@ def execve(path: ptr[u8]) -> u64:
 def stage1(sp: u64):
     av[0] = u64("lxexec")
     av[1] = 0
-    check(execve("/efi/forge/bin/cat") == ENOEXEC, "execve of a Forge image -> ENOEXEC")
+    check(execve("/efi/forge/bin/cat") == ENOEXEC, "execve of an Incudela image -> ENOEXEC")
     check(execve("/efi/forge/bin/unsealed") == ENOEXEC, "execve of an unsealed image -> ENOEXEC")
     check(execve("/efi/forge/bin/tampered") == ENOEXEC, "execve of a tampered image -> ENOEXEC")
     check(execve("/efi/forge/docs/big.bin") == EACCES, "execve outside the held handles -> EACCES")
@@ -186,11 +186,11 @@ def stage3(sp: u64):
     checks = atoi(arg(sp, 3))
     av[0] = u64("hello")
     av[1] = 0
-    check(lsys(322, atoi(arg(sp, 2)), u64(""), u64(addr(av[0])), 0, 0x1000) == ENOEXEC, "execveat(AT_EMPTY_PATH) of a Forge image -> ENOEXEC")
+    check(lsys(322, atoi(arg(sp, 2)), u64(""), u64(addr(av[0])), 0, 0x1000) == ENOEXEC, "execveat(AT_EMPTY_PATH) of an Incudela image -> ENOEXEC")
     check(lsys(322, BIN, u64("lxexec"), u64(addr(av[0])), 0, 0x40) == EINVAL, "execveat unknown flag -> EINVAL")
     put("lxexec: stage 3 pid ")
     putn(lsys(39, 0, 0, 0, 0, 0))
-    put(": fexecve of a held Forge image -> ENOEXEC\n")
+    put(": fexecve of a held Incudela image -> ENOEXEC\n")
     if fails == 0:
         put("lxexec: PASS (3 images, ")
         putn(checks)

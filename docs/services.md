@@ -22,7 +22,7 @@ Sources: `examples/kernel/nvsvc.cudi`, `examples/user/nvmed.cud`, and `examples/
 - **Kernel side.** `nvme_read`, `nvme_write` and `nvme_flush` post requests through `nv_io` and `nvs_call`.
 - **Syscalls.** All need CAPB_DRV and only work for the registered pid.
   - 414 recv: takes a request. A return of 0 means quiesce.
-  - 415 submit: the driver's SQE has to match the posted request exactly (opcode, namespace 1, the kernel's DMA buffer, LBA, and block count). Writes are allowed only inside the claimed Forge partition. Anything else is refused and counted.
+  - 415 submit: the driver's SQE has to match the posted request exactly (opcode, namespace 1, the kernel's DMA buffer, LBA, and block count). Writes are allowed only inside the claimed Incudela partition. Anything else is refused and counted.
   - 416 reap.
   - 417 reply: returns the status and a state word (a magic value in bits 63:32, plus the served count).
   - 418 get-state.

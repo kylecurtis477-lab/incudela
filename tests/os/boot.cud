@@ -1,4 +1,4 @@
-# tests/os/boot.cud: Forge port of tests/os/boot.py (kept as the reference) — boot one QEMU configuration,
+# tests/os/boot.cud: Cuditor port of tests/os/boot.py (kept as the reference) — boot one QEMU configuration,
 # check serial markers and (optionally) OCR the framebuffer.
 # usage: boot NAME LOG TIMEOUT 'marker|marker|...' FBTEXT -- qemu args...
 #        boot --self-test   pipe-drain, stall-predicate and settled-screendump checks (no QEMU)

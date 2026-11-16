@@ -1,6 +1,6 @@
 # cudseal (tools/cudseal.cud)
 
-This is the Forge port of `tools/cudseal.py`, the build-time sealer (Phase 6.1, Seal v3). The build scripts compile
+This is the Cuditor port of `tools/cudseal.py`, the build-time sealer (Phase 6.1, Seal v3). The build scripts compile
 it to `build/cudseal`.
 
     cudseal [--module] [--v2] [--extra-key KEY2] [--alg-id N] [--proof-byte] SRC.cud IMAGE KEYFILE BASELINE

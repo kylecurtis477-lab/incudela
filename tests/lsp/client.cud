@@ -1,4 +1,4 @@
-# tests/lsp/client.cud: Forge port of tests/lsp/client.py (kept as the reference; tests/lsp/run.sh runs
+# tests/lsp/client.cud: Cuditor port of tests/lsp/client.py (kept as the reference; tests/lsp/run.sh runs
 # the Forge client, FORGE_LSP_PY=1 runs the Python one too). A scripted LSP session against `cuditor lsp`
 # (Phase 7.5): copies tests/lsp/proj to a scratch directory, starts the server on two pipes, and prints the
 # same PASS/FAIL lines in the same order as the Python client; exit 1 on any failure. The JSON reader and

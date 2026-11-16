@@ -124,7 +124,7 @@ def cmd_run(root):
         os.mkdir(root + "/bench/out")
     rustc = "/usr/bin/rustc"
     have_ref = os.path.isfile(rustc)
-    print("| bench | Forge run | Rust -O3 run | ratio | output |")
+    print("| bench | Cuditor run | Rust -O3 run | ratio | output |")
     print("|---|---|---|---|---|")
     rec = ""
     bad = 0

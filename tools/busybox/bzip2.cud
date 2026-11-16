@@ -1,4 +1,4 @@
-# tools/busybox/bzip2.cud: Forge port of the tools/busybox/bzip2 shim (kept as the reference;
+# tools/busybox/bzip2.cud: Cuditor port of the tools/busybox/bzip2 shim (kept as the reference;
 # tests/bzip2/run.sh checks both give the same bytes). The shim is a stdin -> stdout filter over Python's
 # bz2 module, i.e. libbzip2 1.0.8: `bzip2 -d` decompresses (bz2.decompress: concatenated streams, trailing
 # garbage after a good stream ignored), anything else compresses at level 9 (bz2.compress(d, 9)).

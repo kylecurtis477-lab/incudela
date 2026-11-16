@@ -1,6 +1,6 @@
-# Phase 8: Forge FS, the only writable filesystem. It lives only on a GPT partition with the Forge type
+# Phase 8: Incudela FS, the only writable filesystem. It lives only on a GPT partition with the Forge type
 # GUID D0C2E3A1-6B7F-4F0A-9E11-466F72676546 that was created explicitly (tools/incudela-part.py). The kernel
-# validates the GPT (header + entry CRCs, exactly one Forge partition, no overlap, inside the usable
+# validates the GPT (header + entry CRCs, exactly one Incudela partition, no overlap, inside the usable
 # range), then claims that LBA range on the NVMe driver; nvme_write refuses anything outside it.
 # Layout (4 KiB blocks from the partition start): 0 superblock, 1 inode table (64 x 64 bytes), 2.. data
 # (contiguous extents, first fit). Commit order: data, inode table, superblock (generation + checksums), flush.
@@ -78,12 +78,12 @@ def ffs_crcv(c: u64, v: u64, n: u64) -> u64:
     return c
 
 def ffs_find_part() -> u64:
-# 1 if exactly one valid Forge partition was found (ffs_lo/ffs_hi set); prints why not otherwise
+# 1 if exactly one valid Incudela partition was found (ffs_lo/ffs_hi set); prints why not otherwise
     if nv_regs == 0 or nv_lba_sz != 512:
         return 0
     h = ffs_sec(1)
     if h == 0 or mmio_rd(h, 8) != 0x5452415020494645:
-        puts("Forge FS: nvme0 has no GPT, nothing written\n")
+        puts("Incudela FS: nvme0 has no GPT, nothing written\n")
         return 0
     hs = mmio_rd(h + 12, 4)
     hcrc = mmio_rd(h + 16, 4)
@@ -95,13 +95,13 @@ def ffs_find_part() -> u64:
     ecrc = mmio_rd(h + 88, 4)
     # header CRC with the CRC field taken as zero
     if hs != 92:
-        puts("Forge FS: GPT header size not 92, nothing written\n")
+        puts("Incudela FS: GPT header size not 92, nothing written\n")
         return 0
     c = ffs_crc(0xFFFFFFFF, h, 16)
     c = ffs_crcv(c, 0, 4)
     c = ffs_crc(c, h + 20, hs - 20) ^ 0xFFFFFFFF
     if c != hcrc or esz != 128 or n > 128 or n == 0:
-        puts("Forge FS: GPT header invalid (CRC or geometry), nothing written\n")
+        puts("Incudela FS: GPT header invalid (CRC or geometry), nothing written\n")
         return 0
     # entries: CRC, then look for Forge entries, overlap and range checks
     c = 0xFFFFFFFF
@@ -113,7 +113,7 @@ def ffs_find_part() -> u64:
         c = ffs_crc(c, e, 512)
         s += 1
     if (c ^ 0xFFFFFFFF) != ecrc:
-        puts("Forge FS: GPT entry array CRC mismatch, nothing written\n")
+        puts("Incudela FS: GPT entry array CRC mismatch, nothing written\n")
         return 0
     found: u64 = 0
     lo: u64 = 0
@@ -128,12 +128,12 @@ def ffs_find_part() -> u64:
         i += 1
     if found != 1:
         if found == 0:
-            puts("Forge FS: no Forge partition on nvme0, nothing written\n")
+            puts("Incudela FS: no Incudela partition on nvme0, nothing written\n")
         else:
-            puts("Forge FS: more than one Forge partition, nothing written\n")
+            puts("Incudela FS: more than one Incudela partition, nothing written\n")
         return 0
     if lo < first or hi > last + 1 or hi <= lo + 64 or (lo % 8) != 0:
-        puts("Forge FS: Forge partition outside the usable range or misaligned, nothing written\n")
+        puts("Incudela FS: Incudela partition outside the usable range or misaligned, nothing written\n")
         return 0
     i = 0
     while i < n:
@@ -144,7 +144,7 @@ def ffs_find_part() -> u64:
             plo = mmio_rd(e + 32, 8)
             phi = mmio_rd(e + 40, 8) + 1
             if plo < hi and lo < phi:
-                puts("Forge FS: Forge partition overlaps another partition, nothing written\n")
+                puts("Incudela FS: Incudela partition overlaps another partition, nothing written\n")
                 return 0
         i += 1
     ffs_lo = lo
@@ -195,7 +195,7 @@ def ffs_load() -> u64:
     return 1
 
 def ffs_mount() -> u64:
-# 0 = not mounted (nothing written), 1 = mounted, 2 = formatted a blank Forge partition and mounted
+# 0 = not mounted (nothing written), 1 = mounted, 2 = formatted a blank Incudela partition and mounted
     ffs_ok = 0
     if ffs_find_part() == 0:
         return 0
@@ -209,7 +209,7 @@ def ffs_mount() -> u64:
     i: u64 = 0
     while i < 512:
         if ffs_sb[i] != 0:
-            puts("Forge FS: superblock invalid and not blank, refusing to format\n")
+            puts("Incudela FS: superblock invalid and not blank, refusing to format\n")
             nvme_claim(0, 0)
             return 0
         i += 1
@@ -384,18 +384,18 @@ def ffs_nfiles() -> u64:
 def ffs_check(s: ptr[u8], size: u64, seed: u64, text: ptr[u8]):
     if ffs_hash(s) != ffs_expect(size, seed, text):
         puts(s)
-        panic(": Forge FS read-back hash mismatch")
+        panic(": Incudela FS read-back hash mismatch")
 
 def ffs_txt() -> ptr[u8]:
-    return "Forge FS: written by the Forge kernel on its own GPT partition.\n"
+    return "Incudela FS: written by the Incudela kernel on its own GPT partition.\n"
 
 def ffs_test():
     txt = ffs_txt()
     r = ffs_mount()
     if r == 0:
-        puts("Forge FS: not mounted; writes issued 0\n")
+        puts("Incudela FS: not mounted; writes issued 0\n")
         return
-    puts("Forge FS: partition LBA ")
+    puts("Incudela FS: partition LBA ")
     put_u64(ffs_lo)
     puts("..")
     put_u64(ffs_hi - 1)
@@ -404,7 +404,7 @@ def ffs_test():
     puts(" blocks, generation ")
     put_u64(ffs_gen)
     if r == 2:
-        puts(", formatted (blank Forge partition)\n")
+        puts(", formatted (blank Incudela partition)\n")
     else:
         puts(", mounted\n")
     tl: u64 = 0
@@ -413,11 +413,11 @@ def ffs_test():
     if ffs_find("persist.dat") != FFS_NI:
         ffs_check("persist.dat", 20000, 7, txt)
         ffs_check("hello.txt", tl, 0, txt)
-        puts("Forge FS: persist.dat and hello.txt survived the reboot, hashes match\n")
+        puts("Incudela FS: persist.dat and hello.txt survived the reboot, hashes match\n")
     else:
         if ffs_create("persist.dat", 20000, 7, txt) == 0 or ffs_create("hello.txt", tl, 0, txt) == 0:
-            panic("Forge FS: create failed")
-        puts("Forge FS: created persist.dat (20000 bytes) and hello.txt\n")
+            panic("Incudela FS: create failed")
+        puts("Incudela FS: created persist.dat (20000 bytes) and hello.txt\n")
     # Phase 2 gap 2: the rest of the I/O goes through the ring-3 nvmed service, swapped v1 <-> v2 every
     # 7 requests, and the driver is killed with request 30 in flight (restarted, request replayed)
     if nvme_service_start(7, 30) == 0:
@@ -427,20 +427,20 @@ def ffs_test():
     n: u64 = 0
     while n < 5:
         if ffs_create("scratch.dat", 50000 + n * 777, 100 + n, txt) == 0:
-            panic("Forge FS: scratch create failed")
+            panic("Incudela FS: scratch create failed")
         ffs_check("scratch.dat", 50000 + n * 777, 100 + n, txt)
         if ffs_unlink("scratch.dat") == 0:
-            panic("Forge FS: unlink failed")
+            panic("Incudela FS: unlink failed")
         n += 1
     if ffs_create("persist.dat", 1, 1, txt) != 0:
-        panic("Forge FS: duplicate name accepted")
-    # the NVMe driver owns only the Forge partition: a write to LBA 0 (protective MBR) must be refused
+        panic("Incudela FS: duplicate name accepted")
+    # the NVMe driver owns only the Incudela partition: a write to LBA 0 (protective MBR) must be refused
     w0 = nv_writes
     if nvme_write(0) != 0 or nvme_write(ffs_lo - 8) != 0 or nvme_write(ffs_hi) != 0 or nv_writes != w0:
-        panic("Forge FS: write outside the Forge partition was not refused")
+        panic("Incudela FS: write outside the Incudela partition was not refused")
     # remount from disk and check everything again
     if ffs_load() == 0:
-        panic("Forge FS: remount failed (checksum)")
+        panic("Incudela FS: remount failed (checksum)")
     ffs_check("persist.dat", 20000, 7, txt)
     ffs_check("hello.txt", tl, 0, txt)
     nvme_service_stop()
@@ -462,14 +462,14 @@ def ffs_test():
     if nvs_restarts != 1 or nvs_replays < 1 or nvs_drained < 1 or nvs_swaps < 3 or nvs_rejects < 1 or (nvs_state & 0xFFFFFFFF) != nvs_reqs:
         panic("NVMe service: hot-swap / restart accounting wrong")
     puts("NVMe service hot-swap + supervised restart OK\n")
-    puts("Forge FS: remount OK, ")
+    puts("Incudela FS: remount OK, ")
     put_u64(ffs_nfiles())
     puts(" files, generation ")
     put_u64(ffs_gen)
     puts(", ")
     put_u64(nv_writes)
-    puts(" block writes, all inside the Forge partition; writes outside refused ")
+    puts(" block writes, all inside the Incudela partition; writes outside refused ")
     put_u64(nv_refused)
     putc(10)
     objstore_test()
-    puts("Forge FS OK\n")
+    puts("Incudela FS OK\n")

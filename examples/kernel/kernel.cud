@@ -2,7 +2,7 @@
 # cuditor: stack-protector
 # Forge x86-64 kernel: higher half, own 4-level page tables, frame allocator, heap, GOP/VBE framebuffer
 # console, TSS/IST, ACPI MADT, LAPIC timer, IOAPIC. Boots via GRUB multiboot2 (BIOS or UEFI) or via the
-# native Forge UEFI loader (examples/efi/loader.cud) after ExitBootServices.
+# native Incudela UEFI loader (examples/efi/loader.cud) after ExitBootServices.
 include "boot.cudi"
 include "bootinfo.cudi"
 include "console.cudi"
@@ -195,7 +195,7 @@ def mb2_parse(info: u64):
 
 def kernel_version() -> ptr[u8]:
 # build identity; examples/kernel/build.sh makes kernel-next.elf with a different string
-    return "forge-kernel 0.2.6"
+    return "incudela-kernel 0.2.6"
 
 def kernel_start():
     puts("kernel version: ")
@@ -211,7 +211,7 @@ def kernel_start():
         put_u64(bi.kx_gen)
         puts(")\n")
     else:
-        puts("Forge UEFI loader (ExitBootServices done)\n")
+        puts("Incudela UEFI loader (ExitBootServices done)\n")
     kdelta = bi.kdelta
     kx_gen = bi.kx_gen
     usable: u64 = 0
@@ -478,7 +478,7 @@ def kmain_high():
     kaslr_unmap()
     if bi.fb_addr != 0:
         fb_attach(p2v(bi.fb_addr), bi.fb_width, bi.fb_height, bi.fb_pitch)
-        puts("Forge kernel: framebuffer console ")
+        puts("Incudela kernel: framebuffer console ")
         put_u64(fb_w)
         puts("x")
         put_u64(fb_h)
@@ -1956,7 +1956,7 @@ def after_overflow():
     if bi.handoff != 0:
         kexec_resume()
     elif desktop_wanted() != 0:
-        puts("shell and kexec sessions skipped: desktop mode (forge.desktop)\n")
+        puts("shell and kexec sessions skipped: desktop mode (incudela.desktop)\n")
         desktop_app()
     elif iommu_grant_allowed() != 0:
         shell_test()
@@ -2016,7 +2016,7 @@ def after_overflow():
 def kmain_mb2(magic: u32, info: u32):
     serial_init()
     vga_base = 0
-    puts("Forge kernel (multiboot2 entry)\n")
+    puts("Incudela kernel (multiboot2 entry)\n")
     if magic != MB2_MAGIC:
         panic("bad multiboot2 magic")
     bi.magic = BI_MAGIC
@@ -2030,7 +2030,7 @@ def kmain_mb2(magic: u32, info: u32):
 @unsafe
 def kmain_efi(info: u64):
     serial_init()
-    puts("Forge kernel (UEFI loader entry)\n")
+    puts("Incudela kernel (UEFI loader entry)\n")
     p2v_base = 0
     if load64(info) != BI_MAGIC:
         panic("bad BootInfo magic")

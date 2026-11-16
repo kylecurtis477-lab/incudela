@@ -1,5 +1,5 @@
 # cuditor: no-runtime
-# Ed25519 signing CLI (RFC 8032): Forge port of tools/ed25519.py (sign side), reusing the kernel's
+# Ed25519 signing CLI (RFC 8032): Cuditor port of tools/ed25519.py (sign side), reusing the kernel's
 # verified field/group/SHA-512 code from examples/kernel/ed25519.cudi (TweetNaCl crypto_sign).
 #   ed25519 public SEEDFILE          32-byte public key on stdout   (= ed25519.public(seed))
 #   ed25519 sign SEEDFILE MSGFILE    64-byte signature on stdout    (= ed25519.sign(seed, msg))

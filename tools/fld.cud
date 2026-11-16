@@ -1,7 +1,7 @@
 # fld: the Forge linker (Phase 7.2). Links ELF64 relocatable objects (fas or GNU as output) into
 #   --format exec   static ELF64 executable, GNU ld default layout (-z separate-code): R headers, RX .text,
 #                   R .rodata, RW .data+.bss at DATA_SEGMENT_ALIGN; --base sets the text-segment base
-#   --format kernel the Forge kernel layout (GNU ld reference: examples/kernel/linker.ld) (low boot stub at 1 MiB, the rest
+#   --format kernel the Incudela kernel layout (GNU ld reference: examples/kernel/linker.ld) (low boot stub at 1 MiB, the rest
 #                   at -2 GiB + phys, W^X PT_LOADs) with the image-KASLR .krel table generated in place
 #   --format pe     PE32+ (EFI application) image: .text, .rdata, .data(+bss), base relocations for R_64
 # .eh_frame is discarded (freestanding: no unwinder); .debug_* sections are kept (non-alloc) in ELF output

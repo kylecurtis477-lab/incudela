@@ -6,8 +6,8 @@
 #   2. \EFI\Forge\boot.cfg, only when it carries a valid kind-2 seal (cudseal --config, checked by
 #      image_verify with SEAL_CONFIG): `iommu=strict` or `iommu=permissive` may set the policy either way.
 #      An unsealed, tampered or malformed config is refused whole and logged; the policy stays as it was;
-#   3. the boot command line (bi.cmdline: the multiboot2 tag, kept across kexec): `forge.iommu=strict`
-#      tightens; `forge.iommu=permissive` is refused (loosening needs the sealed config), so an unsigned
+#   3. the boot command line (bi.cmdline: the multiboot2 tag, kept across kexec): `incudela.iommu=strict`
+#      tightens; `incudela.iommu=permissive` is refused (loosening needs the sealed config), so an unsigned
 #      line can never weaken the policy.
 # pol_resolve is the pure rule; pol_selftest checks its whole truth table, including a strict build default.
 # Safe code only: file bytes are read through le16 (fat.cudi), seal checks through image_verify.
@@ -68,9 +68,10 @@ def cmd_tok_pre(s: u64, n: u64, lit: ptr[u8]) -> u64:
     return 1
 
 def pol_cmdline() -> u64:
-# PCMD_* from bi.cmdline; the last forge.iommu= token wins; other tokens are ignored
+# PCMD_* from bi.cmdline; the last incudela.iommu= (or old forge.iommu=) token wins; other tokens are ignored
     r = PCMD_NONE
     i: u64 = 0
+    k: u64 = 0
     while i < 255 and bi.cmdline[i] != 0:
         while i < 255 and bi.cmdline[i] == 32:
             i += 1
@@ -78,13 +79,19 @@ def pol_cmdline() -> u64:
         while i < 255 and bi.cmdline[i] != 0 and bi.cmdline[i] != 32:
             i += 1
         n = i - s
-        if n > 0 and cmd_tok_pre(s, n, "forge.iommu="):
-            if cmd_tok_eq(s, n, "forge.iommu=strict"):
+        # `forge.iommu=` is the key's name before the Incudela rename, still read for one release
+        k = 0
+        if n > 0 and cmd_tok_pre(s, n, "incudela.iommu="):
+            k = 15
+        elif n > 0 and cmd_tok_pre(s, n, "forge.iommu="):
+            k = 12
+        if k != 0:
+            if cmd_tok_eq(s + k, n - k, "strict"):
                 r = PCMD_STRICT
-            elif cmd_tok_eq(s, n, "forge.iommu=permissive"):
+            elif cmd_tok_eq(s + k, n - k, "permissive"):
                 r = PCMD_PERMISSIVE
             else:
-                puts("boot policy: unknown forge.iommu= value on the command line, ignored\n")
+                puts("boot policy: unknown incudela.iommu= value on the command line, ignored\n")
     return r
 
 def cfg_line_eq(buf: u64, s: u64, n: u64, lit: ptr[u8]) -> u64:
@@ -154,9 +161,9 @@ def boot_policy():
     cfg = pol_config()
     cmd = pol_cmdline()
     if cmd == PCMD_STRICT:
-        puts("boot policy: forge.iommu=strict on the command line (tightens)\n")
+        puts("boot policy: incudela.iommu=strict on the command line (tightens)\n")
     elif cmd == PCMD_PERMISSIVE:
-        puts("boot policy: forge.iommu=permissive on the command line refused: loosening needs the sealed boot config\n")
+        puts("boot policy: incudela.iommu=permissive on the command line refused: loosening needs the sealed boot config\n")
     iommu_strict = pol_resolve(IOMMU_STRICT_DEFAULT, cfg, cmd)
     iommu_pol_src = POL_DEFAULT
     if cfg != PCFG_NONE:

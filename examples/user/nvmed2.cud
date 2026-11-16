@@ -3,7 +3,7 @@
 # cuditor: caps(drv)
 # nvmed v2: same protocol as nvmed (kernel side: nvsvc.cudi), a second implementation the supervisor
 # swaps in and out at run time. On start it first probes the kernel's SQE checks with a command
-# that matches no request (a write to LBA 0, outside the Forge partition) and refuses to run if the
+# that matches no request (a write to LBA 0, outside the Incudela partition) and refuses to run if the
 # kernel accepted it.
 include "ulib.cudi"
 
