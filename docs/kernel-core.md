@@ -136,7 +136,7 @@ outside that configuration. The interface in §§0–5 is unchanged.
 ### A.1 What is verified, and by which tests
 
 Markers in this section are exact serial (or framebuffer) substrings required by `tests/os/run.sh`
-or a kernel self-test. A result name is one of the 39 entries in `tests/os/expected-results.txt`
+or a kernel self-test. A result name is one of the 41 entries in `tests/os/expected-results.txt`
 (`os/result-count` fails if any is missing). The framebuffer check on the BIOS, UEFI, EFI-loader
 and IOMMU boots requires `back == front` and a row that decodes as `KERNEL OK`.
 
@@ -194,7 +194,13 @@ drag, the app canvas, taskbar and launcher checked from a screendump).
 v2 (adopts v1..v2), header and checksum checks OK (64 of 64 flipped bits caught)`, `TLB IPI: 1 stale shootdown IPI(s) from the previous kernel
 handled before SMP`, and `driver state carried across kexec OK`. `os/kexec-no-disk-write` requires
 the GPT image to be byte-identical after the loader boot. The bios suite repeats the handoff
-(`kexec: generation 3 kernel adopted`).
+(`kexec: generation 3 kernel adopted`). Those handoffs are between kernels built from the same tree,
+so a record layout change on both sides would still agree with itself; tests/os/kexec-compat.sh closes that
+gap. `os/kexec-compat-build` builds an older commit (`KXC_OLD`, default 61b3e85, the last one before the
+Stage 3e/3f conversions) from `git archive` with this tree's seal key and requires its `kernel.elf` to differ;
+`os/kexec-old-to-new` boots that old ISO and `kexec next`s into this tree's `kernel-next.elf` and then once more
+into itself (`kexec: generation 1 kernel adopted`, `kexec: generation 2 kernel adopted`), with the shell, its fd
+and the input service state carried across.
 
 **Linux personality, modules, live patch, nondeterminism.** `lxtest: PASS`, `lxthreads: PASS`,
 `lxfs: PASS`, `lxexec: PASS`, `lxsig: PASS`, and BusyBox ash (`hello from ash, forge`,

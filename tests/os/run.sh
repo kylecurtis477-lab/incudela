@@ -79,6 +79,8 @@ bash tests/os/bootpol.sh
 bash tests/os/forgefs.sh
 # screen step 1: the desktop (gfx.fsi) drawn and presented, checked from the screendump
 bash tests/os/desktop.sh
+# old-to-new kexec: the first kernel is built from an older commit (tests/os/kexec-compat.sh)
+bash tests/os/kexec-compat.sh
 
 # Phase 7.3: -g kernel, DWARF line table, gdb breakpoint at schedule over the QEMU gdbstub
 bash tests/dwarf/run.sh

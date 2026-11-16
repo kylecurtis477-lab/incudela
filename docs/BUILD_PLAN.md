@@ -486,7 +486,7 @@ least.
 | Nov 15-16 | 2 / 3f: handoff-record conversion (typed `PsRecord`, `KxdRecord`) | 1 batch | done: 0bf232a (inv162), kernel unsafe 701 -> 659; item 2 finished |
 | Nov 16 | assessment fixes (README unsafe ceiling, unsafe result names, run_tests OS fail-closed, kernel-core Appendix A count, this schedule) | 1 batch | in g185 on 7c0bbc4 |
 | Nov 16 | rename and licences: the OS becomes Incudela (Apache-2.0), the language becomes Cuditor (MIT); repo (`kylecurtis477-lab/incudela`), binaries, file extensions, docs; the ESP folder moves from `\EFI\Forge\` to `\EFI\Incudela\` with a one-time boot migration that keeps the old folder until the new one boots | 3 batches | *Kyle* approved 2026-11-15; names screened on the web, GitHub, package registries and domains, not a legal clearance |
-| Nov 16 | kexec from an older kernel build to the new one (the gate only swaps same-source kernels) | 1 item | follows 3f |
+| Nov 16 | kexec from an older kernel build to the new one (the gate only swaps same-source kernels) | 1 item | tests/os/kexec-compat.sh, results `os/kexec-compat-build`, `os/kexec-old-to-new` (inv164) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |

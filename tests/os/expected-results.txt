@@ -39,3 +39,5 @@ dwarf/image-unchanged-by-g
 dwarf/line-table
 dwarf/gdb-schedule
 os/desktop
+os/kexec-compat-build
+os/kexec-old-to-new

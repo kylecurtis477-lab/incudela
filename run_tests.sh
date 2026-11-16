@@ -159,7 +159,7 @@ if [ -z "$SKIP_OS" ] && command -v qemu-system-x86_64 >/dev/null && command -v g
   [ -z "$miss" ] && echo "PASS os/result-count ($(grep -vc '^#' tests/os/expected-results.txt) results reported)" || { echo "FAIL os/result-count (missing:$miss)"; fail=1; }
 elif [ -n "$SKIP_OS" ]; then
   # an explicit, visible opt-out (quick non-QEMU runs while a gate holds QEMU); never a gate result
-  echo "SKIP tests/os (SKIP_OS set: the 39 OS results were not run, so this run is not a gate pass)"
+  echo "SKIP tests/os (SKIP_OS set: the $(grep -vc '^#' tests/os/expected-results.txt) OS results were not run, so this run is not a gate pass)"
 else
   # fail closed: a run without the OS-test toolchain must not look like a full pass (the gate harness reinstalls
   # the tools with tools/ostools.forge before it starts; 2026-11-15 assessment)
