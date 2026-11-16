@@ -1,4 +1,4 @@
-# expect: nown[T] globals are not supported yet
+# expect: a nown[T] global is a place: use take(g)
 # forge: no-runtime
 include "../fs/linux.fsi"
 struct Node:
@@ -16,4 +16,6 @@ def peek(x: ref[Node]) -> u64:
     return x.id
 g: nown[Node]
 def f() -> u64:
-    return 0
+# a nown[T] global starts none and is a place: a plain read would copy its owner
+    x = g
+    return consume(x)

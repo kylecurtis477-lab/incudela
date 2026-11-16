@@ -286,15 +286,36 @@ count stays at or under 709.
      checks a write under a ref root. tests/own 164 checks. Adversarial set /workspace/chatgpt/stage3d/adv: 52
      programs (41 must-reject, 11 must-accept), all as expected. Not in 3d: `nown` globals/arrays and element places
      (`rq[i]`), borrows through `[i]`.
+     *Status (`nown` globals and arrays): done (2026-11-15).* A global may be `nown[T]` or one array `nown[T][N]`
+     (`fs_tglob` lets exactly that type through `ft_elem_aff` at the top of a global declaration; nested arrays,
+     pointers to them, locals, parameters, fields and slices stay refused). Zero is none, so no initializer is
+     allowed. Such a global and each element `a[i]` are places for `take`/`replace`/`swap` (`fs_plk` 3 and 4): the
+     index is any expression, evaluated once through the ordinary bounds-checked element address (`fs_pladdr`, after
+     `replace`'s value; for `swap`, a's index before b's), the address is kept in a frame temporary and the exchange
+     is plain `mov`s. Everything else is refused: a plain read (`x = rq[0]`, `f(cur)`, `return cur`), a store (`rq[0]
+     = v`, `cur = v`, `op=`), field access through the slot (`cur.id`, even after `if cur != 0:`, since a call could
+     empty it: take it into a local and check that), `addr()` even in unsafe code, slicing, `for`, and whole-array
+     use; a test for none (`== 0` / `!= 0`) is allowed. Globals have no move state: they are always initialised and
+     maybe none, and cannot be borrowed. `swap` refuses the same place twice by tokens (`swap(rq[i], rq[i])`);
+     `swap(rq[i], rq[j])` is allowed (with i == j at run time both loads precede both stores, so nothing is
+     duplicated). This is what 3e needs for `rq_head`/`current` as `nown[Thread][8]`. Not included: global structs
+     (or arrays of structs) with `nown` fields, and local `nown` arrays (locals are not proven zeroed). Concurrent
+     access (other CPUs, interrupts) stays the kernel's locking duty, as for every global. No unsafe operations,
+     kernel and user assembly byte-identical, unsafe report 708. Tests: nown_global_ok (starts none,
+     replace/take/swap across elements, arrays and a global, index evaluated once, swap with a local and a field
+     through mut[T]) and 11 compile-fail cases (bad_nown_elem_*, bad_nown_global_*, bad_nown_array_*);
+     bad_nown_global now checks a plain read. tests/own 176 checks. Adversarial set
+     /workspace/chatgpt/stage3-nown-ga/adv: 48 programs (38 must-reject, 10 must-accept), all as expected.
    - *Next Stage 3 steps (from ChatGPT's design note, in order; each its own gated commit):*
      (3b) `nown[T]`, a nullable affine owner: the only owner type allowed in zero-initialised storage (globals,
      arrays, kexec records), with a null check before use; arrays of owners return as arrays of `nown[T]`.
      *3b-min is done (above): locals, parameters, returns, fields. `nown` globals and arrays come with 3c, since
      an element can only be emptied or refilled soundly by `take`/`replace`.*
-     (3c) `take(place) -> nown[T]` (returns the old owner and zeroes the slot in one step), `replace(place, v)`
-     and `swap(a, b)` on `nown` and `own` places, with place provenance (root local/param, access path, pointer
-     kind) so a move through `mut[S]` is legal exactly when the slot never stays empty; through `ref[S]` never.
-     *3c is done (above) for named places; element places of `nown` arrays come with `nown` globals/arrays.*
+     (3c) `take(place) -> nown[T]` (returns the old owner and zeroes the slot in one step), `replace(place, v)` and
+     `swap(a, b)` on `nown` and `own` places, with place provenance (root local/param, access path, pointer kind) so
+     a move through `mut[S]` is legal exactly when the slot never stays empty; through `ref[S]` never. *3c is done
+     (above) for named places; element places of `nown` arrays come with `nown` globals/arrays.* *`nown` globals and
+     global arrays, with element places, are done (above).*
      (3d) Borrowing `p.head` records the borrow on the pointer root `p` and releases it at the call or block end;
      nested owner fields through pointers (`p.head.next`) follow from provenance. *3d is done (above).* (3e) Run
      queue: one ownership transfer point between the queue and `current[cpu]` (no owning queue entry while a thread

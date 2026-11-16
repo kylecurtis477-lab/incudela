@@ -15659,6 +15659,9 @@ fs_pll = -1
 fs_plo = 0
 fs_ploff = 0
 fs_plt = 0
+fs_plg = ""
+fs_plend = -1
+fs_tglob = 0
 # Stage 3d: an owner path name.f1...fn that fs_chain resolved: its root local fs_chr (a pointer local, or the
 # Stage 2 slot of a local struct's first field) of pointer kind fs_chsg, the fs_chn field offsets fs_cho below the
 # root (each loaded in turn; the last one is the place), the type fs_cht of the last field, and fs_chslot = 1 when
@@ -16055,6 +16058,10 @@ def ft_isowner(t):
 # own[T] or nown[T]: moved on whole-value use (ref/mut are borrows)
     return fsk[t] == 1 and (ftsg[t] == 2 or ftsg[t] == 5)
 
+def fs_gnown(t):
+# a nown[T] global or a global array of nown[T]: zero (none) is valid, so it needs no initialiser
+    return ft_isnown(t) or (fsk[t] == 3 and ft_isnown(ftel[t]))
+
 def ft_elem_aff(t):
 # an array or slice (at any depth) whose element is own/ref/mut: not affine itself, but indexing it yields owner
 # values that nothing tracks, so fs_type refuses it in every position (a[i] or q.a[i] would copy an owner out)
@@ -16117,7 +16124,10 @@ def ft_struct(nm):
     return -1
 
 def fs_type():
-    global fp
+    global fp, fs_tglob
+    # a global declaration's own type (not a type nested in it) may be one array of nown[T]
+    tg = fs_tglob
+    fs_tglob = 0
     nm = fs_ident()
     t = ft_prim(nm)
     b = fs_tbound(nm)
@@ -16168,7 +16178,7 @@ def fs_type():
         n = fs_ceval()
         fs_expect("]")
         t = ft_arr(t, n)
-    if ft_elem_aff(t):
+    if ft_elem_aff(t) and not (tg and fsk[t] == 3 and ft_isnown(ftel[t])):
     # any array or slice of owners/borrows, not only a struct field: x = a[0]; y = a[0] would give two owners of one
     # object (nothing tracks per-element moves), and a global array of owners starts out as null owners
         fs_die("arrays/slices of own/ref/mut need per-element move tracking")
@@ -17748,7 +17758,7 @@ def fs_borrow(k):
     return 1
 
 def fs_plmsg():
-    return "take()/replace()/swap() need a named place: an own/nown local, a direct own/nown field of a local struct, or an own/nown field reached through own[T] fields from a local own[T]/mut[T] pointer or own field"
+    return "take()/replace()/swap() need a named place: an own/nown local, a direct own/nown field of a local struct, an own/nown field reached through own[T] fields from a local own[T]/mut[T] pointer or own field, a nown[T] global, or an element a[i] of a global nown[T] array"
 
 def fs_chain(p, q, what):
 # Stage 3d: tokens [p, q) are `name.f1. ... .fn` (n >= 1) for a local name: resolve the owner path (fs_ch*). Every
@@ -17808,10 +17818,37 @@ def fs_place(p, nm):
 # Stage 3c: resolve the take/replace/swap operand at token p as a place (no code, no state change): a name or an
 # owner path `name.f1. ... .fn` (fs_chain), ending at `,` or `)`. Anything else (a call, an index, an operator,
 # parentheses, a global) is a value, not a place. Returns the token after the place; sets fs_plk/fs_plr/fs_pll/fs_plo/fs_ploff/fs_plt.
-    global fs_plk, fs_plr, fs_pll, fs_plo, fs_ploff, fs_plt
+    global fs_plk, fs_plr, fs_pll, fs_plo, fs_ploff, fs_plt, fs_plg, fs_plend
     q = p + 1
     while fs_isop2(q, ".") and tk[q + 1] == K_ID:
         q += 2
+    if tk[p] == K_ID and fs_local(tv[p]) < 0 and fs_glob(tv[p]) >= 0:
+    # a nown[T] global (g) or an element of a global nown[T] array (a[i]): no state to track, zero is none
+        gt = fsg_t[fs_glob(tv[p])]
+        fs_plg = tv[p]
+        fs_plr = -1
+        fs_pll = -1
+        if ft_isnown(gt) and (fs_isop2(p + 1, ",") or fs_isop2(p + 1, ")")):
+            fs_plk = 3
+            fs_plt = gt
+            return p + 1
+        if fsk[gt] == 3 and ft_isnown(ftel[gt]) and fs_isop2(p + 1, "["):
+            q = p + 2
+            d = 1
+            while d > 0:
+                if tk[q] == K_EOF or tk[q] == K_NL:
+                    fs_die(fs_plmsg())
+                if fs_isop2(q, "["):
+                    d += 1
+                elif fs_isop2(q, "]"):
+                    d -= 1
+                q += 1
+            if not (fs_isop2(q, ",") or fs_isop2(q, ")")):
+                fs_die(fs_plmsg())
+            fs_plk = 4
+            fs_plt = ftel[gt]
+            return q
+        fs_die(fs_plmsg())
     if tk[p] != K_ID or not (fs_isop2(q, ",") or fs_isop2(q, ")")):
         fs_die(fs_plmsg())
     r = fs_local(tv[p])
@@ -17852,6 +17889,9 @@ def fs_plchk(nm):
 # the place fs_place resolved may be used now: its root is not dead, moved or borrowed, and a frame slot holds a
 # live owner (own) or a live/none one (nown)
     r = fs_plr
+    if fs_plk >= 3:
+    # a global place has no move state (always initialised, maybe none) and cannot be borrowed
+        return 0
     if fsl_dead[r]:
         fs_die(concat(fs_lname(r), " is a borrow whose block has ended"))
     if fsl_mu[r] > 0:
@@ -17889,6 +17929,13 @@ def fs_plld(r):
     if fs_plk == 1:
         e(c4("mov ", str(fs_plo), "(%rbp),", r))
         return 0
+    if fs_plk == 3:
+        e(c4("mov ", fs_plg, "(%rip),", r))
+        return 0
+    if fs_plk == 4:
+    # the element address is in %rcx (fs_pladdr / fs_plrcx)
+        e(concat("mov (%rcx),", r))
+        return 0
     fs_plbase()
     if fs_ploff == 0:
         e(concat("mov (%rcx),", r))
@@ -17900,11 +17947,30 @@ def fs_plst(r):
     if fs_plk == 1:
         e(c4("mov ", r, ",", concat(str(fs_plo), "(%rbp)")))
         return 0
+    if fs_plk == 3:
+        e(c4("mov ", r, ",", concat(fs_plg, "(%rip)")))
+        return 0
+    if fs_plk == 4:
+        e(c3("mov ", r, ",(%rcx)"))
+        return 0
     fs_plbase()
     if fs_ploff == 0:
         e(c3("mov ", r, ",(%rcx)"))
     else:
         e(c4("mov ", r, ",", concat(str(fs_ploff), "(%rcx)")))
+
+def fs_pladdr(p, q):
+# %rax = the address of the element place a[i] at tokens [p, q): the index is evaluated here, once, with the
+# usual bounds check (fs_postfix with fs_plend = q lets exactly this element of a nown array through)
+    global fp, fs_plend
+    f0 = fp
+    s0 = fs_plend
+    fp = p
+    fs_plend = q
+    fs_postfix()
+    fs_mat()
+    fs_plend = s0
+    fp = f0
 
 def fs_plpre(a0, a1, b0, b1):
 # places [a0, a1) and [b0, b1) (a name, then .field steps) start with the same name and one path is a prefix of
@@ -17914,7 +17980,13 @@ def fs_plpre(a0, a1, b0, b1):
         n = b1 - b0
     i = 0
     while i < n:
-        if tk[a0 + i] != tk[b0 + i] or not str_eq(tv[a0 + i], tv[b0 + i]):
+        if tk[a0 + i] != tk[b0 + i]:
+            return 0
+        if tk[a0 + i] == K_NUM:
+        # an element place's index: number tokens carry an integer value
+            if tv[a0 + i] != tv[b0 + i]:
+                return 0
+        elif not str_eq(tv[a0 + i], tv[b0 + i]):
             return 0
         i += 1
     return 1
@@ -17932,6 +18004,9 @@ def fs_xfer(nm):
         if not ft_isnown(fs_plt):
             fs_die("take() needs a nown[T] place: an own[T] is never empty (use replace(place, v))")
         fs_plchk(nm)
+        if fs_plk == 4:
+            fs_pladdr(p0, fp - 1)
+            e("mov %rax,%rcx")
         fs_plld("%rax")
         e("xor %edx,%edx")
         fs_plst("%rdx")
@@ -17955,6 +18030,13 @@ def fs_xfer(nm):
         # resolve again: evaluating v may have moved or borrowed the place or its root (replace(o, o))
         fs_place(p0, nm)
         fs_plchk(nm)
+        if fs_plk == 4:
+        # v first (held in a frame temporary), then the index (once): the element address is used at once
+            tv0 = fsl_o[fs_newlocal("", FT_U64)]
+            e(c3("mov %rdx,", str(tv0), "(%rbp)"))
+            fs_pladdr(p0, q)
+            e("mov %rax,%rcx")
+            e(c3("mov ", str(tv0), "(%rbp),%rdx"))
         fs_plld("%rax")
         fs_plst("%rdx")
         if fs_pll >= 0:
@@ -17984,13 +18066,34 @@ def fs_xfer(nm):
             fs_die("swap(a, b) needs two different places: both name the same one")
         fs_die("swap(a, b) needs two disjoint places: one is reached through the other")
     lb = fs_pll
+    eb = fs_plk == 4
+    fs_place(p0, nm)
+    ea = fs_plk == 4
+    # element places: each index is evaluated once, a before b; the addresses wait in frame temporaries
+    ta = 0
+    tb = 0
+    if ea:
+        ta = fsl_o[fs_newlocal("", FT_U64)]
+        fs_pladdr(p0, qa)
+        e(c3("mov %rax,", str(ta), "(%rbp)"))
+    if eb:
+        tb = fsl_o[fs_newlocal("", FT_U64)]
+        fs_pladdr(qa + 1, qb)
+        e(c3("mov %rax,", str(tb), "(%rbp)"))
+    fs_place(qa + 1, nm)
     fs_plchk(nm)
+    if eb:
+        e(c3("mov ", str(tb), "(%rbp),%rcx"))
     fs_plld("%rdx")
     fs_place(p0, nm)
     fs_plchk(nm)
+    if ea:
+        e(c3("mov ", str(ta), "(%rbp),%rcx"))
     fs_plld("%rax")
     fs_plst("%rdx")
     fs_place(qa + 1, nm)
+    if eb:
+        e(c3("mov ", str(tb), "(%rbp),%rcx"))
     fs_plst("%rax")
     # a pointer field's owner is live (own) or unknown (nown): its frame-slot partner becomes live
     sa = 0
@@ -18435,6 +18538,10 @@ def fs_primary():
         return 0
     g = fs_glob(nm)
     if g >= 0:
+        if ft_isnown(fsg_t[g]) and not fs_nowncmp(fp):
+            fs_die(c4(c3("a nown[T] global is a place: use take(", nm, "), replace("), c3(nm, ", v) or swap(", nm), ", b), or test it (", c3(nm, " == 0, ", c3(nm, " != 0", ")"))))
+        if fsk[fsg_t[g]] == 3 and ft_isnown(ftel[fsg_t[g]]) and not fs_isop("["):
+            fs_die(c3("a nown[T] array is used one element at a time (", nm, "[i]): take/replace/swap it, or test it for none"))
         fs_mode = 3
         fs_mlab = nm
         fs_ety = fsg_t[g]
@@ -18632,6 +18739,8 @@ def fs_postfix():
             fp += 1
             fs_push()
             if fsk[t] != 1 and (fs_isop(":") or fs_subsl()):
+                if ft_isnown(el):
+                    fs_die("a slice of a nown[T] array would alias its owners: use take/replace/swap on a[i]")
                 fs_subslice(t, el)
                 base = ""
                 continue
@@ -18650,6 +18759,9 @@ def fs_postfix():
                 e(c3("imul $", str(ftsz[el]), ",%rcx,%rcx"))
             e("add %rcx,%rax")
             fs_expect("]")
+            if fsk[t] != 1 and ft_isnown(el) and fp != fs_plend and not fs_nowncmp(fp):
+            # an element of a nown[T] array is a place: reading it would copy the owner, storing would leak one
+                fs_die("an element of a nown[T] array is a place: use take(a[i]), replace(a[i], v) or swap(a[i], b), or test it (a[i] == 0, a[i] != 0)")
             if fsk[t] == 1 and ft_isaff(el) and not fs_isop(".") and not fs_isop("["):
             # p[0] of a pointer to an owner/borrow reads or overwrites that owner with no move tracking
             # (a = q[0]; b = q[0] gave two owners from one own[own[T]])
@@ -20039,7 +20151,7 @@ def fs_sig(ext):
     return f
 
 def fs_prescan():
-    global fp, nfsc, nfsg, nft
+    global fp, nfsc, nfsg, nft, fs_tglob
     # pass A: struct names
     fp = 0
     gn = 0
@@ -20094,10 +20206,13 @@ def fs_prescan():
             g = nfsg
             nfsg += 1
             fsg_n[g] = nm
+            fs_tglob = 1
             fsg_t[g] = fs_type()
-            if ft_isnown(fsg_t[g]):
-                fs_die("nown[T] globals are not supported yet (Stage 3b-min: locals, parameters, returns and fields)")
-            if ft_isaff(fsg_t[g]):
+            fs_tglob = 0
+            if fs_gnown(fsg_t[g]) and fs_isop("="):
+            # zero is none: a nown[T] global or array starts empty and is filled only by replace/swap
+                fs_die("a nown[T] global or array starts none: it takes no initializer (fill it with replace(g, v))")
+            if ft_isaff(fsg_t[g]) and not ft_isnown(fsg_t[g]):
                 fs_die("globals cannot be own/ref/mut")
             if fs_ownerfield(fsg_t[g]):
                 fs_die("globals/arrays containing own fields need definite initialisation")

@@ -1,0 +1,6 @@
+41 slots start none
+3 replace fills elements and returns the old owner
+4291 swap between elements, arrays and a global
+471 each index is evaluated once
+601 swap with a local and with a field through mut[T]
+100500 drained

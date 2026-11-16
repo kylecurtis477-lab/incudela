@@ -59,6 +59,11 @@ if $FC rborrow_ok.forge $T/rb.s && ../../build/fas -o $T/rb.o $T/rb.s && ../../b
 else
     echo "FAIL own-rborrow-ok"; fail=1
 fi
+if $FC nown_global_ok.forge $T/ng.s && ../../build/fas -o $T/ng.o $T/ng.s && ../../build/fld -o $T/ng $T/ng.o && $T/ng | diff -q - nown_global_ok.expected >/dev/null; then
+    echo "PASS own-nown-global-ok"
+else
+    echo "FAIL own-nown-global-ok"; fail=1
+fi
 for f in bad_*.forge; do
     want=$(sed -n 's/^# expect: //p' $f)
     out=$($FC $f $T/x.s 2>&1)
