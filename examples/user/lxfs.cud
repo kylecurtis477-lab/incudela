@@ -1,0 +1,214 @@
+# cuditor: no-runtime
+# cuditor: caps()
+# Phase 11.1c Linux-ABI file test (docs/linux-compat.md). Built and sealed like lxtest (EI_OSABI = 3,
+# runs only through `run lxfs`); its manifest grants one handle, fd 4 = /efi/forge/docs (dir).
+# Raw Linux syscalls only: fstat on the console and the directory, getdents64 of the granted
+# directory (linux_dirent64 records), openat of a file under it + fstat + read, and the refusals:
+# AT_FDCWD, absolute and ".." paths (no ambient authority), write opens (EROFS), O_DIRECTORY on a
+# file (ENOTDIR), ENOENT, EBADF, getdents64 on a non-directory and with a too-small buffer.
+
+EACCES = 0xFFFFFFFFFFFFFFF3
+EFAULT = 0xFFFFFFFFFFFFFFF2
+EROFS = 0xFFFFFFFFFFFFFFE2
+ENOTDIR = 0xFFFFFFFFFFFFFFEC
+ENOENT = 0xFFFFFFFFFFFFFFFE
+EBADF = 0xFFFFFFFFFFFFFFF7
+EINVAL = 0xFFFFFFFFFFFFFFEA
+ESPIPE = 0xFFFFFFFFFFFFFFE3
+AT_FDCWD = 0xFFFFFFFFFFFFFF9C
+DOCS = 4
+
+fails: u64
+checks: u64
+buf: u8[256]
+blen: u64
+st: u64[18]
+dents: u8[4096]
+fbuf: u8[4096]
+
+@naked
+def lsys(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
+    asm("mov %rdi,%rax", "mov %rsi,%rdi", "mov %rdx,%rsi", "mov %rcx,%rdx", "mov %r8,%r10",
+        "mov %r9,%r8", "xor %r9d,%r9d", "syscall", "ret")
+
+# the u64 at %fs:off (TLS through the FS base set by arch_prctl)
+@naked
+def fs_read(off: u64) -> u64:
+    asm("mov %fs:(%rdi), %rax", "ret")
+
+@unsafe
+def peek(a: u64) -> u64:
+    return ptr[u64](a)[0]
+
+@unsafe
+def poke(a: u64, v: u64):
+    ptr[u64](a)[0] = v
+
+@unsafe
+def peek8(a: u64) -> u64:
+    return u64(ptr[u8](a)[0])
+
+def flush():
+    lsys(1, 1, u64(addr(buf[0])), blen, 0, 0)
+    blen = 0
+
+def put(s: ptr[u8]):
+    putz(u64(s))
+
+def putn(v: u64):
+    d: u8[20]
+    n: u64 = 0
+    while n == 0 or v != 0:
+        d[n] = u8(48 + v % 10)
+        v = v / 10
+        n += 1
+    while n > 0 and blen < 255:
+        n -= 1
+        buf[blen] = d[n]
+        blen += 1
+
+def putz(p: u64):
+    i: u64 = 0
+    # flush when the buffer fills instead of dropping the rest (lines used to be cut at 255 bytes)
+    while peek8(p + i) != 0 and i < 200:
+        if blen >= 255:
+            flush()
+        buf[blen] = u8(peek8(p + i))
+        blen += 1
+        i += 1
+
+def check(ok: u64, what: ptr[u8]):
+    checks += 1
+    if ok == 0:
+        fails += 1
+        put("lxfs: FAIL ")
+        put(what)
+        put("\n")
+        flush()
+
+def mode() -> u64:
+    return st[3] & 0xFFFFFFFF
+
+@unsafe
+def peek16(a: u64) -> u64:
+    return u64(ptr[u16](a)[0])
+
+def lx_main(sp: u64):
+    check(lsys(5, 1, u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x2000, "fstat(1): console is S_IFCHR")
+    check(lsys(5, DOCS, u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x4000, "fstat(docs): S_IFDIR")
+    n = lsys(217, DOCS, u64(addr(dents[0])), 4096, 0, 0)
+    put("lxfs: getdents64(docs) ")
+    putn(n)
+    put(" bytes:")
+    cnt: u64 = 0
+    big: u64 = 0
+    algn: u64 = 1
+    o: u64 = 0
+    while n < 4096 and o < n:
+        rl = peek16(u64(addr(dents[o + 16])))
+        if rl == 0 or (rl & 7) != 0 or peek(u64(addr(dents[o]))) == 0:
+            algn = 0
+            break
+        put(" ")
+        putz(u64(addr(dents[o + 19])))
+        if dents[o + 18] == 8:
+            put("(f)")
+        elif dents[o + 18] == 4:
+            put("(d)")
+        nm = u64(addr(dents[o + 19]))
+        if peek8(nm) == 98 and peek8(nm + 1) == 105 and peek8(nm + 2) == 103 and peek8(nm + 3) == 46 and dents[o + 18] == 8:
+            big = 1
+        cnt += 1
+        o += rl
+    put("\n")
+    flush()
+    check(n < 4096 and cnt == 3 and algn == 1 and big == 1, "getdents64: 3 linux_dirent64 records (hello.sh added in 11.1e part 12), big.bin a regular file")
+    check(lsys(217, DOCS, u64(addr(dents[0])), 4096, 0, 0) == 0, "getdents64 at the end -> 0")
+    fd = lsys(257, DOCS, u64("big.bin"), 0x80000, 0, 0)  # O_RDONLY | O_CLOEXEC
+    ok: u64 = 0
+    rd: u64 = 0
+    if fd < 64:
+        if lsys(5, fd, u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x8000 and st[6] == 98304:
+            ok = 1
+        rd = lsys(0, fd, u64(addr(fbuf[0])), 4096, 0, 0)
+        lsys(3, fd, 0, 0, 0, 0)
+    check(ok == 1 and rd == 4096, "openat(docs, big.bin) + fstat size 98304 + read")
+    put("lxfs: openat(docs, \"big.bin\") fd ")
+    putn(fd)
+    put(", fstat S_IFREG size ")
+    putn(st[6])
+    put(", read ")
+    putn(rd)
+    put("\n")
+    flush()
+    check(lsys(257, AT_FDCWD, u64("big.bin"), 0, 0, 0) == EACCES, "openat(AT_FDCWD) -> EACCES")
+    check(lsys(257, DOCS, u64("/efi/forge/bin/cat"), 0, 0, 0) == EACCES, "openat absolute -> EACCES")
+    check(lsys(257, DOCS, u64("../bin/cat"), 0, 0, 0) == EACCES, "openat .. -> EACCES")
+    check(lsys(257, DOCS, u64("big.bin"), 1, 0, 0) == EROFS, "openat O_WRONLY -> EROFS")
+    check(lsys(257, DOCS, u64("big.bin"), 0x10000, 0, 0) == ENOTDIR, "openat O_DIRECTORY on a file -> ENOTDIR")
+    check(lsys(257, DOCS, u64("nosuch"), 0, 0, 0) == ENOENT, "openat missing -> ENOENT")
+    # 11.1e open(2): absolute paths at or under the granted directory's label only
+    o1 = lsys(2, u64("/efi/forge/docs/big.bin"), 0, 0, 0, 0)
+    o2 = lsys(2, u64("/efi/forge/docs"), 0x10000, 0, 0, 0)
+    check(o1 < 64 and o2 < 64 and lsys(3, o1, 0, 0, 0, 0) == 0 and lsys(3, o2, 0, 0, 0, 0) == 0, "open absolute under / at the grant")
+    check(lsys(2, u64("/efi/forge/bin/cat"), 0, 0, 0, 0) == EACCES and lsys(2, u64("big.bin"), 0, 0, 0, 0) == EACCES, "open outside the grant / relative -> EACCES")
+    check(lsys(2, u64("/efi/forge/docs/../bin/cat"), 0, 0, 0, 0) == EACCES and lsys(2, u64("/efi/forge/docsx"), 0, 0, 0, 0) == EACCES, "open .. / label prefix -> EACCES")
+    check(lsys(2, u64("/efi/forge/docs/big.bin"), 0x241, 0, 0, 0) == EROFS and lsys(257, AT_FDCWD, u64("/efi/forge/docs/nosuch"), 0, 0, 0) == ENOENT, "open O_CREAT -> EROFS, openat(AT_FDCWD, abs) missing -> ENOENT")
+    # 11.1e stat(2): same path rules as open, then fstat
+    check(lsys(4, u64("/efi/forge/docs/big.bin"), u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x8000 and st[6] == 98304, "stat file")
+    check(lsys(4, u64("/efi/forge/docs"), u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x4000, "stat granted dir")
+    check(lsys(4, u64("/efi/forge/bin/cat"), u64(addr(st[0])), 0, 0, 0) == EACCES and lsys(4, u64("/efi/forge/docs/nosuch"), u64(addr(st[0])), 0, 0, 0) == ENOENT, "stat outside -> EACCES, missing -> ENOENT")
+    check(lsys(4, u64("/efi/forge/docs/big.bin"), 0x10, 0, 0, 0) == EFAULT, "stat bad buffer -> EFAULT")
+    check(lsys(6, u64("/efi/forge/docs/big.bin"), u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x8000 and st[6] == 98304 and lsys(6, u64("/efi/forge/bin/cat"), u64(addr(st[0])), 0, 0, 0) == EACCES, "lstat file, outside -> EACCES")
+    # 11.1e fcntl(72)
+    check(lsys(72, 1, 3, 0, 0, 0) == 2 and lsys(72, DOCS, 3, 0, 0, 0) == 0, "F_GETFL console O_RDWR, docs O_RDONLY")
+    check(lsys(72, DOCS, 2, 1, 0, 0) == 0 and lsys(72, DOCS, 1, 0, 0, 0) == 1 and lsys(72, DOCS, 2, 0, 0, 0) == 0 and lsys(72, DOCS, 1, 0, 0, 0) == 0, "F_SETFD / F_GETFD FD_CLOEXEC")
+    check(lsys(72, DOCS, 0, 10, 0, 0) == 10 and lsys(72, 10, 1, 0, 0, 0) == 0 and lsys(3, 10, 0, 0, 0, 0) == 0, "F_DUPFD min 10 -> 10, close-on-exec off")
+    dfd = lsys(72, DOCS, 1030, 0, 0, 0)
+    check(dfd >= 3 and dfd < 16 and dfd != DOCS and lsys(72, dfd, 1, 0, 0, 0) == 1 and lsys(3, dfd, 0, 0, 0, 0) == 0, "F_DUPFD_CLOEXEC")
+    check(lsys(72, 1, 4, 0x800, 0, 0) == EINVAL and lsys(72, 1, 4, 2, 0, 0) == 0 and lsys(72, 99, 1, 0, 0, 0) == EBADF and lsys(72, DOCS, 999, 0, 0, 0) == EINVAL and lsys(72, DOCS, 0, 16, 0, 0) == EINVAL, "F_SETFL change -> EINVAL, no-op ok, EBADF, bad cmd / min -> EINVAL")
+    # 11.1e dup2(33)
+    bf = lsys(2, u64("/efi/forge/docs/big.bin"), 0, 0, 0, 0)
+    check(bf < 16 and lsys(33, bf, 12, 0, 0, 0) == 12 and lsys(5, 12, u64(addr(st[0])), 0, 0, 0) == 0 and st[6] == 98304, "dup2 to a free fd")
+    check(lsys(72, 12, 2, 1, 0, 0) == 0 and lsys(33, DOCS, 12, 0, 0, 0) == 12 and lsys(5, 12, u64(addr(st[0])), 0, 0, 0) == 0 and (mode() & 0xF000) == 0x4000 and lsys(72, 12, 1, 0, 0, 0) == 0, "dup2 over an open fd replaces it, clears FD_CLOEXEC")
+    check(lsys(33, bf, bf, 0, 0, 0) == bf and lsys(33, 99, 5, 0, 0, 0) == EBADF and lsys(33, bf, 64, 0, 0, 0) == EBADF, "dup2 same fd, EBADF")
+    check(lsys(3, 12, 0, 0, 0, 0) == 0 and lsys(3, bf, 0, 0, 0, 0) == 0, "dup2 copies close")
+    put("lxfs: dup2: to a free fd, over an open fd (replaced, FD_CLOEXEC cleared), same fd, EBADF ok\n")
+    # 11.1e lseek(8)
+    lf = lsys(2, u64("/efi/forge/docs/big.bin"), 0, 0, 0, 0)
+    lb: u8[4]
+    check(lf < 16 and lsys(8, lf, 100, 0, 0, 0) == 100 and lsys(0, lf, u64(addr(lb[0])), 1, 0, 0) == 1 and lb[0] == 188 and lsys(8, lf, 0, 1, 0, 0) == 101, "lseek SEEK_SET 100, read byte 188, SEEK_CUR")
+    check(lsys(8, lf, 0xFFFFFFFFFFFFFFFD, 2, 0, 0) == 98301 and lsys(0, lf, u64(addr(lb[0])), 4, 0, 0) == 3 and lb[0] == 170 and lb[2] == 184, "lseek SEEK_END -3, read the last 3 bytes")
+    check(lsys(8, lf, 200000, 0, 0, 0) == 200000 and lsys(0, lf, u64(addr(lb[0])), 4, 0, 0) == 0 and lsys(8, lf, 0xFFFFFFFFFFFC0000, 1, 0, 0) == EINVAL and lsys(8, lf, 0, 3, 0, 0) == EINVAL, "lseek past the end reads 0, below 0 / bad whence -> EINVAL")
+    check(lsys(8, 1, 0, 1, 0, 0) == ESPIPE and lsys(8, DOCS, 0, 0, 0, 0) == 0 and lsys(8, DOCS, 5, 0, 0, 0) == EINVAL and lsys(8, 99, 0, 0, 0, 0) == EBADF and lsys(3, lf, 0, 0, 0, 0) == 0, "lseek console -> ESPIPE, dir rewind only, EBADF")
+    put("lxfs: lseek: SET/CUR/END, past the end, below 0 / bad whence -> EINVAL, console -> ESPIPE, dir rewind, EBADF ok\n")
+    # 11.1e ppoll(271): struct pollfd { int fd; short events, revents } packed in a u64
+    pfd: u64[3]
+    pfd[0] = DOCS | (u64(1) << 32)
+    pfd[1] = 1 | (u64(5) << 32)
+    pfd[2] = 13 | (u64(1) << 32)
+    check(lsys(271, u64(addr(pfd[0])), 3, 0, 0, 0) == 3 and (pfd[0] >> 48) == 1 and (pfd[1] >> 48) == 5 and (pfd[2] >> 48) == 32, "ppoll: dir POLLIN, console POLLIN|POLLOUT, closed fd POLLNVAL")
+    check(lsys(271, 0x10, 1, 0, 0, 0) == EFAULT and lsys(271, u64(addr(pfd[0])), 65, 0, 0, 0) == EINVAL and lsys(271, 0, 0, 0, 0, 0) == 0, "ppoll EFAULT, nfds > 64 -> EINVAL, nfds 0")
+    put("lxfs: ppoll: dir/console ready, closed fd POLLNVAL, EFAULT, EINVAL ok\n")
+    put("lxfs: fcntl: GETFL/SETFL, GETFD/SETFD, DUPFD(min 10), DUPFD_CLOEXEC ok; SETFL O_NONBLOCK, bad cmd -> EINVAL, EBADF\n")
+    flush()
+    put("lxfs: lstat: big.bin S_IFREG 98304 (no symlinks on FAT32), outside -> EACCES\n")
+    flush()
+    put("lxfs: stat: big.bin S_IFREG 98304, docs S_IFDIR, outside -> EACCES, ENOENT, EFAULT\n")
+    flush()
+    put("lxfs: open: absolute under the grant ok, outside/relative/../prefix -> EACCES, write -> EROFS\n")
+    check(lsys(5, 99, u64(addr(st[0])), 0, 0, 0) == EBADF, "fstat bad fd -> EBADF")
+    check(lsys(217, 1, u64(addr(dents[0])), 4096, 0, 0) == ENOTDIR, "getdents64 console -> ENOTDIR")
+    check(lsys(217, DOCS, u64(addr(dents[0])), 100, 0, 0) == EINVAL, "getdents64 small buffer -> EINVAL")
+    put("lxfs: AT_FDCWD/absolute/.. -> EACCES, O_WRONLY -> EROFS, O_DIRECTORY -> ENOTDIR, ENOENT, EBADF, EINVAL ok\n")
+    if fails == 0:
+        put("lxfs: PASS (")
+        putn(checks)
+        put(" checks)\n")
+    flush()
+    lsys(231, fails, 0, 0, 0, 0)
+
+@naked
+@export
+def _start():
+    asm("mov %rsp, %rdi", "and $-16, %rsp", "call lx_main", "ud2")

@@ -1,5 +1,5 @@
 #!/bin/bash
-# tests/bench/tree.sh: bench record integrity (tools/bench.forge `tree` and the dirty-tree refusal of `run`) in
+# tests/bench/tree.sh: bench record integrity (tools/bench.cud `tree` and the dirty-tree refusal of `run`) in
 # a scratch git repo; no timing. Usage: tests/bench/tree.sh BENCH (the built tool, e.g. build/bench).
 B=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 T=$(mktemp -d /tmp/forge-benchtree.XXXXXX)

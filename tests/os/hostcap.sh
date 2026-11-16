@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/os/hostcap.sh PID: host-side view of a QEMU process, taken by tests/os/boot.forge when a boot stalls and
+# tests/os/hostcap.sh PID: host-side view of a QEMU process, taken by tests/os/boot.cud when a boot stalls and
 # BEFORE any HMP command (the monitor needs QEMU's global lock, and earlier dumps showed the guest resuming right
 # after it). Per thread: name, state, CPU ticks used over a 1 s window (two /proc samples), wchan, the syscall it
 # is in (/proc/TID/syscall: "running" or the syscall number, 202 = futex), the box CPU it last ran on, and its

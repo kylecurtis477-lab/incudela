@@ -7,7 +7,7 @@
 # epoch) in the extracted tree, remakes the El Torito FAT with tools/repro-mformat
 # (-N serial), and rebuilds the ISO with tools/repro-xorriso (--modification-date
 # and --set_all_file_dates). Without SOURCE_DATE_EPOCH, exec grub-mkrescue
-# unchanged. Used by examples/kernel/build.sh and build.forge.
+# unchanged. Used by examples/kernel/build.sh and build.cud.
 set -e
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 MKRESCUE=${GRUB_MKRESCUE:-/usr/bin/grub-mkrescue}

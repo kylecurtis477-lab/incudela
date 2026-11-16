@@ -1,7 +1,7 @@
 # Forge grammar (frozen, version 1; additive v1.1 test blocks, v1.2 reserved effects, v1.3 reserved allocation effects)
 
 This is the normative grammar of Forge source. It is the grammar accepted by the strict
-AST parser (`forgec F out --emit=ast-json`, the `a_*` functions in selfhost/compiler.forge);
+AST parser (`cudc F out --emit=ast-json`, the `a_*` functions in selfhost/compiler.cud);
 every rule below names the function that implements it. The code-generating parser accepts
 the same language plus a few legacy forms. A program outside this grammar is rejected with
 `expected ...` (diagnostic code E0105). Changes need a version bump of this file and of the
@@ -16,7 +16,7 @@ them; `include`, `extern`, `struct`, `from`, `as` are contextual.
 ```
 NEWLINE   end of a logical line; ';' is also a NEWLINE. Lines inside (), [], {} join.
 INDENT / DEDENT   from changes in leading spaces (a tab is not indentation).
-COMMENT   '#' to end of line; ignored, except lines starting with "# forge:" (pragmas,
+COMMENT   '#' to end of line; ignored, except lines starting with "# cuditor:" (pragmas,
           which select code-generation modes and are kept in the AST as "pragmas").
 NAME      [A-Za-z_][A-Za-z0-9_]*
 NUMBER    decimal digits | 0x hex digits, '_' separators allowed (no 0b / 0o);
@@ -129,22 +129,22 @@ param       = ['*' | '**'] NAME [':' test if t] ['=' test if no star] | '*'
   `tuple[int, str]`), so the grammar has no separate type language; the type checker
   interprets them.
 - `yield` is only valid as a statement, on the right of an assignment, or parenthesised.
-- Freestanding programs (`# forge: no-runtime`) use the same grammar; `extern def` and
+- Freestanding programs (`# cuditor: no-runtime`) use the same grammar; `extern def` and
   `struct` are mostly used there.
 
 ## Conformance
-- `tests/grammar/valid/*.forge` must parse; `tests/grammar/invalid/*.forge` must be
+- `tests/grammar/valid/*.cud` must parse; `tests/grammar/invalid/*.cud` must be
   rejected with E0105-class diagnostics (`tests/grammar/run.sh`).
 - Every example, kernel source, tool, test and the compiler itself must parse
   (tests/ast/roundtrip.sh).
-- `tools/grammar_fuzz.forge` (port of the reference `tools/grammar_fuzz.py`) generates random programs from this grammar (must parse and
+- `tools/grammar_fuzz.cud` (port of the reference `tools/grammar_fuzz.py`) generates random programs from this grammar (must parse and
   round-trip) and mutations that break a rule in a known way (must be rejected).
 
 ## Diagnostics note: mismatched closers in call arguments
 A call whose argument list hits a closer that does not match, for example `f(}` or `f(1]2)`, used to hang the
 compiler: `skip_arg` stops at a mismatched closer at depth 0, and the argument loops (`count_pos`,
 `need_slots`, `push_slots`) never advanced. The loops now go through `arg_step`, which reports
-`error: line N: expected ')', found '<tok>'` and stops. Regression tests: `tests/errors/call_stray_*.forge`.
+`error: line N: expected ')', found '<tok>'` and stops. Regression tests: `tests/errors/call_stray_*.cud`.
 `run_tests.sh` also runs every error test under `timeout 20`, so a future hang fails the test instead of
 stalling the suite.
 
@@ -156,8 +156,8 @@ the tree gets an optional fifth `Def` child `Effects` (children `Effect` leaves 
 name; absent when there is no clause, so existing trees and child indices are unchanged, and
 `"forge_ast"` stays 1), and `--emit=pretty` prints it back. The checker and code generation reject
 it (hosted and freestanding) with E0106 `effect annotations are reserved ... not supported yet`.
-`uses` remains an ordinary name everywhere else. Tests: tests/grammar/valid/effects.forge,
-tests/grammar/invalid/effect_*.forge, tests/diag/effects_reserved*.forge.
+`uses` remains an ordinary name everywhere else. Tests: tests/grammar/valid/effects.cud,
+tests/grammar/invalid/effect_*.cud, tests/diag/effects_reserved*.cud.
 
 ### Allocation effects (v1.3)
 
@@ -166,5 +166,5 @@ device or file I/O) and `noreclaim` (it never waits for memory reclaim, so it is
 interrupt paths). `def f(...) uses noalloc, noreclaim:` parses into the same `Effects` node and is
 rejected by the checker with the same E0106 as every other effect. Only the names are reserved now so
 code written against v1 keeps parsing when enforcement lands (a Version 2 item in docs/BUILD_PLAN.md).
-They can be mixed with the capability names in one clause. Tests: tests/grammar/valid/effects_alloc.forge,
-tests/grammar/invalid/effect_alloc_typo.forge, tests/diag/effects_reserved_alloc.forge.
+They can be mixed with the capability names in one clause. Tests: tests/grammar/valid/effects_alloc.cud,
+tests/grammar/invalid/effect_alloc_typo.cud, tests/diag/effects_reserved_alloc.cud.

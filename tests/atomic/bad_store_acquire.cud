@@ -1,0 +1,8 @@
+# expect: cannot be acquire
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+x: u64 = 0
+b: bool = False
+def main() -> u64:
+    atomic_store(addr(x), 1, acquire)
+    return 0

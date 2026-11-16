@@ -1,0 +1,291 @@
+# cuditor: safe
+# cuditor: no-runtime
+# cuditor: caps(fs, spawn, ipc, drv, kexec, probe, ktest, grant)
+# sh: the first interactive program. Reads lines from the console (keyboard or serial),
+# runs builtins (ls, exit) or fork+exec /efi/forge/bin/<cmd> and waits for it.
+# 10.2: `run app &` launches a sandboxed app in the background; `grants` prints the kernel's grant
+# ledger and `revoke app` revokes every active grant of that app (sys 428/429, capability 'grant').
+# 10.3: `audit` prints the kernel's grant audit log and its cross-check against the ledger (sys 430).
+include "ulib.cudi"
+
+line: u8[256]
+path: u8[160]
+dents: u8[1024]
+mf: u8[512]
+mpath: u8[160]
+
+def setpath(dst: ptr[u8], pre: ptr[u8], name: ptr[u8], suf: ptr[u8]):
+    pl: u64 = 0
+    i: u64 = 0
+    while mem_get8(u64(pre) + i) != 0 and pl < 150:
+        mem_set8(u64(dst) + pl, mem_get8(u64(pre) + i))
+        pl += 1
+        i += 1
+    i = 0
+    while mem_get8(u64(name) + i) != 0 and pl < 150:
+        mem_set8(u64(dst) + pl, mem_get8(u64(name) + i))
+        pl += 1
+        i += 1
+    i = 0
+    while mem_get8(u64(suf) + i) != 0 and pl < 159:
+        mem_set8(u64(dst) + pl, mem_get8(u64(suf) + i))
+        pl += 1
+        i += 1
+    mem_set8(u64(dst) + pl, 0)
+
+def run_app(name: ptr[u8], args: ptr[u8], bgr: u64) -> u64:
+# launch through /efi/forge/apps/<name>.mf: each "read PATH" / "dir PATH" line becomes a handle
+# (fds 4.. in manifest order) with only READ (+LOOKUP for dirs); the app gets nothing else
+    setpath(addr(mpath[0]), "/efi/forge/apps/", name, ".mf")
+    fd = sys_open(addr(mpath[0]))
+    if is_err(fd):
+        out("sh: run: no manifest ")
+        out(addr(mpath[0]))
+        out("\n")
+        flush()
+        return 1
+    n = sys_read(fd, u64(addr(mf[0])), 511)
+    sys_close(fd)
+    if is_err(n):
+        return 1
+    mf[n] = 0
+    pid = sys_fork()
+    if pid == 0:
+        ng: u64 = 0
+        i: u64 = 0
+        while i < n:
+            e = i
+            while e < n and mf[e] != 10:
+                e += 1
+            mf[e] = 0
+            r: u64 = 0
+            o: u64 = 0
+            if mf[i] == 114 and mf[i + 1] == 101 and mf[i + 2] == 97 and mf[i + 3] == 100 and mf[i + 4] == 32:
+                r = CAP_READ | CAP_DUP
+                o = 5
+            if mf[i] == 100 and mf[i + 1] == 105 and mf[i + 2] == 114 and mf[i + 3] == 32:
+                r = CAP_READ | CAP_LOOKUP | CAP_DUP
+                o = 4
+            if r != 0:
+                g = sys_open(addr(mf[i + o]))
+                if is_err(g) or is_err(sys_restrict(g, r)):
+                    out("sh: run: manifest grant failed: ")
+                    out(addr(mf[i + o]))
+                    out("\n")
+                    flush()
+                    sys_exit(126)
+                ng += 1
+            i = e + 1
+        out("sh: run ")
+        out(name)
+        out(": ")
+        out_u64(ng)
+        out(" grants from its manifest\n")
+        flush()
+        setpath(addr(mpath[0]), "/efi/forge/bin/", name, "")
+        sys_exec_sandboxed(addr(mpath[0]), args)
+        out("sh: run: exec failed\n")
+        flush()
+        sys_exit(127)
+    if bgr:
+        out("[")
+        out(name)
+        out(" started in the background (sandboxed), pid ")
+        out_u64(pid)
+        out("]\n")
+        flush()
+        return 0
+    st: u64 = 0
+    sys_wait(pid, addr(st))
+    out("[")
+    out(name)
+    out(" exited ")
+    out_u64(st)
+    out(" (sandboxed)]\n")
+    flush()
+    return 0
+
+def read_line() -> u64:
+    n: u64 = 0
+    while n < 255:
+        r = sys_read(0, u64(addr(line[n])), 255 - n)
+        if is_err(r) or r == 0:
+            break
+        n += r
+        if line[n - 1] == 10:
+            n -= 1
+            break
+    line[n] = 0
+    return n
+
+def do_ls(dir: ptr[u8]):
+    fd = sys_open(dir)
+    if is_err(fd):
+        out("ls: ")
+        out(dir)
+        out(": not found\n")
+        flush()
+        return
+    while 1:
+        n = sys_getdents(fd, u64(addr(dents[0])), 1024)
+        if n == 0 or is_err(n):
+            break
+        i: u64 = 0
+        while i < n:
+            sz = u64(dents[i]) + u64(dents[i + 1]) * 256 + u64(dents[i + 2]) * 65536 + u64(dents[i + 3]) * 16777216
+            isdir = dents[i + 8]
+            nm = addr(dents[i + 9])
+            out("  ")
+            out(nm)
+            if isdir:
+                out("/")
+            else:
+                out("  ")
+                out_u64(sz)
+            out("\n")
+            flush()
+            l: u64 = 0
+            while dents[i + 9 + l] != 0:
+                l += 1
+            i += 9 + l + 1
+    sys_close(fd)
+
+@export
+def _start():
+    out("Forge sh: builtins ls, wait, run app [&] (manifest sandbox), grants, revoke app, audit, kexec [next], exit, cmd &; programs from /efi/forge/bin\n")
+    flush()
+    ncmd: u64 = 0
+    while 1:
+        out("sh$ ")
+        flush()
+        n = read_line()
+        bgr: u64 = 0
+        if n >= 2 and line[n - 1] == 38 and line[n - 2] == 32:
+            bgr = 1
+            line[n - 2] = 0
+        s: u64 = 0
+        while line[s] == 32:
+            s += 1
+        if line[s] == 0:
+            continue
+        e = s
+        while line[e] != 0 and line[e] != 32:
+            e += 1
+        a = e
+        if line[a] == 32:
+            line[a] = 0
+            a += 1
+        cmd = addr(line[s])
+        if streq(cmd, "exit"):
+            out("sh: bye\n")
+            flush()
+            sys_exit(0)
+        if streq(cmd, "kexec"):
+            out("sh: kexec after ")
+            out_u64(ncmd)
+            out(" commands, pid ")
+            out_u64(sys_getpid())
+            out("\n")
+            flush()
+            nx: u64 = 0
+            if streq(addr(line[a]), "next"):
+                nx = 1
+            r = syscall3(409, nx, 0, 0)
+            if r == 1:
+                out("sh: survived kexec: ")
+                out_u64(ncmd)
+                out(" commands remembered, pid now ")
+                out_u64(sys_getpid())
+                out("\n")
+            else:
+                out("sh: kexec failed\n")
+            flush()
+            continue
+        ncmd += 1
+        if streq(cmd, "wait"):
+            while 1:
+                ws: u64 = 0
+                w = sys_wait(0xFFFFFFFFFFFFFFFF, addr(ws))
+                if is_err(w):
+                    break
+                out("[pid ")
+                out_u64(w)
+                out(" exited ")
+                out_u64(ws)
+                out("]\n")
+                flush()
+            continue
+        if streq(cmd, "run"):
+            b = a
+            while line[b] != 0 and line[b] != 32:
+                b += 1
+            if line[b] == 32:
+                line[b] = 0
+                b += 1
+            run_app(addr(line[a]), addr(line[b]), bgr)
+            continue
+        if streq(cmd, "grants"):
+            if is_err(syscall3(429, 0, 0, 0)):
+                out("sh: grants: denied\n")
+                flush()
+            continue
+        if streq(cmd, "audit"):
+            if is_err(syscall3(430, 0, 0, 0)):
+                out("sh: audit: denied\n")
+                flush()
+            continue
+        if streq(cmd, "revoke"):
+            rv = syscall3(428, u64(addr(line[a])), 0, 0)
+            if is_err(rv):
+                out("sh: revoke: no active grant for ")
+                out(addr(line[a]))
+                out("\n")
+            else:
+                out("sh: revoked ")
+                out_u64(rv)
+                out(" grant(s) of ")
+                out(addr(line[a]))
+                out("\n")
+            flush()
+            continue
+        if streq(cmd, "ls"):
+            if line[a] == 0:
+                do_ls("/efi/forge/bin")
+            else:
+                do_ls(addr(line[a]))
+            continue
+        pl: u64 = 0
+        pre = "/efi/forge/bin/"
+        while mem_get8(u64(pre) + pl) != 0:
+            path[pl] = u8(mem_get8(u64(pre) + pl))
+            pl += 1
+        i: u64 = 0
+        while line[s + i] != 0 and pl < 159:
+            path[pl] = line[s + i]
+            pl += 1
+            i += 1
+        path[pl] = 0
+        pid = sys_fork()
+        if pid == 0:
+            r = sys_exec(addr(path[0]), addr(line[a]))
+            out("sh: ")
+            out(cmd)
+            out(": command not found\n")
+            flush()
+            sys_exit(127)
+        if bgr:
+            out("[")
+            out(cmd)
+            out(" started in the background, pid ")
+            out_u64(pid)
+            out("]\n")
+            flush()
+            continue
+        st: u64 = 0
+        sys_wait(pid, addr(st))
+        out("[")
+        out(cmd)
+        out(" exited ")
+        out_u64(st)
+        out("]\n")
+        flush()

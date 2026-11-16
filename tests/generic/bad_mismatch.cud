@@ -1,0 +1,9 @@
+# expect: integer-to-pointer
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+@generic(T)
+def id(x: T) -> T:
+    return x
+def main() -> u64:
+    p: ptr[u8] = id[u64](5)
+    return 0

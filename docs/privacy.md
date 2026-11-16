@@ -2,11 +2,11 @@
 
 ## 10.1 Per-user keys, objects encrypted at rest
 Everything the object store puts on disk (`objects.log`, so every object, version and blob, including objfs
-file names and contents) is encrypted and authenticated. The code is in `examples/kernel/crypt.fsi`
-(primitives) and `examples/kernel/objd.fsi` (keys and the on-disk format). Both are safe Forge: no new
+file names and contents) is encrypted and authenticated. The code is in `examples/kernel/crypt.cudi`
+(primitives) and `examples/kernel/objd.cudi` (keys and the on-disk format). Both are safe Forge: no new
 `@unsafe` code.
 
-### Primitives (crypt.fsi)
+### Primitives (crypt.cudi)
 - ChaCha20 block function (RFC 8439): `cc_key` (8 x 32-bit words), `cc_block(ctr, n0, n1, n2)`, `cc_word(i)`.
 - SHA-256 (FIPS 180-4): `sh_init`, `sh_byte`, `sh_u64`, `sh_fin` (result in `sh_h`).
 - HMAC-SHA256 (RFC 2104): `hm_setkey32` (or `hm_setkey_digest` for a hashed long key), `hm_begin`, feed the
@@ -15,7 +15,7 @@ file names and contents) is encrypted and authenticated. The code is in `example
   10.1 commit (2473aed) used that prefix-keyed form with 64-bit tags; it was replaced before 10.2.
 - `ct_eq4(a, b)`: constant-time 256-bit compare (ORs the XOR of every word, then one branch-free reduction),
   used for every tag and the key check value.
-- Known-answer tests, tests/fs/crypt.forge, at O2 and O0, every output word compared: RFC 8439 2.3.2
+- Known-answer tests, tests/fs/crypt.cud, at O2 and O0, every output word compared: RFC 8439 2.3.2
   (block function, all 16 words) and 2.4.2 (the 114-byte "Ladies and Gentlemen" encryption); SHA-256 of
   "abc", the 448-bit two-block FIPS message, "" and 1M x "a"; RFC 4231 HMAC-SHA256 cases 1, 2 and 6 (131-byte
   key, hashed first); `ct_eq4` equal and one-bit-different.
@@ -100,7 +100,7 @@ lists (`read PATH`, `dir PATH`), restricts their rights, and calls `sys_exec_san
 root capability. 10.2 turns each of those handles into a **grant** that the user can list and revoke while
 the app runs.
 
-### How it works (examples/kernel/grant.fsi)
+### How it works (examples/kernel/grant.cudi)
 - **Ledger.** `sandbox_enter` creates one entry per handle the launcher installed (fd > 2): id, app name,
   rights (`read`, or `dir` with LOOKUP), the path the handle was opened by, pid, state (active, revoked,
   ended), number of uses, and number of denied uses. There are 64 entries. Ids are never reused. A new
@@ -118,7 +118,7 @@ the app runs.
   cooperation from the app.
 - **Syscalls.** 428 `grant_revoke(app)` revokes every active grant of that app and returns how many it
   revoked (ENOENT if there were none). 429 `grant_list()` prints the ledger. Both need the new `grant`
-  capability (CAPB_GRANT = 128, `# forge: caps(..., grant)`). Only sh declares it. An app cannot list or
+  capability (CAPB_GRANT = 128, `# cuditor: caps(..., grant)`). Only sh declares it. An app cannot list or
   revoke grants.
 - **sh.** `run app &` starts a sandboxed app in the background. `grants` prints the ledger. `revoke app`
   revokes the app's grants.
@@ -151,8 +151,8 @@ appeared), `wait` and `grants` again. Required log lines:
 
 ## 10.3 The audit log: every grant and every use
 
-### How it works (`examples/kernel/audit.fsi`)
-grant.fsi appends a record for each event on a granted handle: `granted` (when sh's sandbox launch
+### How it works (`examples/kernel/audit.cudi`)
+grant.cudi appends a record for each event on a granted handle: `granted` (when sh's sandbox launch
 creates the grant), each **use** (read, write, getdents, openat through a granted directory, dup;
 a zero-length read is logged as `poll`), each **denial** after revocation, `revoked by pid N` (the
 revoking process) and `ended` (the app exited). A record holds the sequence number, grant id, pid,

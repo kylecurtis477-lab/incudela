@@ -1,0 +1,8 @@
+# expect: must be at the top level
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+def main() -> u64:
+    if 1:
+        with defer:
+            puts("x")
+    return 0

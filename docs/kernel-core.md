@@ -2,7 +2,7 @@
 
 Status: **spec v1** (plan v1.3 item 8). This document states the interface the rest of the kernel and
 user programs may rely on for the three core services, as implemented today in
-`examples/kernel/sched.fsi`, `chan.fsi`, `proc.fsi` (handle rights) and `seal.fsi` (syscall
+`examples/kernel/sched.cudi`, `chan.cudi`, `proc.cudi` (handle rights) and `seal.cudi` (syscall
 capabilities). It is a description of the contract, not new code: nothing in the kernel changed with it.
 Anything not written here is an implementation detail and may change without notice. A change to
 anything written here bumps the spec version and must update this file in the same commit, with tests.
@@ -10,8 +10,8 @@ Appendix A records the verification scope for this contract and for the kernel p
 tests pin, including the known DMA/IOMMU gaps. It does not change the interface in §§0–5.
 
 Related formats that are specified elsewhere and referenced, not repeated: process-state v1 and the
-kexec handoff (SYSTEMS.md "Process-state format", `pstate.fsi`), the nondeterminism hook
-(SYSTEMS.md, `nondet.fsi`), the seal / proof manifest (SYSTEMS.md "Proof manifests", "Seal v3").
+kexec handoff (SYSTEMS.md "Process-state format", `pstate.cudi`), the nondeterminism hook
+(SYSTEMS.md, `nondet.cudi`), the seal / proof manifest (SYSTEMS.md "Proof manifests", "Seal v3").
 
 ## 0. Conventions
 - Errors are returned as negative values in a u64 (`EPERM`, `EBADF`, `EFAULT`, `EINVAL`, `EMFILE`,
@@ -23,7 +23,7 @@ kexec handoff (SYSTEMS.md "Process-state format", `pstate.fsi`), the nondetermin
 - "Blocks" means the caller may be descheduled; it must not hold `rq_lock` (non-`_l` API) or any
   spinlock other than `rq_lock` (the `_l` API, which releases it while parked).
 
-## 1. Scheduler (`sched.fsi`)
+## 1. Scheduler (`sched.cudi`)
 ### Model
 - Kernel threads (`Thread`), preemptive, round-robin on the 100 Hz LAPIC timer; one run queue per
   CPU (up to 8) with stealing; a per-CPU idle thread. A user process runs on one or more threads; the
@@ -69,9 +69,9 @@ There is no priority and no fairness guarantee beyond FIFO wait queues and round
 ## 2. Capabilities
 Two independent layers; a call must pass both.
 
-### 2a. Process capabilities (syscall classes, `seal.fsi`)
+### 2a. Process capabilities (syscall classes, `seal.cudi`)
 - Bits: `fs` 1, `spawn` 2, `ipc` 4, `drv` 8, `kexec` 16, `probe` 32, `ktest` 64, `grant` 128.
-- Source: the sealed manifest of the executable (`# forge: caps(...)`). exec sets
+- Source: the sealed manifest of the executable (`# cuditor: caps(...)`). exec sets
   `caps = held & declared` (never more than the parent); fork copies; kexec hands them over in the
   process-state record (flags word).
 - Check: `sys_need(nr)` at the top of `syscall_dispatch`, before anything else the syscall does.
@@ -80,7 +80,7 @@ Two independent layers; a call must pass both.
   ktest = 408; kexec = 409; probe = 200; grant = 428-430. All other native syscalls need none.
 - Linux-personality processes never reach this table (they see only the Linux syscall table).
 
-### 2b. Handle rights (per fd, `proc.fsi`)
+### 2b. Handle rights (per fd, `proc.cudi`)
 - An fd is a handle: `Proc.fds[i]` (a `File`, refcounted) plus `Proc.fdr[i]` rights:
   `READ` 1, `WRITE` 2, `LOOKUP` 4, `DUP` 8, `XFER` 16 (`CAP_ALL` 31). 16 fds per process.
 - **Rights only shrink.** `dup(fd, r)` needs DUP and `r ⊆ rights(fd)`; `restrict(fd, r)` narrows in
@@ -91,7 +91,7 @@ Two independent layers; a call must pass both.
 - Grants (Phase 10.2): a handle installed by a manifest launch carries a grant id, inherited by every
   handle derived from it; once revoked every use returns `EACCES` at the next syscall.
 
-## 3. IPC channels (`chan.fsi`)
+## 3. IPC channels (`chan.cudi`)
 - A channel is two endpoint handles (File type `F_CHAN`), created together with READ|WRITE|DUP|XFER.
   At most 16 channels exist at once.
 - Message: 1..64 bytes plus at most one handle. Each direction is a 16-slot FIFO ring; order is
@@ -122,7 +122,7 @@ Two independent layers; a call must pass both.
 Priorities / real-time scheduling, channel select/poll across endpoints, capability-typed effects
 (`uses` clauses, reserved: GRAMMAR v1.2 / E0106), and channels in the kexec handoff.
 
-Tests that pin this contract: `examples/user/captest.forge`, `chantest.forge`, the kernel sync /
+Tests that pin this contract: `examples/user/captest.cud`, `chantest.cud`, the kernel sync /
 sched / TLB self-tests and the grant and sandbox checks in `tests/os/run.sh`.
 
 ## Appendix A. Verification scope
@@ -151,7 +151,7 @@ dropped (`identity 0x0000000000100000 -> unmapped`). Image and heap/stack KASLR 
 `unslid .text` unmapped, loader and kexec relocatable counts). The buddy allocator, vmalloc reuse
 and demand paging print `buddy allocator OK`, `vmalloc VA reuse OK` and `demand paging: 3 faults`.
 SMEP/SMAP and `copy_user` are checked by the uaccess self-test (`SMAP blocks kernel read`,
-`SMEP blocks kernel exec`, `uaccess:`) and by `examples/user/badptr.forge` (every pointer-taking
+`SMEP blocks kernel exec`, `uaccess:`) and by `examples/user/badptr.cud` (every pointer-taking
 syscall, four bad addresses, all `EFAULT`).
 
 **Scheduler, IPC and capabilities (§§1–4).** The legal thread states, wait queues, mutexes and
@@ -161,13 +161,13 @@ condvars are exercised by the kernel sync self-test (`wait queues + sleeping mut
 `os/kernel-bios-smp1`). Overflow into a kernel stack guard and a smashed canary kill the thread,
 not the kernel (`kernel stack guard pages:`, `stack canaries:`). Stop-machine rendezvous:
 `stop_machine stress OK: 3000 rounds`. Handle rights that only shrink, and the syscall-class
-gate, are pinned by `examples/user/captest.forge` (`captest: PASS`) and `capdeny` (`capability
+gate, are pinned by `examples/user/captest.cud` (`captest: PASS`) and `capdeny` (`capability
 gate: undeclared spawn and probe denied at the syscall boundary`). Channel move, XFER, EOF on
-peer close, and `EFAULT` leaving a message queued are pinned by `chantest.forge` (`chantest: PASS`)
+peer close, and `EFAULT` leaving a message queued are pinned by `chantest.cud` (`chantest: PASS`)
 and `badptr`. Grants and revocation: `sbtest: PASS`, `grtest:` mid-read cut-off, `audit: ledger
 check`. W^X in user space: `wxtest: PASS`. Sealed images: boot lines `verify: /efi/forge/bin/unsealed
 refused: no proof manifest`, `tampered` / `forged` / `linuxabi` refusals; `os/seal-private-key-not-shipped`;
-`tests/ed25519/run.sh` and `tests/forgeseal/run.sh`.
+`tests/ed25519/run.sh` and `tests/cudseal/run.sh`.
 
 **Drivers, isolation and VT-d.** `PCI + virtio-blk + FAT32 (read-only) OK` and a byte-identical
 `init.elf` read through `blkd` (`blkd: read`, `through the user-mode driver, identical`) plus
@@ -209,8 +209,8 @@ Modules: `module ABI OK: 1002 loads, 1002 unloads, 7 rejected`. Live patch:
 `live patching OK`. The nondeterminism hook: `nondet: recording off by default`, `nondet hook OK`.
 
 **Unsafe surface.** `tests/unsafe/run.sh` (in `run_tests.sh`) compiles the allow/deny cases,
-checks `forgec --provenance-lint`, and fails if any program's function/block/op/asm count in
-`tests/unsafe/baseline.txt` grows. `forgec --unsafe-report` on `examples/kernel/kernel.forge`
+checks `cudc --provenance-lint`, and fails if any program's function/block/op/asm count in
+`tests/unsafe/baseline.txt` grows. `cudc --unsafe-report` on `examples/kernel/kernel.cud`
 is part of that baseline. Counts may shrink; they must not rise.
 
 ### A.2 What is not verified
@@ -260,8 +260,8 @@ named test or marker in A.1 is not a verification claim.
    has no DRHD, or `iommu_enable` fails, translation stays off and the policy is permissive by
    default: drivers keep working with host physical addresses (drv 403 returns the host PA) and
    the boot log states that DMA is unconfined. The strict policy (`iommu_strict`) refuses drv 402
-   with `EPERM` in that case. Since 2026-11-12 the policy is chosen at boot (bootpol.fsi): the build
-   default (permissive), then a sealed `\EFI\Forge\boot.cfg` (`forgeseal --config`, either way), then
+   with `EPERM` in that case. Since 2026-11-12 the policy is chosen at boot (bootpol.cudi): the build
+   default (permissive), then a sealed `\EFI\Forge\boot.cfg` (`cudseal --config`, either way), then
    the command line, which can only tighten (`forge.iommu=strict`; `forge.iommu=permissive` is refused).
    The command line lives in `BootInfo.cmdline` and survives kexec. Remaining limit: strict gates
    user-mode driver grants only, not kernel-driven devices.
@@ -282,7 +282,7 @@ not imply that device DMA was translated.
   scope.
 - ACPI tables, PCI configuration, and the IOMMU's register interface are those QEMU presents.
   The tests do not attack the firmware or the emulator.
-- The kernel under test is the one built by `examples/kernel/build.forge` / `examples/efi/build.forge`
+- The kernel under test is the one built by `examples/kernel/build.cud` / `examples/efi/build.cud`
   with the self-hosted compiler (build.sh `FIXPOINT OK`, `SEED OK`, `TOOLS OK`, `SEED TOOLS OK`).
 - `ktest_hooks` (syscalls 408/409) is armed only for the boot self-test session. Recording in the
   nondeterminism hook is off by default.
@@ -296,7 +296,7 @@ These conventions are how a later verifier, or a human discharging a claim, shou
 spec and the tests. They fit on one page; they are not themselves a proof system.
 
 1. **A claim is a sentence plus a pin.** The pin is a result name (`os/kernel-iommu`), a test
-   program (`examples/user/captest.forge`), and/or an exact marker substring. Text without a pin
+   program (`examples/user/captest.cud`), and/or an exact marker substring. Text without a pin
    is commentary.
 2. **Markers are literal.** Matching is substring inclusion of the text in A.1, as
    `tests/os/run.sh` does. Do not normalise whitespace, case or punctuation when discharging a

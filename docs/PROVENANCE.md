@@ -1,6 +1,6 @@
 # AI-provenance commit trailers
 
-From the commit that added `tools/provenance.forge` on, every commit says who wrote it. The last paragraph of the
+From the commit that added `tools/provenance.cud` on, every commit says who wrote it. The last paragraph of the
 commit message is a trailer block (only `Key: value` lines) with:
 
 - `Provenance: human`: written by a person (tools such as the formatter don't count).
@@ -21,8 +21,8 @@ Example:
     Provenance: ai-generated
     AI-Tool: Grok Bot
 
-Check: `forge provenance` runs tools/provenance.forge over `git log` from the commit that added the tool to HEAD
-(or over `forge provenance RANGE`), prints one line per commit without valid trailers and exits 1 if there is
+Check: `cuditor provenance` runs tools/provenance.cud over `git log` from the commit that added the tool to HEAD
+(or over `cuditor provenance RANGE`), prints one line per commit without valid trailers and exits 1 if there is
 any. `build/provenance msg FILE` checks a single message, so it can serve as a `commit-msg` hook.
 tests/provenance/run.sh runs in run_tests.sh.
 

@@ -1,6 +1,0 @@
-# expect: arrays/slices of own/ref/mut need per-element move tracking
-# forge: no-runtime
-struct Node:
-    value: u64
-struct Queue:
-    slots: own[Node][4]

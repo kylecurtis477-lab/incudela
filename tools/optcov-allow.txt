@@ -1,7 +1,7 @@
 # optcov allow-list: optimizer blocks that no Forge program can reach (build-plan item 3 part c).
 # `build/optcov --check` fails on a never-hit block that is not listed here, and on an entry here that the corpus
 # now hits or that names no block (a stale entry). Format, one block per line:
-#   function | block header (as written in selfhost/compiler.forge, stripped) | why no program reaches it
+#   function | block header (as written in selfhost/compiler.cud, stripped) | why no program reaches it
 # Entries are keyed by function and header text, not line numbers, so they survive compiler edits. A new entry
 # needs a reason that holds for every program the code generator can emit; a reachable hole gets a
 # tests/optgate program instead (docs/tools-optcov.md).

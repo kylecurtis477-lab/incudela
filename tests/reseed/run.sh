@@ -1,15 +1,15 @@
 #!/bin/sh
-# tests/reseed: tools/reseed.forge must do exactly what tools/reseed.sh (kept as the reference) does, in two
-# scratch repo skeletons (build/{forgec,fas,fld,stage2.s,stage4.s}, seed/): same stdout, stderr, exit code
+# tests/reseed: tools/reseed.cud must do exactly what tools/reseed.sh (kept as the reference) does, in two
+# scratch repo skeletons (build/{cudc,fas,fld,stage2.s,stage4.s}, seed/): same stdout, stderr, exit code
 # and resulting seed/ files (bytes and modes) for a green stage2 == stage4, a byte difference, and each
 # file being a prefix of the other (cmp's "EOF on ... line" / "in line" forms). Plus a missing-input check.
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 fail=0
-./forge tools/reseed.forge -o $T/reseed >/dev/null || { echo "FAIL reseed build"; exit 1; }
+./cuditor tools/reseed.cud -o $T/reseed >/dev/null || { echo "FAIL reseed build"; exit 1; }
 mk() { # dir
   mkdir -p $1/tools $1/build $1/seed
-  cp build/forgec build/fas build/fld build/stage2.s $1/build/
+  cp build/cudc build/fas build/fld build/stage2.s $1/build/
   cp tools/reseed.sh $T/reseed $1/tools/
 }
 run() { # name stage4-maker

@@ -1,12 +1,12 @@
-# bench (tools/bench.forge)
+# bench (tools/bench.cud)
 
-Phase 12.4 performance tracking. `./forge bench ...` builds the tool to `build/bench` on demand. It's the Forge
+Phase 12.4 performance tracking. `./cuditor bench ...` builds the tool to `build/bench` on demand. It's the Forge
 port and extension of `bench/run_bench.py`, which is kept as the reference.
 
 ## Commands
-- `bench run [--reps N] [--no-record] [--history FILE]`: compiles each `bench/<name>.forge` with `./forge` and its
+- `bench run [--reps N] [--no-record] [--history FILE]`: compiles each `bench/<name>.cud` with `./cuditor` and its
   native reference `bench/<name>.rs` with `rustc -C opt-level=3`. It checks that both print the same output, and
-  times both binaries (best of N, default 5). It also times the self-compile, `build/forgec selfhost/forgec.forge`
+  times both binaries (best of N, default 5). It also times the self-compile, `build/cudc selfhost/cudc.cud`
   (best of N). It prints a markdown table and appends one record to `bench/history.tsv`. A failed compile or an
   output mismatch exits 1 and records nothing.
 - `bench check [--history FILE] [--baseline FILE] [--tol PCT] [--window N]`: compares the newest record in the

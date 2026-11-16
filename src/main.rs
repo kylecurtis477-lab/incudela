@@ -148,7 +148,7 @@ impl C {
             T::Id(n) => {
                 self.p += 1;
                 match n.as_str() { "True" => { self.e("mov $1, %rax"); return; } "False" | "None" => { self.e("mov $0, %rax"); return; } _ => {} }
-                if n == "ord" && self.is_op("(") { // ord("c") folds to the byte value (forgec uses it for char codes)
+                if n == "ord" && self.is_op("(") { // ord("c") folds to the byte value (cudc uses it for char codes)
                     if let T::Str(s) = self.t[self.p + 1].0.clone() { if s.len() == 1 { self.p += 3; self.e(&format!("mov ${}, %rax", s.as_bytes()[0])); return; } }
                     die(ln, "ord() needs a one-character string literal");
                 }
@@ -298,9 +298,9 @@ impl C {
 
 fn main() {
     let a: Vec<String> = env::args().collect();
-    if a.len() < 2 { eprintln!("usage: mylang <file.forge | -e 'source'> [-o out] [-S]"); exit(2); }
+    if a.len() < 2 { eprintln!("usage: mylang <file.cud | -e 'source'> [-o out] [-S]"); exit(2); }
     let (src, mut outn) = if a[1] == "-e" { (a[2].clone(), "output".to_string()) } else {
-        (fs::read_to_string(&a[1]).unwrap_or_else(|e| { eprintln!("error: cannot read {}: {}", a[1], e); exit(1) }), a[1].trim_end_matches(".forge").to_string()) };
+        (fs::read_to_string(&a[1]).unwrap_or_else(|e| { eprintln!("error: cannot read {}: {}", a[1], e); exit(1) }), a[1].trim_end_matches(".cud").to_string()) };
     let mut only_s = false; let mut i = 2; if a[1] == "-e" { i = 3; }
     while i < a.len() { if a[i] == "-o" { outn = a[i + 1].clone(); i += 1; } else if a[i] == "-S" { only_s = true; } i += 1; }
     let t = lex(&src);

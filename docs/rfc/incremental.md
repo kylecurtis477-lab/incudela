@@ -6,10 +6,10 @@ future plan item with its own tests.
 
 ## 1. Where we are today
 
-`forgec in.forge out.s` (selfhost/compiler.forge, `forge_main`) is a whole-program, single-shot compiler:
+`cudc in.cud out.s` (selfhost/compiler.cud, `forge_main`) is a whole-program, single-shot compiler:
 
 1. The prelude (`prelude_text()`) is lexed first, then `load_imports` lexes every imported module
-   (`load_mod`, std-module renaming) into **one global token stream**; `# forge: no-runtime` programs
+   (`load_mod`, std-module renaming) into **one global token stream**; `# cuditor: no-runtime` programs
    instead textually inline `include`s (`fs_include`).
 2. `check_unclosed` and `reject_effects` (E0105/E0106) run, then `typecheck()` over the whole stream.
 3. `rewrite_tokens`, `prescan`, then `one_pass()` repeats until type inference converges (at least two
@@ -19,9 +19,9 @@ future plan item with its own tests.
    `.s` file comes out. fas/fld assemble and link it.
 
 Cost: every compile re-lexes, re-checks and re-generates the prelude and every module. The LSP
-(tools/lsp.forge, Phase 7.5 / 11.3) works around this with a *text-level* cache (a document is
+(tools/lsp.cud, Phase 7.5 / 11.3) works around this with a *text-level* cache (a document is
 recompiled only if its text changed; sibling modules are parsed once per on-disk text; saving a module
-rechecks the open importers), but each recheck is still a full forgec run.
+rechecks the open importers), but each recheck is still a full cudc run.
 
 ## 2. Goals and non-goals
 
@@ -38,8 +38,8 @@ Non-goals
 
 ## 3. Unit of granularity: the module, then the function
 
-- **Module** (one `.forge` / `.fsi` file, after `import` resolution; the prelude is module 0) is the unit
-  for lexing, parsing, the AST and name collection. Kernel `.fsi` include chains (freestanding mode) are
+- **Module** (one `.cud` / `.cudi` file, after `import` resolution; the prelude is module 0) is the unit
+  for lexing, parsing, the AST and name collection. Kernel `.cudi` include chains (freestanding mode) are
   treated as one module per included file, keyed by the include site so that textual inclusion order is
   part of the key.
 - **Function** is the unit for type checking results, code generation and the -O2 IR passes. Classes
@@ -84,31 +84,31 @@ is a value that can be hashed; reading a query records a dependency edge.
   worklist spreads exactly along the call/use edges, which is what the global loop does today, only
   narrower. The pass cap (40) and the "did not converge" error are kept unchanged.
 - Program-wide inputs are explicit keys, not hidden state: compiler identity, `-O0`/`-O2`, `--test`,
-  `--freestanding`, `# forge: wrapping-ints` / `no-runtime` pragmas, `--nohyb`. Changing any of them
+  `--freestanding`, `# cuditor: wrapping-ints` / `no-runtime` pragmas, `--nohyb`. Changing any of them
   invalidates everything downstream of `tokens`.
 
 ## 6. Cache format and keys
 
-- Location: `build/.forgec-cache/` (never committed; `build/` is already ignored). Content-addressed:
+- Location: `build/.cudc-cache/` (never committed; `build/` is already ignored). Content-addressed:
   `objects/<sha256>` holds a result, `index/<query>/<key-sha256>` maps a key to the object hash plus the
   list of dependency (query, key, result-hash) triples it read.
 - **Key** = SHA-256 over: cache format version (starts at 1), compiler identity (the SHA-256 of the running
-  forgec binary, i.e. the value pinned in seed/seed.sha256 for the seed), query name, the program-wide flag
+  cudc binary, i.e. the value pinned in seed/seed.sha256 for the seed), query name, the program-wide flag
   set, and the query's input result hashes. Never timestamps, paths outside the project, PIDs or the
   environment.
 - **Values** are written in a canonical, versioned binary form (little-endian lengths + bytes; token arrays
   and summaries in a fixed field order) so equal results hash equally. Asm text is stored verbatim.
 - Writes go to a temporary file and are renamed into place; a truncated or corrupt object fails its hash
   check and is treated as a miss. The cache is an optimisation only: deleting it must never change output.
-- Eviction: none in v1 (size-capped LRU later); `forgec --cache=off` disables it, `--cache-verify` recomputes
+- Eviction: none in v1 (size-capped LRU later); `cudc --cache=off` disables it, `--cache-verify` recomputes
   every hit and fails on a mismatch (used by the tests below).
 
 ## 7. Interaction with the LSP re-check cache
 
 - The LSP keeps its own text cache (identical text → republish cached diagnostics) as the first level;
   it costs nothing and stays.
-- Behind it, the LSP stops spawning a full forgec per recheck and instead runs the queries in a
-  long-lived process (in-process, or a `forgec --serve` child speaking the same JSON-RPC framing). Unsaved
+- Behind it, the LSP stops spawning a full cudc per recheck and instead runs the queries in a
+  long-lived process (in-process, or a `cudc --serve` child speaking the same JSON-RPC framing). Unsaved
   buffers become `source` overrides keyed by their text hash, which removes the hidden sibling temp file.
 - "Saving a module rechecks open importers" becomes automatic: importers depend on that module's `items`
   and `signature`s; with early cutoff, saving a body-only change rechecks nothing else.
@@ -162,5 +162,5 @@ is a value that can be hashed; reading a query records a dependency edge.
 - Whether `reach_all` should prune before or after cached codegen (pruning first saves work, but makes a
   function's codegen depend on the whole call graph).
 - Whether the -O2 hybrid IR pass can be keyed per function, or needs the whole-program type assignment.
-- Cache sharing between the host compiler and the kernel build (`.fsi` modules compiled in freestanding
+- Cache sharing between the host compiler and the kernel build (`.cudi` modules compiled in freestanding
   mode are a different flag set, so they would not share entries today).

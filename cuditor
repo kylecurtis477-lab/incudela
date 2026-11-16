@@ -1,0 +1,85 @@
+#!/bin/sh
+# cuditor <file.cud> [-o out] : compile with the self-hosted compiler, then assemble+link (tools/fas + tools/fld)
+set -e
+D="$(cd "$(dirname "$0")" && pwd)"
+# CUDC_FLAGS was FORGEC_FLAGS before the Cuditor rename (2026-11-16); the old name is honoured for one release
+[ -z "${CUDC_FLAGS+x}" ] && [ -n "${FORGEC_FLAGS+x}" ] && export CUDC_FLAGS="$FORGEC_FLAGS"
+# cuditor test [files] / cuditor verify [files] : JSON reports (tools/cud_test.cud, tools/cud_verify.cud;
+# tools/cud_test.sh and tools/cud_verify.sh are kept as the references)
+if [ "$1" = "test" ]; then
+  shift
+  [ "$D/build/cud_test" -nt "$D/tools/cud_test.cud" ] || "$0" "$D/tools/cud_test.cud" -o "$D/build/cud_test" >&2
+  exec "$D/build/cud_test" "$@"
+fi
+if [ "$1" = "verify" ]; then
+  shift
+  [ "$D/build/cud_test" -nt "$D/tools/cud_test.cud" ] || "$0" "$D/tools/cud_test.cud" -o "$D/build/cud_test" >&2
+  [ "$D/build/fmt" -nt "$D/tools/fmt.cud" ] || "$0" "$D/tools/fmt.cud" -o "$D/build/fmt" >&2
+  [ "$D/build/cud_verify" -nt "$D/tools/cud_verify.cud" ] || "$0" "$D/tools/cud_verify.cud" -o "$D/build/cud_verify" >&2
+  exec "$D/build/cud_verify" "$@"
+fi
+# cuditor bench run|check [...] : Phase 12.4 performance tracking (tools/bench.cud; bench/run_bench.py is the reference)
+if [ "$1" = "bench" ]; then
+  shift
+  [ "$D/build/bench" -nt "$D/tools/bench.cud" ] || "$0" "$D/tools/bench.cud" -o "$D/build/bench" >&2
+  exec "$D/build/bench" "$@"
+fi
+# cuditor pkg [--registry DIR] lock | build [-o OUT] | sha256 FILE... : package manager (tools/pkg.cud).
+# Run in a project directory (cuditor.toml). Registry: --registry, else $FORGE_REGISTRY, else ./registry.
+# build stages the locked sources into target/stage, compiles the main module to target/<main>
+# (or OUT) and prints its sha256.
+if [ "$1" = "pkg" ]; then
+  shift
+  [ "$D/build/pkg" -nt "$D/tools/pkg.cud" ] || "$0" "$D/tools/pkg.cud" -o "$D/build/pkg"
+  reg="${FORGE_REGISTRY:-registry}"
+  [ "$1" = "--registry" ] && { reg="$2"; shift 2; }
+  case "$1" in
+    lock) exec "$D/build/pkg" lock "$reg" ;;
+    sha256) shift; exec "$D/build/pkg" sha256 "$@" ;;
+    build)
+      rm -rf target/stage && mkdir -p target/stage
+      main=$("$D/build/pkg" stage "$reg" target/stage)
+      out="target/${main%.cud}"; [ "$2" = "-o" ] && out="$3"
+      (cd target/stage && "$D/build/cudc" "$main" main.s $CUDC_FLAGS && "$D/build/fas" -o main.o main.s && "$D/build/fld" --base 0x100000000000 -o main main.o)
+      cp target/stage/main "$out"
+      echo "built $out sha256 $(sha256sum "$out" | cut -d' ' -f1)"
+      exit 0 ;;
+    *) echo "usage: cuditor pkg [--registry DIR] lock | build [-o OUT] | sha256 FILE..." >&2; exit 2 ;;
+  esac
+fi
+# cuditor reseed : refresh seed/ from a green build (tools/reseed.cud; tools/reseed.sh is the reference)
+if [ "$1" = "reseed" ]; then
+  [ "$D/build/reseed" -nt "$D/tools/reseed.cud" ] || "$0" "$D/tools/reseed.cud" -o "$D/build/reseed" >&2
+  exec "$D/build/reseed"
+fi
+# cuditor provenance [RANGE] : AI-provenance trailers (tools/provenance.cud, docs/PROVENANCE.md) on every commit in
+# RANGE; default: from the commit that added tools/provenance.cud to HEAD
+if [ "$1" = "provenance" ]; then
+  [ "$D/build/provenance" -nt "$D/tools/provenance.cud" ] || "$0" "$D/tools/provenance.cud" -o "$D/build/provenance" >&2
+  cd "$D"
+  r="$2"
+  if [ -z "$r" ]; then
+    first=$(git log --format=%H --diff-filter=A -- tools/provenance.cud | tail -1)
+    [ -n "$first" ] || { echo "cuditor provenance: tools/provenance.cud is not committed yet" >&2; exit 2; }
+    r="$first^..HEAD"
+  fi
+  t=$(mktemp); git log --format='@@commit %H%n%B' "$r" > "$t" || { rm -f "$t"; exit 2; }
+  "$D/build/provenance" log "$t"; rc=$?; rm -f "$t"; exit $rc
+fi
+# cuditor lsp : Language Server Protocol server on stdio (tools/lsp.cud)
+if [ "$1" = "lsp" ]; then
+  [ "$D/build/lsp" -nt "$D/tools/lsp.cud" ] || "$0" "$D/tools/lsp.cud" -o "$D/build/lsp" >&2
+  exec "$D/build/lsp" "$D/build/cudc"
+fi
+# cuditor fmt [--check] [files...] : canonical formatter (tools/fmt.cud); no files = repo set
+if [ "$1" = "fmt" ]; then
+  shift
+  [ "$D/build/fmt" -nt "$D/tools/fmt.cud" ] || "$0" "$D/tools/fmt.cud" -o "$D/build/fmt"
+  chk=""; [ "$1" = "--check" ] && { chk="--check"; shift; }
+  if [ $# = 0 ]; then cd "$D"; set -- $(build/fmt --list); fi
+  exec "$D/build/fmt" $chk "$@"
+fi
+src="$1"; out="${src%.cud}"
+[ "$2" = "-o" ] && out="$3"
+"$D/build/cudc" "$src" "$out.s" $CUDC_FLAGS
+"$D/build/fas" -o "$out.o" "$out.s" && "$D/build/fld" --base 0x100000000000 -o "$out" "$out.o" && rm -f "$out.o"

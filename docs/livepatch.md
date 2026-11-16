@@ -1,6 +1,6 @@
 # Live patching
 
-Sources: `examples/kernel/livepatch.fsi`, the `@patchable` decorator in forgec, and the module `getpid2.ko`.
+Sources: `examples/kernel/livepatch.cudi`, the `@patchable` decorator in cudc, and the module `getpid2.ko`.
 
 ## Design
 `@patchable` emits a 5-byte nop (`0f 1f 44 00 00`) at the function entry, which is 16-byte aligned.

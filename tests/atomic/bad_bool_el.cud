@@ -1,0 +1,8 @@
+# expect: integer element
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+x: u64 = 0
+b: bool = False
+def main() -> u64:
+    atomic_load(addr(b), relaxed)
+    return 0

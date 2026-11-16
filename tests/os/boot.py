@@ -4,7 +4,7 @@
 usage: boot.py NAME LOG TIMEOUT 'marker|marker|...' FBTEXT -- qemu args...
 FBTEXT ('' to skip): text expected at the start of row 0 of the 8x16 framebuffer console. After
 'KERNEL OK' appears on serial the harness takes a QEMU monitor screendump, decodes the first row
-cell by cell against examples/kernel/font.fsi, then sends 'q' on COM1 so the kernel exits with 0x10.
+cell by cell against examples/kernel/font.cudi, then sends 'q' on COM1 so the kernel exits with 0x10.
 Prints PASS/FAIL os/NAME like run_tests.sh, with the boot's wall time.
 
 Timeouts (the old bare "qemu rc=-9"): a boot that runs out of TIMEOUT is classified by its serial output.
@@ -28,7 +28,7 @@ mon = f'/tmp/forge-mon-{os.getpid()}.sock'
 shot = os.path.join(os.path.dirname(os.path.abspath(log)), f'{name}.ppm')
 
 def font():
-    src = open(os.path.join(root, 'examples/kernel/font.fsi')).read()
+    src = open(os.path.join(root, 'examples/kernel/font.cudi')).read()
     body = src[src.index('[', src.index('=')) + 1:src.rindex(']')]
     return [int(x, 0) for x in body.replace('\n', ' ').split(',') if x.strip()]
 

@@ -1,10 +1,10 @@
 #!/bin/sh
-# tests/provenance: tools/provenance.forge (AI-provenance commit trailers, docs/PROVENANCE.md) on fixed messages,
+# tests/provenance: tools/provenance.cud (AI-provenance commit trailers, docs/PROVENANCE.md) on fixed messages,
 # a mixed git-log dump, bad usage, and the repository's own history from the commit that added the tool.
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 fail=0
-build/forgec tools/provenance.forge $T/p.s && build/fas -o $T/p.o $T/p.s && build/fld --base 0x100000000000 -o $T/prov $T/p.o || { echo "FAIL provenance build"; exit 1; }
+build/cudc tools/provenance.cud $T/p.s && build/fas -o $T/p.o $T/p.s && build/fld --base 0x100000000000 -o $T/prov $T/p.o || { echo "FAIL provenance build"; exit 1; }
 # chk NAME WANT_RC WANT_TEXT MESSAGE
 chk() {
   printf "$4" > $T/msg; $T/prov msg $T/msg > $T/out 2>&1; r=$?
@@ -25,11 +25,11 @@ $T/prov log $T/log > $T/out; r=$?
 [ $r = 1 ] && grep -q "^provenance: 222222222222: no Provenance trailer" $T/out && grep -q "3 commit message(s) checked, 1 without" $T/out && echo "PASS provenance-log" || { echo "FAIL provenance-log"; fail=1; }
 $T/prov > /dev/null 2>&1; [ $? = 2 ] && echo "PASS provenance-usage" || { echo "FAIL provenance-usage"; fail=1; }
 # the repository itself: every commit from the one that added the tool on
-if git rev-parse --git-dir >/dev/null 2>&1 && [ -n "$(git log --format=%H --diff-filter=A -- tools/provenance.forge)" ]; then
-  first=$(git log --format=%H --diff-filter=A -- tools/provenance.forge | tail -1)
+if git rev-parse --git-dir >/dev/null 2>&1 && [ -n "$(git log --format=%H --diff-filter=A -- tools/provenance.cud)" ]; then
+  first=$(git log --format=%H --diff-filter=A -- tools/provenance.cud | tail -1)
   git log --format='@@commit %H%n%B' "$first^..HEAD" > $T/repo
   $T/prov log $T/repo > $T/out 2>&1 && echo "PASS provenance-repo ($(tail -1 $T/out | cut -d' ' -f2) commits)" || { echo "FAIL provenance-repo"; cat $T/out; fail=1; }
 else
-  echo "SKIP provenance-repo (no git history with tools/provenance.forge)"
+  echo "SKIP provenance-repo (no git history with tools/provenance.cud)"
 fi
 exit $fail

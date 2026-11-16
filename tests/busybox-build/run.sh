@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/busybox-build: tools/busybox/build.forge (built to build/busybox-build; what examples/user/build.forge
+# tests/busybox-build: tools/busybox/build.cud (built to build/busybox-build; what examples/user/build.cud
 # runs) must do exactly what tools/busybox/build.sh (kept as the reference) does: same stdout, stderr and exit
 # code and a byte-identical sealed busybox.elf with the same mode. Cases: a cold build (fresh $BB_WORK: GNU make
 # and musl built from source), a warm one (make and musl reused), and the refusal paths: tarball missing (rc 2),
@@ -12,7 +12,7 @@ S=${BB_SRC:-/workspace/bb}
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 fail=0
 export SOURCE_DATE_EPOCH=1700000000
-./forge tools/busybox/build.forge -o build/busybox-build >/dev/null || { echo "FAIL busybox-build build"; exit 1; }
+./cuditor tools/busybox/build.cud -o build/busybox-build >/dev/null || { echo "FAIL busybox-build build"; exit 1; }
 K=$PWD/build/user/seal.key
 # chk name src work(fresh|keep) want-rc
 chk() {

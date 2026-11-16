@@ -1,4 +1,4 @@
-# fsfuzz (tools/fsfuzz.forge)
+# fsfuzz (tools/fsfuzz.cud)
 
 Differential fuzzer for the freestanding backend's `--fs-opt` pass (Phase 12.1). It is the gate before any further
 step 4 work on the register allocator.
@@ -7,7 +7,7 @@ step 4 work on the register allocator.
 
 ## What it checks
 
-It writes COUNT random programs to build/fsfuzz/pK.forge and builds each one eight ways with build/forgec, build/fas
+It writes COUNT random programs to build/fsfuzz/pK.cud and builds each one eight ways with build/cudc, build/fas
 and build/fld:
 
 | config | flags |
@@ -40,7 +40,7 @@ generation, instead of the eight fixed builds:
 - `-g` or not (debug line info; `.loc` lines sit between the instructions the peepholes and the allocator match).
 
 That is 56 flag sets. Each program is also built from a second source, the same program with
-`# forge: stack-protector` plus a `stack_canary` word and a `stack_smashed` handler, so every frame that holds an
+`# cuditor: stack-protector` plus a `stack_canary` word and a `stack_smashed` handler, so every frame that holds an
 array gets a canary store in the prologue and a check before `leave` (code the allocator must work around):
 112 builds per program. A build whose assembly is byte-identical to an earlier build of the same source is not
 assembled or run again; every distinct assembly is linked, run under `timeout 10`, and must print the same output
@@ -82,4 +82,4 @@ safe code, so step 4a's promotion next to frame aggregates applies.
 ## Tests
 
 run_tests.sh builds the tool and runs `build/fsfuzz-tool --seed 1 --n 20` (`PASS fs-opt-fuzz`) at both O2 and
-FORGEC_FLAGS=-O0. The tool itself is built with those flags, but every program is always built in all eight configs.
+CUDC_FLAGS=-O0. The tool itself is built with those flags, but every program is always built in all eight configs.

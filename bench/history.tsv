@@ -1,4 +1,4 @@
-# bench/history.tsv: one record per `bench run` (tools/bench.forge), newest last. `bench check` compares the
+# bench/history.tsv: one record per `bench run` (tools/bench.cud), newest last. `bench check` compares the
 # newest record with bench/baseline.tsv.
 # note=orphan (e42065b, 836c322, 207d8e7): the sha is not a commit in this repository; those runs were taken on
 # commits that were rewritten before landing (the sha names the work tree, not a landed commit). Kept for the

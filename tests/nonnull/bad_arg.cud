@@ -1,0 +1,8 @@
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+# expect: before using it as a ptr[T]
+g: nptr[u64]
+def f(p: ptr[u64]) -> u64:
+    return p[0]
+def main() -> u64:
+    return f(g)

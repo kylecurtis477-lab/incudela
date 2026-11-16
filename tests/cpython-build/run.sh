@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/cpython-build: tools/cpython/build.forge (built to build/cpython-build) pins and installs
+# tests/cpython-build: tools/cpython/build.cud (built to build/cpython-build) pins and installs
 # CPython 3.13.5 from official source (kept out of the repo in $CP_SRC, default /workspace/cpython).
 # Cases: tarball missing (rc 2), SHA-256 pin mismatch (rc 3), a bad upstream signature (rc 4),
 # a cold (or first) install that produces python3 3.13.5, Python.h and libpython3.13.a, and a warm
@@ -10,7 +10,7 @@ S=${CP_SRC:-/workspace/cpython}
 [ -f $S/Python-3.13.5.tar.xz ] || { echo "SKIP cpython-build (no Python-3.13.5.tar.xz in $S)"; exit 0; }
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 fail=0
-./forge tools/cpython/build.forge -o build/cpython-build >/dev/null || { echo "FAIL cpython-build build"; exit 1; }
+./cuditor tools/cpython/build.cud -o build/cpython-build >/dev/null || { echo "FAIL cpython-build build"; exit 1; }
 chk_err() {
   # name src want-rc
   CP_SRC=$2 CP_WORK=$T/w build/cpython-build >$T/o 2>$T/e; rc=$?

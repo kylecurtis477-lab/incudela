@@ -1,5 +1,5 @@
 #!/bin/bash
-# tests/os/bootpol.sh: boot-time DMA policy switch (examples/kernel/bootpol.fsi), one boot per mode.
+# tests/os/bootpol.sh: boot-time DMA policy switch (examples/kernel/bootpol.cudi), one boot per mode.
 #   bootpol-cmdline-strict  GRUB (BIOS, no IOMMU) with `forge.iommu=strict` on the multiboot2 command line and a
 #                           tampered boot.cfg on the ESP: the config is refused, the command line tightens, and the
 #                           user-mode block driver is refused its DMA region end to end (blkd exits 1, the kernel
@@ -21,7 +21,7 @@ FB="back == front^KERNEL OK"
 T=$(mktemp -d /tmp/forge-bootpol.XXXXXX)
 trap 'rm -rf $T' EXIT
 fail_all() { for n in bootpol-cmdline-strict bootpol-iommu-kexec bootpol-config-strict; do echo "FAIL os/$n ($1)"; done; exit 0; }
-[ -x $B ] && [ -f $L/vdisk.img ] && [ -x build/forgeseal ] && [ -f build/user/seal.key ] || fail_all "needs tests/os/run.sh outputs"
+[ -x $B ] && [ -f $L/vdisk.img ] && [ -x build/cudseal ] && [ -f build/user/seal.key ] || fail_all "needs tests/os/run.sh outputs"
 # the ISO with a command line (a test copy; build/kernel/forge.iso is untouched)
 cp -r build/kernel/iso $T/iso
 sed -i 's|multiboot2 /boot/kernel.elf$|multiboot2 /boot/kernel.elf forge.iommu=strict|' $T/iso/boot/grub/grub.cfg
@@ -29,8 +29,8 @@ grep -q 'forge.iommu=strict' $T/iso/boot/grub/grub.cfg || fail_all "grub.cfg edi
 env -u SOURCE_DATE_EPOCH grub-mkrescue -o $T/strict.iso $T/iso >/dev/null 2>&1 || fail_all "grub-mkrescue"
 # boot configs: sealed strict, sealed permissive, and a sealed one edited afterwards (hash mismatch)
 for m in strict permissive; do
-  printf '# Forge boot config, sealed with forgeseal --config (bootpol.fsi)\niommu=%s\n' $m > $T/$m.cfg
-  build/forgeseal --config $T/$m.cfg build/user/seal.key >/dev/null || fail_all "forgeseal --config"
+  printf '# Forge boot config, sealed with cudseal --config (bootpol.cudi)\niommu=%s\n' $m > $T/$m.cfg
+  build/cudseal --config $T/$m.cfg build/user/seal.key >/dev/null || fail_all "cudseal --config"
 done
 cp $T/permissive.cfg $T/tampered.cfg
 python3 - $T/tampered.cfg <<'P' || fail_all "tamper"

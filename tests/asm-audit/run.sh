@@ -6,14 +6,14 @@
 #   - every top-level asm(...) block in examples/kernel (its .globl symbols, or its first label when it has none),
 #   - every ordinary function with inline asm in examples/kernel or examples/user (the enclosing def),
 # and fails when one is missing from a "- [x]" line of that SYSTEMS.md section, when the section has an unchecked
-# "- [ ]" line, when a checked name no longer exists in examples/ or selfhost/compiler.forge, or when examples/modules or examples/efi gain asm.
+# "- [ ]" line, when a checked name no longer exists in examples/ or selfhost/compiler.cud, or when examples/modules or examples/efi gain asm.
 # usage: tests/asm-audit/run.sh [--list]     (run from the repo root; --list prints the required names)
 cd "$(dirname "$0")/../.." || exit 1
 fail=0
 T=${TMPDIR:-/tmp}/asm-audit.$$
 trap 'rm -f $T.*' EXIT
 # required names, one per line: "<group> <name> <file>"
-for f in examples/kernel/*.fsi examples/kernel/*.forge examples/user/*.fsi examples/user/*.forge; do
+for f in examples/kernel/*.cudi examples/kernel/*.cud examples/user/*.cudi examples/user/*.cud; do
   case $f in examples/kernel/*) g=kernel ;; *) g=user ;; esac
   awk -v F="$f" -v G="$g" '
     /^@naked/ { nk = 1; next }
@@ -46,7 +46,7 @@ for g in kernel user; do
   if [ -z "$miss" ]; then echo "PASS asm-audit-$g ($n routines checked off)"; else echo "FAIL asm-audit-$g: not in the docs/SYSTEMS.md checklist:$miss"; fail=1; fi
 done
 stale=""
-for name in $(cat $T.names); do grep -rqw -- "$name" examples selfhost/compiler.forge || stale="$stale $name"; done
+for name in $(cat $T.names); do grep -rqw -- "$name" examples selfhost/compiler.cud || stale="$stale $name"; done
 if [ -z "$stale" ]; then echo "PASS asm-audit-stale"; else echo "FAIL asm-audit-stale: checklist names not found in examples/ or the compiler:$stale"; fail=1; fi
 if grep -rlE '(^|[^A-Za-z0-9_])asm\(|^@naked' examples/modules examples/efi > $T.none 2>/dev/null; then echo "FAIL asm-audit-none: asm in"; cat $T.none; fail=1; else echo "PASS asm-audit-none (examples/modules, examples/efi)"; fi
 exit $fail

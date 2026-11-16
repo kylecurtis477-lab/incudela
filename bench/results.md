@@ -10,7 +10,7 @@
 | floats | 0.031s | 0.015s | 0.18s | 237ms | 174ms | 137,776 B | 11,390,192 B | 1500122368 |
 | strops | 0.018s | 0.017s | 0.04s | 165ms | 324ms | 138,656 B | 11,516,016 B | 38408 977889 22311 |
 
-Self-compile (forge selfhost/forgec.forge): 1.25s.
+Self-compile (forge selfhost/cudc.cud): 1.25s.
 Band checks (2**62..2**62+3 alias bool/None) are done where a value leaves int arithmetic, not after every add; `v = v + 1` counters starting from a small constant skip jo entirely.
 
 ## Previous runs (2026-10-31 22:52 CT)
@@ -36,7 +36,7 @@ Self-compile of the compiler (best of 5): 1.89s with -O, 1.96s with -O0.
 Note: the IR backend only takes plain int functions with int params, so 1 of 622 compiler functions uses it. fib does not improve because temporaries are not coalesced.
 
 ## Self-compile re-time (2026-11-01 20:39 CST, after the freestanding backend)
-`build/forgec selfhost/forgec.forge out.s`, best of 5: 1.66s (1.42s at 9c270ca, 1.11s at 0bf3911).
+`build/cudc selfhost/cudc.cud out.s`, best of 5: 1.66s (1.42s at 9c270ca, 1.11s at 0bf3911).
 - Part of the increase is +1,450 source lines (+10%) for the fs backend.
 - About 0.2s comes from the hyb_wasted function recompile (still to be fixed).
 
@@ -46,8 +46,8 @@ The hybrid-function recompile is replaced by in-place register compaction (hyb_c
 - Runtimes unchanged: fib 0.010, loop 0.093, strbuild 0.035, lists 0.042, floats 0.015, strops 0.019 (Rust 0.007/0.072/0.058/0.057/0.015/0.017).
 
 ## Tracking starts (2026-11-11 18:30 CST, at 2aba6e2)
-`./forge bench run` (tools/bench.forge) replaces hand runs of run_bench.py; records go to bench/history.tsv and
-`./forge bench check` compares them with bench/baseline.tsv. Best of 5 on the shared box while another worker ran QEMU:
+`./cuditor bench run` (tools/bench.cud) replaces hand runs of run_bench.py; records go to bench/history.tsv and
+`./cuditor bench check` compares them with bench/baseline.tsv. Best of 5 on the shared box while another worker ran QEMU:
 | bench | Forge run | Rust -O3 run | ratio |
 |---|---|---|---|
 | fib | 11.4 ms | 7.5 ms | 1.51 |
@@ -65,7 +65,7 @@ statement). The output assembly is unchanged; the GC share of a self-compile dro
 Self-compile best of 5: **1560 ms** (was 2354 ms on the same loaded box). bench/baseline.tsv was refreshed with this record.
 
 ## Freestanding twins and --fs-opt step 1 (2026-11-11 18:47 CST)
-bench/fsloop.forge and bench/fsfib.forge are freestanding copies of loop and fib (same output; their Rust
+bench/fsloop.cud and bench/fsfib.cud are freestanding copies of loop and fib (same output; their Rust
 references are loop.rs and fib.rs). `bench run` builds each with `--fs-opt` (fsloop, fsfib) and without (fsloop0, fsfib0).
 | bench | Forge run | Rust -O3 run | ratio |
 |---|---|---|---|

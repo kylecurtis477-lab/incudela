@@ -1,4 +1,4 @@
-# krel (tools/krel.forge)
+# krel (tools/krel.cud)
 
 `krel KERNEL.ELF OUT.s` builds the image-KASLR self-relocation table from a kernel linked with `ld -q`
 (relocations kept). It's a Forge port of `tools/krel.py`. The output is the same byte-for-byte.
@@ -15,6 +15,6 @@ tests/fld/run.sh compares fld against (GNU ld + linker.ld + krel, two passes).
 Implementation note: Forge ints are signed 64-bit, so "unsigned >= KBASE" becomes `KBASE <= v < 0`, and hex
 output is printed as two 32-bit halves.
 
-Test: `tests/krel/run.sh` builds krel with build/forgec, build/fas and build/fld. On every input it requires the
+Test: `tests/krel/run.sh` builds krel with build/cudc, build/fas and build/fld. On every input it requires the
 same OUT.s, stdout and exit code as `tools/krel.py`. The inputs are kernel and kernel-next, a synthetic image
 with all three kinds, a low-only image, and an R_X86_64_32 error image.

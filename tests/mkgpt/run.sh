@@ -1,16 +1,16 @@
 #!/bin/sh
-# tests/mkgpt: examples/efi/mkgpt.forge must write the same disk image as examples/efi/mkgpt.py
-# (FORGE_GUID_SEED fixes the GUIDs) for several sizes and ESP images, with the same exit code; unseeded,
+# tests/mkgpt: examples/efi/mkgpt.cud must write the same disk image as examples/efi/mkgpt.py
+# (INCUDELA_GUID_SEED fixes the GUIDs) for several sizes and ESP images, with the same exit code; unseeded,
 # the Forge build must produce a valid GPT (header/entry CRCs) with random RFC 4122 v4 GUIDs.
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 fail=0
-build/forgec examples/efi/mkgpt.forge $T/m.s && build/fas -o $T/m.o $T/m.s && build/fld --base 0x100000000000 -o $T/mkgpt $T/m.o || { echo "FAIL mkgpt build"; exit 1; }
+build/cudc examples/efi/mkgpt.cud $T/m.s && build/fas -o $T/m.o $T/m.s && build/fld --base 0x100000000000 -o $T/mkgpt $T/m.o || { echo "FAIL mkgpt build"; exit 1; }
 command -v python3 >/dev/null || { echo "SKIP mkgpt (needs python3 for the reference)"; exit 0; }
 chk() { # name esp [size]
   rm -f $T/p.img $T/f.img
-  FORGE_GUID_SEED=${SEED:-31337} python3 examples/efi/mkgpt.py $T/p.img "$2" $3 >/dev/null 2>&1; pr=$?
-  FORGE_GUID_SEED=${SEED:-31337} $T/mkgpt $T/f.img "$2" $3 >/dev/null 2>&1; fr=$?
+  INCUDELA_GUID_SEED=${SEED:-31337} python3 examples/efi/mkgpt.py $T/p.img "$2" $3 >/dev/null 2>&1; pr=$?
+  INCUDELA_GUID_SEED=${SEED:-31337} $T/mkgpt $T/f.img "$2" $3 >/dev/null 2>&1; fr=$?
   if [ $pr = $fr ] && { [ $pr != 0 ] || cmp -s $T/p.img $T/f.img; }; then echo "PASS mkgpt $1 (rc=$fr$( [ $fr = 0 ] && echo ", $(wc -c <$T/f.img) bytes identical"))"
   else echo "FAIL mkgpt $1 (rc py=$pr forge=$fr)"; fail=1; fi
 }
@@ -29,7 +29,7 @@ SEED=18446744073709551615 chk seed-max $T/rand.fat 64
 chk esp-64MiB-256 $T/big.fat 256
 chk does-not-fit $T/big.fat 64
 # unseeded: valid GPT, random v4 GUIDs (4 distinct)
-env -u FORGE_GUID_SEED $T/mkgpt $T/r.img $T/rand.fat 64 && python3 - $T/r.img <<'P' && echo "PASS mkgpt random-guids" || { echo "FAIL mkgpt random-guids"; fail=1; }
+env -u INCUDELA_GUID_SEED $T/mkgpt $T/r.img $T/rand.fat 64 && python3 - $T/r.img <<'P' && echo "PASS mkgpt random-guids" || { echo "FAIL mkgpt random-guids"; fail=1; }
 import sys, struct, zlib, uuid
 d = open(sys.argv[1], 'rb').read(); n = len(d) // 512
 ents = d[1024:1024 + 16384]

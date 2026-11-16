@@ -1,0 +1,9 @@
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+# expect: before a field access
+class T:
+    a: u64
+g: nptr[T]
+def main() -> u64:
+    p = g
+    return p.a

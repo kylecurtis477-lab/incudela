@@ -1,14 +1,14 @@
 # Linux compatibility (Phase 11.1)
 
 Forge can run static x86-64 Linux programs through a **Linux syscall personality**
-(`examples/kernel/linux.fsi`). It is a second syscall table, not a second kernel: memory, the
+(`examples/kernel/linux.cudi`). It is a second syscall table, not a second kernel: memory, the
 console, scheduling and capabilities are Forge's, seen through Linux numbers and Linux structs.
 
 ## Who may run under it (the 6.4 gate)
 
 A Linux image is one whose ELF header says EI_OSABI = 3. It runs only if **all** of these hold:
 
-1. It is **sealed** (`tools/forgeseal.py`): the verifier's unsafe report matches the audited baseline
+1. It is **sealed** (`tools/cudseal.py`): the verifier's unsafe report matches the audited baseline
    and the build key signed it. Unsealed (reason 1) and tampered (reason 5) images are refused before
    the ABI byte is looked at. The seal covers the OSABI byte, so a Forge program cannot be re-tagged
    after sealing.
@@ -71,9 +71,9 @@ Errno values are Linux's: Forge's error codes were already the negated Linux err
 ## Registers
 
 The Linux ABI preserves every register except rax, rcx and r11 across `syscall`. Since 11.1a the
-kernel's syscall frame (`examples/kernel/user.fsi`, `SF_SIZE = 128`) saves rdi, rsi, rdx, r10, r8 and
+kernel's syscall frame (`examples/kernel/user.cudi`, `SF_SIZE = 128`) saves rdi, rsi, rdx, r10, r8 and
 r9 and restores them on return, for Forge programs too (previously they were zeroed). A fresh exec
-still starts with all registers zero. The kexec handoff carries the bigger frame (format v4; since v5 inside a process-state v1 record, pstate.fsi) and the
+still starts with all registers zero. The kexec handoff carries the bigger frame (format v4; since v5 inside a process-state v1 record, pstate.cudi) and the
 process's ABI (record word +56, bit 40).
 
 ## Thread-local storage (11.1b)
@@ -105,7 +105,7 @@ handoff carries it (process record word +120).
 
 ## Test: lxthreads
 
-`run lxthreads` (examples/user/lxthreads.forge, raw syscalls only): 4 clone()d workers, each on its
+`run lxthreads` (examples/user/lxthreads.cud, raw syscalls only): 4 clone()d workers, each on its
 own mmap'd stack with its own TLS block, add 2000 each to one counter under a futex mutex (three-state
 lock, yielding inside the critical section so the others sleep in FUTEX_WAIT): `counter 8000 (expected
 8000)`. Then per-thread `%fs` checks, distinct gettid and shared getpid, join through
@@ -129,9 +129,9 @@ AT_RANDOM bytes are rdtsc-seeded splitmix64. That is enough for a test program's
 
 ## Test: lxtest
 
-`examples/user/lxtest.forge` is a Linux program written in Forge with no Forge runtime: a naked
+`examples/user/lxtest.cud` is a Linux program written in Forge with no Forge runtime: a naked
 `_start` hands rsp to `lx_main`, and every call is a raw `syscall` with Linux numbers. build.sh
-compiles it with forgec/fas/fld, sets EI_OSABI = 3, then seals it. tests/os/run.sh checks:
+compiles it with cudc/fas/fld, sets EI_OSABI = 3, then seals it. tests/os/run.sh checks:
 
 - `lxtest` from plain sh -> `verify: /efi/forge/bin/lxtest refused: Linux ABI image needs the compatibility sandbox`
 - `run lxtest` -> argc/argv, 9 auxv entries (AT_PAGESZ, AT_ENTRY == &_start, AT_SECURE, AT_RANDOM),
@@ -212,7 +212,7 @@ across execve (handlers reset to SIG_DFL, as on Linux).
   (lxsig does, to step over a faulting instruction); rt_sigreturn keeps rflags to the arithmetic
   flags + IF and refuses a kernel rip / rsp. Callee-saved registers survive through the handler's ABI.
   rt_sigreturn restores rcx and r11 as well: it stores them in the thread (`sig_rx`) and sets the
-  syscall frame's pad word to point there, and the exit path (user.fsi `sigret_exit`) then leaves by
+  syscall frame's pad word to point there, and the exit path (user.cudi `sigret_exit`) then leaves by
   iretq, since sysret would need rcx = rip and r11 = rflags. Every other syscall still leaves by sysret.
 - A user page fault with a SIGSEGV handler installed and unblocked runs it
   (`linux: pid N SIGSEGV at rip=.. addr=.. -> its handler`); otherwise the process is killed as before.
@@ -250,9 +250,9 @@ BusyBox is built from source only; no prebuilt third-party binary is used.
   - busybox-1.38.0.tar.bz2, sha256 matches busybox.net's .sha256; GPG signature GOOD (Denys Vlasenko, C9E9416F76E610DBD09D040F47B70C55ACC9965B).
   - musl-1.2.5.tar.gz: good signature (gpg GOODSIG/VALIDSIG, made 2024-02-29 20:08 CST) by the musl libc key `8364 8929 0BB6 B70F 99FF  DA05 56BC DB59 3020 450F` (musl libc <musl@libc.org>, created 2014-04-27). The fingerprint was cross-checked on 2026-11-03 against three independent sources that agree: musl.libc.org/musl.pub, keyserver.ubuntu.com, and Debian's packaging (sources.debian.org musl 1.2.5-3 `debian/upstream/signing-key.asc`); keys.openpgp.org has no copy. The key is kept at `tools/busybox/keys/musl.pub.asc` (import it into `$BB_SRC/gnupg`); the SHA-256 pin, which also matches Alpine's published sha512, still applies.
   - make-4.4.1.tar.gz (host had no make): GPG signature made in 2023 by a key that has since expired (EXPKEYSIG, accepted with a note).
-- Host compiler: Debian gcc 14.2.0, used to build make and musl; BusyBox is compiled with `musl-gcc --static`. bzip2 decompression uses Python's bz2 (`tools/busybox/bzip2` shim). The build runs as `build/busybox-build` (tools/busybox/build.forge); `tools/busybox/build.sh` is kept as the reference.
+- Host compiler: Debian gcc 14.2.0, used to build make and musl; BusyBox is compiled with `musl-gcc --static`. bzip2 decompression uses Python's bz2 (`tools/busybox/bzip2` shim). The build runs as `build/busybox-build` (tools/busybox/build.cud); `tools/busybox/build.sh` is kept as the reference.
 - Config: `tools/busybox/busybox.config` (allnoconfig + a small applet set).
-- Image: static EXEC at 0x400000, EI_OSABI set to 3, sealed `forgeseal.py --foreign` (level 3, unsafe 0, caps 0). `image_verify` refuses a level-3 seal on anything but a capability-free Linux image (reason 8); the 6.4 gate still refuses it outside the compat sandbox.
+- Image: static EXEC at 0x400000, EI_OSABI set to 3, sealed `cudseal.py --foreign` (level 3, unsafe 0, caps 0). `image_verify` refuses a level-3 seal on anything but a capability-free Linux image (reason 8); the 6.4 gate still refuses it outside the compat sandbox.
 - Manifest `examples/apps/busybox.mf`: one `dir /efi/forge/docs` grant.
 
 Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; seq, expr now work; lxtest checks it); uname 63 (11.1e part 3: sysname Linux, nodename forge, release 0.2.6-forge, machine x86_64; `uname -s -m` works). open 2 (11.1e part 4: absolute paths under a grant; wc, sha256sum and cat of granted files work, a file outside is EACCES). stat 4 (11.1e part 5; `ls` of a directory outside the grant -> Permission denied). lstat 6 (11.1e part 6; same as stat, no symlinks). fcntl 72 (11.1e part 7; `ls` of the granted directory and `printf` work). getcwd 79 (11.1e part 8; `pwd` prints /). nanosleep 35 (11.1e part 9; `sleep 1` works). geteuid 107 (11.1e part 10; ash starts without an ENOSYS, `sh -c exit 3` exits 3). dup2 33 (11.1e part 11; ash `<` / `>` redirections). lseek 8 (11.1e part 12; `tail` works). ppoll 271 (11.1e part 13; ash's `read` builtin). 11.1 accepted: `busybox sh /efi/forge/docs/hello.sh` (functions, loops, arithmetic, case, test, a `while read` over a redirected file, printf) runs to completion in the sandbox; the config also enables grep, test and head/tail options. Ash cannot run external commands or pipelines yet (needs fork, pipe 22).

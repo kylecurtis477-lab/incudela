@@ -1,0 +1,7 @@
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+# expect: would be a null ptr[T]
+@unsafe
+def main() -> u64:
+    p: nptr[u64] = ptr[u64](0)
+    return 0

@@ -1,9 +1,9 @@
 #!/bin/sh
-# tests/oslib: the hosted os library's directory and process calls (tests/oslib/oslib.forge) at the current
-# FORGEC_FLAGS optimisation level; every check line must say "ok".
+# tests/oslib: the hosted os library's directory and process calls (tests/oslib/oslib.cud) at the current
+# CUDC_FLAGS optimisation level; every check line must say "ok".
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
-build/forgec tests/oslib/oslib.forge $T/o.s $FORGEC_FLAGS && build/fas -o $T/o.o $T/o.s && build/fld --base 0x100000000000 -o $T/oslib $T/o.o || { echo "FAIL oslib build"; exit 1; }
+build/cudc tests/oslib/oslib.cud $T/o.s $CUDC_FLAGS && build/fas -o $T/o.o $T/o.s && build/fld --base 0x100000000000 -o $T/oslib $T/o.o || { echo "FAIL oslib build"; exit 1; }
 mkdir $T/d
 $T/oslib $T/d >$T/out 2>&1; r=$?
 fail=0

@@ -1,0 +1,6 @@
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+# expect: a ptr[T] global needs a non-null initializer
+g: ptr[u64]
+def main() -> u64:
+    return 0

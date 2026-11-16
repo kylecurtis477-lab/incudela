@@ -5,11 +5,11 @@
   3: Linux filesystem   (empty placeholder, simulates an existing Linux install)
 Used to test that the Forge EFI app / kernel boot from a shared ESP without owning the disk.
 usage: mkgpt.py out.img esp.fat [size_mib]
-FORGE_GUID_SEED=N (testing only): GUID k (k = 0..2 partitions, 3 disk) is bytes_le = pack('<QQ', N, k)
-instead of uuid4, so the image is reproducible (tests/mkgpt compares against examples/efi/mkgpt.forge)."""
+INCUDELA_GUID_SEED=N (testing only): GUID k (k = 0..2 partitions, 3 disk) is bytes_le = pack('<QQ', N, k)
+instead of uuid4, so the image is reproducible (tests/mkgpt compares against examples/efi/mkgpt.cud)."""
 import os, sys, struct, zlib, uuid
 def newguid(k):
-    seed = os.environ.get('FORGE_GUID_SEED')
+    seed = os.environ.get('INCUDELA_GUID_SEED', os.environ.get('FORGE_GUID_SEED'))
     if seed is None: return uuid.uuid4()
     return uuid.UUID(bytes_le=struct.pack('<QQ', int(seed), k))
 SEC = 512

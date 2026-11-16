@@ -10,7 +10,7 @@ Usage: grammar_fuzz.py [--seed N] [--n COUNT]   (COUNT programs, split valid/inv
 """
 import json, os, random, re, subprocess, sys
 
-FORGEC = "build/forgec"
+CUDC = "build/cudc"
 NAMES = ["a", "b", "x", "y", "foo", "bar_2", "_t", "item"]
 BIN = ["+", "-", "*", "/", "//", "%", "|", "^", "&", "<<", ">>", "**"]
 CMP = ["<", ">", "==", "!=", "<=", ">=", "in", "not in", "is", "is not"]
@@ -137,7 +137,7 @@ def break_program(rnd, src):
     return "\n".join(lines), k
 
 def run(args):
-    return subprocess.run([FORGEC] + args, capture_output=True, text=True)
+    return subprocess.run([CUDC] + args, capture_output=True, text=True)
 
 def strip_lines(j):
     d = json.loads(j)
@@ -158,21 +158,21 @@ def main():
     bad = 0; nv = 0; ni = 0
     for k in range(n):
         src = g.program()
-        f = "build/fuzz/v%d.forge" % k
+        f = "build/fuzz/v%d.cud" % k
         if k % 2 == 0:
             nv += 1
             open(f, "w").write(src)
             r = run([f, "build/fuzz/a.json", "--emit=ast-json"])
             if r.returncode != 0:
                 print("FAIL grammar-fuzz valid program rejected: %s: %s" % (f, r.stderr.strip()[:300])); bad += 1; continue
-            run([f, "build/fuzz/p.forge", "--emit=pretty"])
-            r2 = run(["build/fuzz/p.forge", "build/fuzz/b.json", "--emit=ast-json"])
+            run([f, "build/fuzz/p.cud", "--emit=pretty"])
+            r2 = run(["build/fuzz/p.cud", "build/fuzz/b.json", "--emit=ast-json"])
             if r2.returncode != 0 or strip_lines(open("build/fuzz/a.json").read()) != strip_lines(open("build/fuzz/b.json").read()):
                 print("FAIL grammar-fuzz round trip differs: %s" % f); bad += 1; continue
         else:
             ni += 1
             s2, kind = break_program(rnd, src)
-            f = "build/fuzz/i%d.forge" % k
+            f = "build/fuzz/i%d.cud" % k
             open(f, "w").write(s2)
             r = run([f, "build/fuzz/a.json", "--emit=ast-json", "--diagnostics=json"])
             if r.returncode != 1 or not re.search(r'"code":"E010[0-5]"', r.stderr):

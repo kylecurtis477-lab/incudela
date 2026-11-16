@@ -1,11 +1,11 @@
 #!/bin/sh
-# tests/memimg: tests/fld/memimg.forge must print exactly what tests/fld/memimg.py (kept as the reference)
+# tests/memimg: tests/fld/memimg.cud must print exactly what tests/fld/memimg.py (kept as the reference)
 # prints, with the same exit code: identical images, different segment lists, a flipped byte in a low and a
 # high-half (0xffffffff8...) segment, a changed entry point, a larger .bss, and both argument orders.
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 fail=0
-build/forgec tests/fld/memimg.forge $T/m.s && build/fas -o $T/m.o $T/m.s && build/fld --base 0x100000000000 -o $T/memimg $T/m.o || { echo "FAIL memimg build"; exit 1; }
+build/cudc tests/fld/memimg.cud $T/m.s && build/fas -o $T/m.o $T/m.s && build/fld --base 0x100000000000 -o $T/memimg $T/m.o || { echo "FAIL memimg build"; exit 1; }
 command -v python3 >/dev/null || { echo "SKIP memimg (needs python3 for the reference)"; exit 0; }
 chk() { # name a b
   python3 tests/fld/memimg.py $2 $3 >$T/py.out 2>&1; pr=$?
@@ -16,12 +16,12 @@ chk() { # name a b
 poke() { printf "$3" | dd of=$1 bs=1 seek=$(($2)) conv=notrunc 2>/dev/null; }
 # phoff/field helpers: offset of program header N's field
 ph() { echo $(( $(od -An -tu8 -j32 -N8 $1 | tr -d ' ') + 56 * $2 + $3 )); }
-chk self build/forgec build/forgec
-chk tools build/forgec build/fas
-chk tools-rev build/fas build/forgec
-cp build/forgec $T/flip; poke $T/flip 8000 'Z'; chk low-byte build/forgec $T/flip
-cp build/forgec $T/ent; poke $T/ent 0x18 '\001'; chk entry build/forgec $T/ent
-cp build/forgec $T/bss; poke $T/bss $(ph $T/bss 1 40) '\377\377'; chk bss-size build/forgec $T/bss
+chk self build/cudc build/cudc
+chk tools build/cudc build/fas
+chk tools-rev build/fas build/cudc
+cp build/cudc $T/flip; poke $T/flip 8000 'Z'; chk low-byte build/cudc $T/flip
+cp build/cudc $T/ent; poke $T/ent 0x18 '\001'; chk entry build/cudc $T/ent
+cp build/cudc $T/bss; poke $T/bss $(ph $T/bss 1 40) '\377\377'; chk bss-size build/cudc $T/bss
 K=build/kernel/kernel.elf
 if [ -f $K ] && [ -f build/kernel/kernel-next.elf ]; then
   chk kernel $K $K

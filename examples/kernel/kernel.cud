@@ -1,0 +1,1992 @@
+# cuditor: no-runtime
+# cuditor: stack-protector
+# Forge x86-64 kernel: higher half, own 4-level page tables, frame allocator, heap, GOP/VBE framebuffer
+# console, TSS/IST, ACPI MADT, LAPIC timer, IOAPIC. Boots via GRUB multiboot2 (BIOS or UEFI) or via the
+# native Forge UEFI loader (examples/efi/loader.cud) after ExitBootServices.
+include "boot.cudi"
+include "bootinfo.cudi"
+include "console.cudi"
+include "sync.cudi"
+include "nondet.cudi"
+include "mm.cudi"
+include "mmio.cudi"
+include "cpu.cudi"
+include "acpi.cudi"
+include "iommu.cudi"
+include "apic.cudi"
+include "cpux.cudi"
+include "sched.cudi"
+include "smp.cudi"
+include "user.cudi"
+include "pci.cudi"
+include "virtio.cudi"
+include "nvme.cudi"
+include "ahci.cudi"
+include "xhci.cudi"
+include "net.cudi"
+include "hw.cudi"
+include "ffs.cudi"
+# object-store capacities (obj.cudi takes them from the includer)
+OB_NT = 32
+OB_NO = 256
+OB_NV = 2048
+OB_NB = 1024
+OB_NW = 16384
+OB_NL = 32768
+OB_HB = 2048
+OB_NX = 8192
+OB_HX = 16384
+include "crypt.cudi"
+include "obj.cudi"
+include "objfs.cudi"
+include "objd.cudi"
+include "fat.cudi"
+include "proc.cudi"
+include "grant.cudi"
+include "audit.cudi"
+include "chan.cudi"
+include "module.cudi"
+include "drv.cudi"
+include "kbd.cudi"
+include "nvsvc.cudi"
+include "livepatch.cudi"
+include "pstate.cudi"
+include "kexec.cudi"
+include "ed25519.cudi"
+include "seal.cudi"
+include "bootpol.cudi"
+include "gfx.cudi"
+include "input.cudi"
+include "wm.cudi"
+include "panel.cudi"
+include "appwin.cudi"
+include "linux.cudi"
+include "../../std/vec.cudi"
+include "../../std/map.cudi"
+
+# std/vec.cudi + std/map.cudi allocator contract, backed by the kernel heap
+def forge_alloc(bytes: u64) -> u64:
+    return kmalloc(bytes)
+
+def forge_free(p: u64, bytes: u64):
+    kfree(p)
+
+def vecmap_test():
+# generic Vec[T] / Map[K, V] on kmalloc: grow past a page, delete, free; heap must balance
+    h0 = heap_live
+    v: Vec[u64]
+    vec_init(addr(v))
+    i: u64 = 0
+    while i < 1000:
+        vec_push(addr(v), i * 3)
+        i += 1
+    s: u64 = 0
+    i = 0
+    while i < vec_len(addr(v)):
+        s += vec_get(addr(v), i)
+        i += 1
+    m: Map[u64, u64]
+    map_init(addr(m))
+    i = 0
+    while i < 500:
+        map_put(addr(m), i * 11, i)
+        i += 1
+    i = 0
+    while i < 500:
+        if i % 2 == 0:
+            map_del(addr(m), i * 11)
+        i += 1
+    o: u64 = 0
+    ok = map_get(addr(m), 11 * 333, addr(o)) == 1 and o == 333 and map_has(addr(m), 22) == 0 and map_len(addr(m)) == 250
+    vec_free(addr(v))
+    map_free(addr(m))
+    puts("Vec/Map on the kernel heap: sum ")
+    put_u64(s)
+    puts(", map len 250, heap leaked ")
+    put_u64(heap_live - h0)
+    putc(10)
+    if s != 1498500 or not ok or heap_live != h0:
+        panic("Vec/Map test failed")
+    puts("generic Vec/Map OK\n")
+
+MB2_MAGIC = 0x36D76289
+
+bi: BootInfo
+
+@naked
+def read_rsp() -> u64:
+    asm("lea 8(%rsp),%rax", "ret")
+
+def add_region(base: u64, len: u64, typ: u64):
+    if bi.nregions < MAX_REGIONS and len != 0:
+        r = addr(bi.regions[bi.nregions])
+        r.base = base
+        r.len = len
+        r.typ = typ
+        bi.nregions += 1
+
+def bi_cmdline_set(pa: u64, n: u64):
+# copy the multiboot2 command line (identity-mapped here, p2v_base = 0) into bi.cmdline, at most 255 bytes;
+# through le16 (fat.cudi, an existing @unsafe reader), so this safe function adds no unsafe operation
+    i: u64 = 0
+    while i < n and i < 255:
+        c = le16(pa + i) & 0xFF
+        if c == 0:
+            break
+        bi.cmdline[i] = u8(c)
+        i += 1
+    bi.cmdline[i] = 0
+
+@unsafe
+def mb2_parse(info: u64):
+    total = u64(load32(info))
+    bi.info_base = info
+    bi.info_len = total
+    p = info + 8
+    while p < info + total:
+        typ = load32(p)
+        size = u64(load32(p + 4))
+        if typ == 0:
+            break
+        if typ == 1:
+            bi_cmdline_set(p + 8, size - 8)
+        if typ == 2:
+            puts("bootloader: ")
+            puts(ptr[u8](p + 8))
+            putc(10)
+        if typ == 6:
+            esz = u64(load32(p + 8))
+            q = p + 16
+            while q < p + size:
+                t = u64(load32(q + 16))
+                mt = MEM_RESERVED
+                if t == 1:
+                    mt = MEM_USABLE
+                elif t == 3:
+                    mt = MEM_ACPI_RECLAIM
+                elif t == 4:
+                    mt = MEM_ACPI_NVS
+                elif t == 5:
+                    mt = MEM_BAD
+                add_region(load64(q), load64(q + 8), mt)
+                q += esz
+        if typ == 8:
+            fbt = load8(p + 29)
+            if fbt == 1 and load8(p + 28) == 32:
+                bi.fb_addr = load64(p + 8)
+                bi.fb_pitch = u64(load32(p + 16))
+                bi.fb_width = u64(load32(p + 20))
+                bi.fb_height = u64(load32(p + 24))
+                bi.fb_bpp = 32
+                # red field position (byte 32): 16 means byte 0 is blue (BGRX, QEMU std VGA), 0 means byte 0
+                # is red (RGBX); the UEFI loader reports the same layouts from GOP
+                bi.fb_format = FB_BGRX
+                if load8(p + 32) == 0:
+                    bi.fb_format = FB_RGBX
+            elif fbt == 2:
+                vga_base = load64(p + 8)
+        if typ == 12:
+            bi.method = BOOT_MB2_UEFI
+        if typ == 14 and bi.rsdp == 0:
+            bi.rsdp = p + 8
+        if typ == 15:
+            bi.rsdp = p + 8
+        p = (p + size + 7) & ~u64(7)
+
+def kernel_version() -> ptr[u8]:
+# build identity; examples/kernel/build.sh makes kernel-next.elf with a different string
+    return "forge-kernel 0.2.6"
+
+def kernel_start():
+    puts("kernel version: ")
+    puts(kernel_version())
+    putc(10)
+    puts("boot method: ")
+    if bi.method == BOOT_MB2_BIOS:
+        puts("multiboot2 (BIOS)\n")
+    elif bi.method == BOOT_MB2_UEFI:
+        puts("multiboot2 (UEFI)\n")
+    elif bi.method == BOOT_KEXEC:
+        puts("kexec handoff from the previous kernel (generation ")
+        put_u64(bi.kx_gen)
+        puts(")\n")
+    else:
+        puts("Forge UEFI loader (ExitBootServices done)\n")
+    kdelta = bi.kdelta
+    kx_gen = bi.kx_gen
+    usable: u64 = 0
+    i = 0
+    while i < bi.nregions:
+        if bi.regions[i].typ == MEM_USABLE:
+            usable += bi.regions[i].len
+        i += 1
+    puts("memory map: ")
+    put_u64(bi.nregions)
+    puts(" regions, ")
+    put_u64(usable / 1048576)
+    puts(" MiB usable\n")
+    pmm_init(addr(bi))
+    puts("frames: ")
+    put_u64(frames_free)
+    puts(" free of ")
+    put_u64(frames_total)
+    puts(", phys top ")
+    put_hex(phys_top)
+    puts(", kernel phys ")
+    put_hex(ksym(6) + kdelta)
+    putc(10)
+    fb_len = bi.fb_pitch * bi.fb_height
+    kaslr_pick()
+    pml4 = paging_init(bi.fb_addr, fb_len)
+    puts("page tables built: pml4 at ")
+    put_hex(pml4)
+    puts(", frames used ")
+    put_u64(frames_total - frames_free)
+    putc(10)
+    paging_activate(pml4)
+    # image KASLR: patch the absolute addresses through the HHDM view, then continue in the slid alias
+    krel_apply(HHDM + kdelta, kslide)
+    switch_stack(KSTACK_TOP, u64(kmain_high) + kslide)
+
+def kaslr_pick():
+# image slide: a random 2 MiB multiple, at least the image size, keeping the image below the fixed
+# kernel stacks at -1 GiB and inside the top 2 GiB (R_X86_64_32S)
+    krel_count = (ksym(9) - ksym(8)) / 8
+    img = ksym(5) - ksym(0) + 0x100000
+    kmin = img / 0x200000 + 1
+    slots = (0x3FE00000 - img) / 0x200000 - kmin
+    t = rdtsc()
+    v = nd_rand(1, (t ^ (t >> 17) ^ kdelta) * 0x9E3779B97F4A7C15)
+    kslide = (kmin + (v >> 40) % slots) * 0x200000
+    if krel_count == 0:
+        kslide = 0
+
+def kaslr_unmap():
+# drop the boot-time alias at the link address: from here only the slid image is mapped
+    if kslide == 0:
+        return
+    va = ksym(0) - kslide
+    while va < ksym(9) - kslide:
+        unmap_page(kernel_pml4, va)
+        va += PAGE
+    puts("KASLR: kernel image at ")
+    put_hex(ksym(0))
+    puts(" (slide ")
+    put_hex(kslide)
+    puts(", ")
+    put_u64(krel_count)
+    puts(" relocations applied), link-address alias unmapped\n")
+
+def check_mapping(name: ptr[u8], va: u64, expect_mapped: u64):
+    pa = virt_to_phys(kernel_pml4, va)
+    puts("  ")
+    puts(name)
+    puts(" ")
+    put_hex(va)
+    if pa == 1:
+        puts(" -> unmapped")
+        if expect_mapped:
+            panic("expected mapping")
+    else:
+        puts(" -> ")
+        put_hex(pa)
+        if expect_mapped == 0:
+            panic("expected no mapping")
+    putc(10)
+
+def pcid_selftest():
+# slot bookkeeping, checked on spare (cpu 7) slots whether or not the CPU has PCID: a reload keeps the TLB,
+# a forget (shootdown/teardown) or a colliding address space forces a flush
+    h0 = pcid_hits
+    m0 = pcid_misses
+    a: u64 = 0x1234000
+    b = a + 63 * PAGE  # same PCID as a
+    ok: u64 = 1
+    pcid_forget(a)
+    pcid_forget(b)
+    if (pcid_cr3(7, a) >> 63) != 0 or (pcid_cr3(7, a) >> 63) != 1:
+        ok = 0
+    if (pcid_cr3(7, a) & 0xFFF) != pcid_of(a) or pcid_of(a) == 0:
+        ok = 0
+    pcid_forget(a)
+    if (pcid_cr3(7, a) >> 63) != 0:
+        ok = 0
+    if (pcid_cr3(7, b) >> 63) != 0 or (pcid_cr3(7, a) >> 63) != 0:
+        ok = 0
+    pcid_forget(a)
+    pcid_hits = h0
+    pcid_misses = m0
+    puts("PCID: ")
+    if pcid_on:
+        puts("on, address-space switches reusing the TLB ")
+        put_u64(pcid_hits)
+        puts(", flushing ")
+        put_u64(pcid_misses)
+    else:
+        puts("not offered by this CPU (QEMU TCG), CR3 loads flush as before")
+    puts("; slot bookkeeping ")
+    if ok == 0:
+        panic("PCID bookkeeping")
+    puts("OK\n")
+    if pcid_on and pcid_hits == 0:
+        panic("PCID never reused a TLB")
+
+def vmalloc_test():
+# Phase 8: 2000 big-heap alloc/free cycles of mixed sizes reuse VA; the high-water mark stays bounded
+    h0 = va_hiwater
+    f0 = frames_free
+    l0 = heap_live
+    ptrs: u64[8]
+    r: u64 = 0
+    while r < 250:
+        i: u64 = 0
+        while i < 8:
+            ptrs[i] = kmalloc(8192 + ((r * 7 + i * 13) % 32) * 4096)
+            i += 1
+        i = 0
+        while i < 8:
+            kfree(ptrs[(i * 3) % 8])
+            i += 1
+        if r == 0:
+            f0 = frames_free
+        r += 1
+    grow = va_hiwater - h0
+    puts("vmalloc: 2000 big blocks, VA high-water grew ")
+    put_u64(grow)
+    puts(" pages, ranges reused ")
+    put_u64(va_reused)
+    puts(", free ranges ")
+    put_u64(va_n)
+    puts(", frames leaked ")
+    put_u64(f0 - frames_free)
+    putc(10)
+    if grow > 8 * 40 or va_reused < 1900 or frames_free != f0 or heap_live != l0:
+        panic("vmalloc")
+    puts("vmalloc VA reuse OK\n")
+
+def buddy_test():
+# Phase 8: power-of-two blocks come back aligned, odd sizes return their tail, frees coalesce to the start state
+    pas: u64[11]
+    f0 = frames_free
+    top0 = bcount[BUDDY_MAX]
+    s0 = buddy_splits
+    m0 = buddy_merges
+    k: u64 = 0
+    bad: u64 = 0
+    while k <= BUDDY_MAX:
+        pas[k] = frame_alloc_contig(u64(1) << k)
+        if pas[k] == 0 or (pas[k] & ((PAGE << k) - 1)) != 0:
+            bad += 1
+        k += 1
+    odd = frame_alloc_contig(1000)
+    odd3 = frame_alloc_contig(3)
+    used = f0 - frames_free
+    k = 0
+    i: u64 = 0
+    while k <= BUDDY_MAX:
+        i = 0
+        while i < (u64(1) << k):
+            frame_free(pas[k] + i * PAGE)
+            i += 1
+        k += 1
+    i = 0
+    while i < 1000:
+        frame_free(odd + i * PAGE)
+        i += 1
+    i = 0
+    while i < 3:
+        frame_free(odd3 + i * PAGE)
+        i += 1
+    puts("buddy: orders 0..10 aligned (bad ")
+    put_u64(bad)
+    puts("), held ")
+    put_u64(used)
+    puts(" frames, splits ")
+    put_u64(buddy_splits - s0)
+    puts(", merges ")
+    put_u64(buddy_merges - m0)
+    puts(", 4MiB blocks before/after ")
+    put_u64(top0)
+    puts("/")
+    put_u64(bcount[BUDDY_MAX])
+    puts(", frames leaked ")
+    put_u64(f0 - frames_free)
+    putc(10)
+    if bad != 0 or used != 2047 + 1000 + 3 or frames_free != f0 or bcount[BUDDY_MAX] != top0:
+        panic("buddy allocator")
+    puts("buddy allocator OK\n")
+
+@unsafe
+def heap_test():
+    ptrs: u64[64]
+    before = frames_free
+    round = 0
+    while round < 3:
+        i: u64 = 0
+        while i < 64:
+            n = (i * 37) % 1500 + 1
+            if i % 16 == 15:
+                n = 20000 + i * 100
+            p = kmalloc(n)
+            memset(p, u8(i), n)
+            ptrs[i] = p
+            i += 1
+        i = 0
+        while i < 64:
+            n = (i * 37) % 1500 + 1
+            if i % 16 == 15:
+                n = 20000 + i * 100
+            if vload8(ptrs[i] + n - 1) != u8(i) or vload8(ptrs[i]) != u8(i):
+                panic("heap corruption")
+            kfree(ptrs[i])
+            i += 1
+        if round == 0:
+            before = frames_free
+        round += 1
+    puts("heap: 3 rounds x 64 blocks (slabs 32..4096 + page-backed large), live=")
+    put_u64(heap_live)
+    puts(", frames after round1/round3: ")
+    put_u64(before)
+    puts("/")
+    put_u64(frames_free)
+    putc(10)
+    if before != frames_free or heap_live != 0:
+        panic("heap leak")
+
+@unsafe
+def demand_test():
+    a = DEMAND_BASE
+    vstore64(a + 0x10, 0x1111)
+    vstore64(a + 0x5008, 0x2222)
+    vstore64(a + 0xFFFFF0, 0x3333)
+    s = vload64(a + 0x10) + vload64(a + 0x5008) + vload64(a + 0xFFFFF0)
+    puts("demand paging: ")
+    put_u64(demand_faults)
+    puts(" faults, sum ")
+    put_hex(s)
+    putc(10)
+
+def recurse(n: u64) -> u64:
+    pad: u64[32]
+    pad[n & 31] = n
+    return recurse(n + 1) + pad[3]
+
+@export
+def kmain_high():
+# now on the guarded kernel stack, identity map gone, physical memory via HHDM
+    canary_init()
+    kaslr_unmap()
+    if bi.fb_addr != 0:
+        fb_attach(p2v(bi.fb_addr), bi.fb_width, bi.fb_height, bi.fb_pitch)
+        puts("Forge kernel: framebuffer console ")
+        put_u64(fb_w)
+        puts("x")
+        put_u64(fb_h)
+        puts(" (8x16 font)\n")
+    elif vga_base != 0:
+        vga_base = p2v(vga_base)
+    puts("higher half: rip ")
+    put_hex(u64(kmain_high))
+    puts(", rsp ")
+    put_hex(read_rsp())
+    putc(10)
+    check_mapping("identity", 0x100000, 0)
+    check_mapping("hhdm", HHDM + 0x100000, 1)
+    check_mapping("kernel .text", ksym(0), 1)
+    check_mapping("unslid .text", ksym(0) - kslide, u64(kslide == 0))
+    check_mapping("stack guard", KSTACK_TOP - (KSTACK_PAGES + 1) * PAGE, 0)
+    gdt_init()
+    idt_init()
+    puts("GDT+TSS loaded (IST1 ")
+    put_hex(IST1_TOP)
+    puts(", IST2 ")
+    put_hex(IST2_TOP)
+    puts("), IDT loaded\n")
+    int3()
+    int3()
+    puts("breakpoints handled: ")
+    put_u64(bp_count)
+    putc(10)
+    heap_test()
+    buddy_test()
+    vmalloc_test()
+    demand_test()
+    if acpi_init(bi.rsdp) == 0:
+        panic("ACPI/MADT not found")
+    iommu_probe()
+    before = frames_free
+    pmm_reclaim(addr(bi))
+    puts("memory reclaimed: loader ")
+    put_u64(reclaimed_loader * 4)
+    puts(" KiB, ACPI ")
+    put_u64(reclaimed_acpi * 4)
+    puts(" KiB; frames free ")
+    put_u64(before)
+    puts(" -> ")
+    put_u64(frames_free)
+    putc(10)
+    if frames_free != before + reclaimed_loader + reclaimed_acpi:
+        panic("reclaim accounting")
+    puts("stack overflow test: recursing into the guard page...\n")
+    df_recover = u64(after_overflow)
+    recurse(0)
+    panic("recursion returned")
+
+NWORKERS = 8
+shared_counter: u64
+counter_lock: u64
+done_count: u64
+work_until: u64
+
+def worker(arg: u64):
+# 30 ticks of work (~300 ms); if lapic_ticks has not reached work_until after 20 s (TSC, freeze jumps
+# skipped by tsc_counted), cpu0's timer interrupt is not landing: report it (stall_report, sync.cudi) instead of
+# spinning until the harness kills the boot
+    t = cur_thread()
+    tl = rdtsc()
+    used: u64 = 0
+    while atomic_load(addr(lapic_ticks), acquire) < work_until:
+        n = rdtsc()
+        used += tsc_counted(n - tl)
+        tl = n
+        if used > tsc_per_ms * 20000:
+            stall_report("scheduler test: lapic_ticks short of work_until", addr(work_until), 20000, atomic_load(addr(lapic_ticks), relaxed))
+        f = irq_save()
+        spin_lock(addr(counter_lock))
+        shared_counter += 1
+        spin_unlock(addr(counter_lock))
+        irq_restore(f)
+        t.iters += 1
+    atomic_fetch_add(addr(done_count), 1, acq_rel)
+
+def popcount(v: u64) -> u64:
+    n: u64 = 0
+    while v != 0:
+        n += v & 1
+        v = v >> 1
+    return n
+
+# ---- sleeping mutexes / condvars / sleep ----
+mx: Mutex
+mx_counter: u64
+mx_done: u64
+pc_m: Mutex
+pc_notempty: CondVar
+pc_notfull: CondVar
+pc_ring: u64[8]
+pc_head: u64
+pc_count: u64
+pc_sum: u64
+pc_got: u64
+PC_ITEMS = 3000
+
+def mx_worker(n: u64):
+    i: u64 = 0
+    while i < n:
+        mutex_lock(addr(mx))
+        v = mx_counter
+        if (i & 15) == 0:
+            yield_cpu()  # hold the mutex across a reschedule: others must sleep, not spin
+        mx_counter = v + 1
+        mutex_unlock(addr(mx))
+        i += 1
+    atomic_fetch_add(addr(mx_done), 1, acq_rel)
+
+def pc_producer(base: u64):
+    i: u64 = 0
+    while i < PC_ITEMS:
+        mutex_lock(addr(pc_m))
+        while pc_count == 8:
+            cond_wait(addr(pc_notfull), addr(pc_m))
+        pc_ring[(pc_head + pc_count) & 7] = base + i
+        pc_count += 1
+        cond_signal(addr(pc_notempty))
+        mutex_unlock(addr(pc_m))
+        i += 1
+    atomic_fetch_add(addr(mx_done), 1, acq_rel)
+
+def pc_consumer(n: u64):
+    i: u64 = 0
+    while i < n:
+        mutex_lock(addr(pc_m))
+        while pc_count == 0:
+            cond_wait(addr(pc_notempty), addr(pc_m))
+        v = pc_ring[pc_head]
+        pc_head = (pc_head + 1) & 7
+        pc_count -= 1
+        pc_sum += v
+        pc_got += 1
+        cond_signal(addr(pc_notfull))
+        mutex_unlock(addr(pc_m))
+        i += 1
+    atomic_fetch_add(addr(mx_done), 1, acq_rel)
+
+@unsafe
+def sync_test():
+    ths: u64[8]
+    b0 = wq_blocks
+    i: u64 = 0
+    while i < 6:
+        ths[i] = u64(thread_spawn(u64(mx_worker), 2000))
+        i += 1
+    while atomic_load(addr(mx_done), acquire) < 6:
+        yield_cpu()
+    i = 0
+    while i < 6:
+        thread_reap(ptr[Thread](ths[i]))
+        i += 1
+    puts("sleeping mutex: 6 threads x 2000 increments = ")
+    put_u64(mx_counter)
+    puts(", ")
+    put_u64(mx.contended)
+    puts(" contended acquisitions, ")
+    put_u64(wq_blocks - b0)
+    puts(" blocks\n")
+    if mx_counter != 12000:
+        panic("mutex lost updates")
+    mx_done = 0
+    ths[0] = u64(thread_spawn(u64(pc_producer), 0))
+    ths[1] = u64(thread_spawn(u64(pc_producer), 1000000))
+    ths[2] = u64(thread_spawn(u64(pc_consumer), PC_ITEMS))
+    ths[3] = u64(thread_spawn(u64(pc_consumer), PC_ITEMS))
+    while atomic_load(addr(mx_done), acquire) < 4:
+        yield_cpu()
+    i = 0
+    while i < 4:
+        thread_reap(ptr[Thread](ths[i]))
+        i += 1
+    want = PC_ITEMS * (PC_ITEMS - 1) + 1000000 * PC_ITEMS
+    puts("condvar producer/consumer: ")
+    put_u64(pc_got)
+    puts(" items through an 8-slot ring, checksum ")
+    if pc_sum == want:
+        puts("ok\n")
+    else:
+        puts("BAD\n")
+        panic("producer/consumer lost or duplicated items")
+    t0 = lapic_ticks
+    sleep_ticks(10)
+    dt = lapic_ticks - t0
+    puts("sleep_ticks(10) slept ")
+    put_u64(dt)
+    puts(" ticks\n")
+    if dt < 10 or dt > 30:
+        panic("sleep_ticks out of range")
+    puts("wait queues + sleeping mutexes + condvars OK\n")
+
+TLBT_VA = 0xFFFFFFFFC0800000
+tlbt_ready: u64
+tlbt_go: u64
+tlbt_done: u64
+tlbt_seen: u64[8]
+
+@unsafe
+def tlbt_worker(cpu: u64):
+# pinned to one CPU: keep the old translation hot until the remap, then report what it sees
+    s: u64 = 0
+    s += vload64(TLBT_VA)
+    atomic_fetch_add(addr(tlbt_ready), 1, acq_rel)
+    while atomic_load(addr(tlbt_go), acquire) == 0:
+        s += vload64(TLBT_VA)
+        cpu_relax()
+    tlbt_seen[cpu] = vload64(TLBT_VA)
+    atomic_fetch_add(addr(tlbt_done), 1, acq_rel)
+
+@unsafe
+def tlb_test():
+    n = ncpu_online
+    fa = frame_alloc()
+    fb = frame_alloc()
+    vstore64(p2v(fa), 0x1111)
+    vstore64(p2v(fb), 0x2222)
+    map_page(kernel_pml4, TLBT_VA, fa, PTE_W | PTE_G | PTE_NX)
+    ths: u64[8]
+    i: u64 = 0
+    while i < n:
+        t = thread_new(u64(tlbt_worker), i)
+        t.pin = i + 1
+        ths[i] = u64(t)
+        thread_start_ready(t)
+        i += 1
+    while atomic_load(addr(tlbt_ready), acquire) < n:
+        yield_cpu()
+    r0 = tlb_rounds
+    ip0 = tlb_ipis
+    # remap the global page to a different frame; without the shootdown the other CPUs keep reading 0x1111
+    vstore64(pte_addr(kernel_pml4, TLBT_VA, 0), fb | PTE_P | PTE_W | PTE_G | PTE_NX)
+    tlb_shootdown(0, TLBT_VA, 1)
+    atomic_store(addr(tlbt_go), 1, seq_cst)
+    while atomic_load(addr(tlbt_done), acquire) < n:
+        yield_cpu()
+    ok: u64 = 1
+    i = 0
+    while i < n:
+        if tlbt_seen[i] != 0x2222:
+            ok = 0
+        thread_free(ptr[Thread](ths[i]))
+        i += 1
+    unmap_page(kernel_pml4, TLBT_VA)
+    tlb_shootdown(0, TLBT_VA, 1)
+    frame_free(fa)
+    frame_free(fb)
+    puts("TLB shootdown: remapped a global page under ")
+    put_u64(n)
+    puts(" pinned readers, ")
+    put_u64(tlb_rounds - r0)
+    puts(" round, ")
+    put_u64(tlb_ipis - ip0)
+    puts(" IPIs; all cpus see the new frame: ")
+    if ok:
+        puts("yes\n")
+    else:
+        puts("NO\n")
+        panic("stale TLB entry after shootdown")
+
+@unsafe
+def sched_test():
+    ths: u64[8]
+    stall_clock_test()
+    work_until = lapic_ticks + 30
+    i = 0
+    while i < NWORKERS:
+        ths[i] = u64(thread_spawn(u64(worker), i))
+        i += 1
+    while atomic_load(addr(done_count), acquire) < NWORKERS:
+        hlt()
+    total: u64 = 0
+    seen: u64 = 0
+    minsw: u64 = 0xFFFFFFFF
+    i = 0
+    while i < NWORKERS:
+        t = ptr[Thread](ths[i])
+        while atomic_load(addr(t.state), acquire) != T_DEAD:
+            yield_cpu()
+        total += t.iters
+        seen = seen | t.cpus_seen
+        if t.switches < minsw:
+            minsw = t.switches
+        thread_free(t)
+        i += 1
+    puts("scheduler: ")
+    put_u64(NWORKERS)
+    puts(" threads, counter ")
+    put_u64(shared_counter)
+    puts(" = sum ")
+    put_u64(total)
+    puts(", min switches/thread ")
+    put_u64(minsw)
+    puts(", cpus used ")
+    put_u64(popcount(seen))
+    puts("/")
+    put_u64(ncpu_online)
+    puts(", heap live ")
+    put_u64(heap_live)
+    putc(10)
+    if shared_counter != total or minsw < 2:
+        panic("scheduler test failed")
+    if popcount(seen) != ncpu_online:
+        panic("not all CPUs ran threads")
+    puts("preemptive SMP scheduler OK\n")
+    used = 0
+    i = 0
+    while i < 8:
+        if rq_enq[i] != 0:
+            used += 1
+        i += 1
+    puts("per-CPU run queues: ")
+    put_u64(used)
+    puts(" queues used, ")
+    put_u64(rq_steals)
+    puts(" steals\n")
+    if ncpu_online > 1 and used < 2:
+        panic("run queues: everything landed on one CPU")
+    if x2apic_on:
+        puts("x2APIC: all cpus in x2APIC mode, IPIs sent via MSR 0x830: ")
+        put_u64(x2apic_ipis)
+        putc(10)
+        if x2apic_ipis == 0 and ncpu_online > 1:
+            panic("x2APIC sent no IPIs")
+    else:
+        puts("x2APIC: not offered, xAPIC MMIO\n")
+    guard_test()
+
+def deep(arg: u64):
+    recurse(0)
+
+stack_canary: u64  # read by every protected prologue/epilogue (`# cuditor: stack-protector`)
+smash_armed: u64
+smash_kills: u64
+smash_pat: u8[256]
+
+def canary_init():
+# no buffer locals here, so this frame carries no canary of its own; nothing protected is live yet
+    t = rdtsc()
+    v = nd_rand(2, (t ^ (t << 29) ^ u64(addr(bi))) * 0x9E3779B97F4A7C15)
+    stack_canary = (v ^ (v >> 31)) & ~u64(255)  # low byte 0 stops string over-reads too
+    # KASLR for the dynamic kernel regions: big heap and thread stacks start at a random 2 MiB slot
+    # (16 bits each, inside their PML4 slot); the image itself stays at KBASE
+    r = (v >> 7) * 0xBF58476D1CE4E5B9
+    if heap_big_next == 0:
+        heap_big_next = HEAP_BIG_BASE + ((r >> 11) & 0xFFFF) * 0x200000
+    if kstack_next == 0:
+        kstack_next = KSTACKS_BASE + ((r >> 37) & 0xFFFF) * 0x200000
+    puts("KASLR: big heap at ")
+    put_hex(heap_big_next)
+    puts(", thread stacks at ")
+    put_hex(kstack_next)
+    putc(10)
+
+@export
+def stack_smashed():
+    if smash_armed != 0:
+        smash_armed = 0
+        smash_kills += 1
+        puts("stack canary: kernel thread ")
+        put_u64(cur_thread().id)
+        puts(" smashed its frame, caught before return: killed\n")
+        thread_exit()
+    panic("stack canary: smashed stack frame")
+
+@unsafe
+def smasher(arg: u64):
+    buf: u64[16]
+    buf[0] = arg
+    # a raw copy 32 bytes past the buffer: over the canary and saved rbp, toward the return address
+    memcpy(u64(addr(buf[0])), u64(addr(smash_pat[0])), 160)
+
+def uaccess_test():
+# boot self-test: user-supplied kernel/HHDM pointers must fault with EFAULT at the copy helpers
+    kb: u8[64]
+    kb[0] = 0
+    k = u64(addr(kb[0]))
+    top: u64 = 0x0000800000000000
+    bad: u64 = 0
+    if copy_user(k, k, 8) != EFAULT:
+        bad += 1
+    if copy_user(0xFFFF800000001000, k, 8) != EFAULT:
+        bad += 1
+    if copy_user(k, 0xFFFF800000001000, 8) != EFAULT:
+        bad += 1
+    if copy_user(top - 8, k, 16) != EFAULT:
+        bad += 1
+    if copy_user(k, 0x1000, 0xFFFFFFFFFFFFF000) != EFAULT:
+        bad += 1
+    if copy_str_user(k, k, 64) != EFAULT:
+        bad += 1
+    if copy_str_user(k, top + 0x1000, 64) != EFAULT:
+        bad += 1
+    if sys_open(k) != EFAULT or sys_open(0xFFFF800000001000) != EFAULT:
+        bad += 1
+    if sys_stat(k, 0x1000) != EFAULT:
+        bad += 1
+    if bad != 0:
+        panic("uaccess: kernel pointer accepted by a user copy")
+    puts("uaccess: 9 kernel-pointer probes -> EFAULT\n")
+
+def canary_test():
+    i: u64 = 0
+    while i < 256:
+        smash_pat[i] = 0x41
+        i += 1
+    smash_armed = 1
+    t = thread_spawn(u64(smasher), 0)
+    while atomic_load(addr(t.state), acquire) != T_DEAD:
+        yield_cpu()
+    thread_free(t)
+    if smash_kills != 1 or stack_canary == 0:
+        panic("stack canary test failed")
+    puts("stack canaries: overflow past a local buffer detected, thread killed, kernel carries on\n")
+
+def guard_test():
+# a kernel thread recursing without bound must hit its own guard page and die alone
+    f0 = frames_free
+    g0 = kstack_guard_faults
+    t = thread_spawn(u64(deep), 0)
+    while atomic_load(addr(t.state), acquire) != T_DEAD:
+        yield_cpu()
+    thread_free(t)
+    if kstack_guard_faults != g0 + 1 or frames_free != f0:
+        panic("kernel stack guard test failed")
+    puts("kernel stack guard pages: overflowing thread killed, stack frames returned\n")
+    canary_test()
+
+asm(".section .rodata",
+    ".balign 16",
+    "user_hello_elf: .incbin \"hello.elf\"",
+    "user_hello_end:",
+    ".balign 16",
+    "user_fault_elf: .incbin \"fault.elf\"",
+    "user_fault_end:",
+    ".balign 16",
+    "seal_pub_bytes: .incbin \"seal.pub\"",
+    ".text")
+
+@naked
+def uimg(i: u64) -> u64:
+    asm("lea user_hello_elf(%rip), %rax", "cmp $1, %rdi", "jb 1f",
+        "lea user_hello_end(%rip), %rax", "je 1f",
+        "lea user_fault_elf(%rip), %rax", "cmp $3, %rdi", "jb 1f",
+        "lea user_fault_end(%rip), %rax", "cmp $4, %rdi", "jb 1f",
+        "lea seal_pub_bytes(%rip), %rax", "1: ret")
+
+wx_img: u8[512]
+
+def wx_put(o: u64, v: u64, n: u64):
+    i: u64 = 0
+    while i < n:
+        wx_img[o + i] = u8((v >> (i * 8)) & 255)
+        i += 1
+
+def wx_hdr(nph: u64):
+    i: u64 = 0
+    while i < 512:
+        wx_img[i] = 0
+        i += 1
+    wx_put(0, 0x464C457F, 4)
+    wx_put(4, 0x010102, 3)
+    wx_put(16, 2, 2)
+    wx_put(18, 62, 2)
+    wx_put(24, 0x400000, 8)
+    wx_put(32, 64, 8)
+    wx_put(54, 56, 2)
+    wx_put(56, nph, 2)
+
+def wx_seg(k: u64, fl: u64, va: u64):
+    o = 64 + k * 56
+    wx_put(o, 1, 4)
+    wx_put(o + 4, fl, 4)
+    wx_put(o + 16, va, 8)
+    wx_put(o + 40, 0x100, 8)
+
+def elf_try(img: u64, len: u64) -> u64:
+# load into a throwaway address space (the W^X test images are deliberately unsealed)
+    pml4 = as_new()
+    e = elf_load(pml4, img, len, 0)
+    as_free(pml4)
+    return e
+
+def user_wx_test():
+# W^X for user ELF: a writable+executable segment, and RX/RW segments sharing a page, are refused
+    r0 = elf_wx_rejects
+    wx_hdr(1)
+    wx_seg(0, 7, 0x400000)
+    if elf_try(u64(addr(wx_img[0])), 512) != 0:
+        panic("ELF loader accepted an RWX segment")
+    wx_hdr(2)
+    wx_seg(0, 5, 0x400000)
+    wx_seg(1, 6, 0x400100)
+    if elf_try(u64(addr(wx_img[0])), 512) != 0:
+        panic("ELF loader accepted RX and RW in one page")
+    if elf_wx_rejects - r0 != 2:
+        panic("W^X rejects not counted")
+    puts("user W^X: RWX segment refused, mixed RX/RW page refused\n")
+
+def elf_bad_try(off: u64, fsz: u64, va: u64, msz: u64) -> u64:
+# one RX PT_LOAD with the given fields; returns 1 when the loader refused it
+    wx_hdr(1)
+    wx_seg(0, 5, va)
+    wx_put(64 + 8, off, 8)
+    wx_put(64 + 32, fsz, 8)
+    wx_put(64 + 40, msz, 8)
+    if elf_try(u64(addr(wx_img[0])), 512) == 0:
+        return 1
+    return 0
+
+def user_elf_bounds_test():
+# malformed program headers (the bytes a sealed image reaches elf_load with) fail cleanly, no panic, no leak
+    f0 = frames_free
+    r0 = elf_bad_rejects
+    ok: u64 = 0
+    ok += elf_bad_try(0xFFFFFFFFFFFFF000, 0x2000, 0x400000, 0x2000)  # off + fsz wraps
+    ok += elf_bad_try(600, 0x100, 0x400000, 0x100)  # off past the image
+    ok += elf_bad_try(0, 0x100, 0x400000, 0xFFFFFFFFFFC00001)  # va + msz wraps
+    ok += elf_bad_try(0, 0x100, 0x7FFFFFFFF000, 0x2000)  # straddles USER_TOP
+    ok += elf_bad_try(0, 0x100, 0x400000, 0x40000000)  # 1 GiB p_memsz
+    if ok != 5 or elf_bad_rejects - r0 != 5:
+        panic("ELF loader accepted a malformed program header")
+    if frames_free != f0:
+        panic("ELF loader leaked frames on a rejected image")
+    puts("user ELF bounds: 5 malformed headers (wrapping off/fsz, va/msz, 1 GiB memsz) refused, frames leaked 0\n")
+
+def user_test():
+    user_wx_test()
+    user_elf_bounds_test()
+    f0 = frames_free
+    h0 = heap_live
+    hi = uimg(0)
+    hl = uimg(1) - hi
+    fi = uimg(2)
+    fl = uimg(3) - fi
+    bad = proc_spawn(hi + 1, hl - 1)
+    if u64(bad) != 0:
+        panic("ELF loader accepted a corrupt image")
+    a = proc_spawn_ok(hi, hl)
+    b = proc_spawn_ok(hi, hl)
+    c = proc_spawn_ok(fi, fl)
+    d = proc_spawn_ok(hi, hl)
+    ida = a.id
+    idb = b.id
+    idd = d.id
+    ca = proc_reap(a)
+    cb = proc_reap(b)
+    cc = proc_reap(c)
+    cd = proc_reap(d)
+    puts("user mode: 4 processes, exit codes ")
+    put_u64(ca)
+    puts(" ")
+    put_u64(cb)
+    puts(" ")
+    put_hex(cc)
+    puts(" ")
+    put_u64(cd)
+    puts(", syscalls ")
+    put_u64(syscalls)
+    puts(", frames leaked ")
+    put_u64(f0 - frames_free)
+    puts(", heap leaked ")
+    put_u64(heap_live - h0)
+    putc(10)
+    if ca != (ida & 0xFF) or cb != (idb & 0xFF) or cd != (idd & 0xFF) or cc != 0x10E:
+        panic("user mode test: wrong exit codes")
+    if frames_free != f0 or heap_live != h0:
+        panic("user mode test: leak")
+    puts("ring 3 + syscall/sysret + ELF loader OK\n")
+
+@unsafe
+def fs_test():
+    pci_scan()
+    iommu_enable()
+    if vb_init() == 0:
+        panic("no virtio-blk disk")
+    if fs_mount() == 0:
+        panic("no FAT32 ESP on the virtio disk")
+    # DMA policy: build default, then the sealed \EFI\Forge\boot.cfg, then the command line (tighten only)
+    boot_policy()
+    iommu_policy_report()
+    puts("ESP \\EFI\\Forge:")
+    fs_list("EFI/Forge")
+    putc(10)
+    sz: u64 = 0
+    buf = fs_read_file("EFI/Forge/init.elf", addr(sz))
+    if buf == 0:
+        panic("cannot read \\EFI\\Forge\\init.elf")
+    same = 1
+    hi = uimg(0)
+    if sz != uimg(1) - hi:
+        same = 0
+    i: u64 = 0
+    while same and i < sz:
+        if (vload64(buf + i) & 0xFF) != (vload64(hi + i) & 0xFF):
+            same = 0
+        i += 1
+    puts("read \\EFI\\Forge\\init.elf from disk: ")
+    put_u64(sz)
+    puts(" bytes, ")
+    put_u64(vb_reads)
+    puts(" virtio requests")
+    if same:
+        puts(", identical to the build output")
+    putc(10)
+    if same == 0:
+        panic("init.elf contents differ")
+    t = proc_spawn(buf, sz)
+    if u64(t) == 0:
+        panic("init.elf rejected by ELF loader")
+    id = t.id
+    code = proc_reap(t)
+    kfree(buf)
+    puts("init (pid ")
+    put_u64(id)
+    puts(") from disk exited with ")
+    put_u64(code)
+    putc(10)
+    if code != (id & 0xFF):
+        panic("init from disk failed")
+    seal_test()
+    lx_init()
+    cap_test()
+    puts("PCI + virtio-blk + FAT32 (read-only) OK\n")
+
+def kabi_future_probe() -> u64:
+    return 0
+
+def kexports_init():
+    kexport("puts", u64(puts), 0)
+    kexport("kcur_pid", u64(kcur_pid), 0)
+    kexport("kcur_ppid", u64(kcur_ppid), 0)
+    kexport("putc", u64(putc), 0)
+    kexport("put_u64", u64(put_u64), 0)
+    kexport("put_hex", u64(put_hex), 0)
+    kexport("panic", u64(panic), 0)
+    kexport("kmalloc", u64(kmalloc), 0)
+    kexport("kfree", u64(kfree), 0)
+    kexport("frame_alloc", u64(frame_alloc), 0)
+    kexport("frame_free", u64(frame_free), 0)
+    kexport("sleep_ticks", u64(sleep_ticks), 0)
+    kexport("kabi_future_probe", u64(kabi_future_probe), 1)
+
+def mod_read(name: ptr[u8], sz: ptr[u64]) -> u64:
+    b = fs_read_file(name, sz)
+    if b == 0:
+        puts(name)
+        panic(": module missing from the ESP")
+    return b
+
+def mod_expect_reject(img: u64, sz: u64, what: ptr[u8]):
+    m = mod_load(img, sz)
+    if u64(m) != 0:
+        puts(what)
+        panic(": bad module was accepted")
+    puts("  rejected ")
+    puts(what)
+    puts(": ")
+    er = mod_err
+    if er != 0:
+        puts(er)
+    es = mod_err_sym
+    if es != 0:
+        puts(" (")
+        puts(es)
+        putc(41)
+        mod_err_sym = 0
+    putc(10)
+
+@unsafe
+def module_test():
+    kexports_init()
+    mod_area_init()
+    sz: u64 = 0
+    img = mod_read("EFI/Forge/mod/hello.ko", addr(sz))
+    m = mod_load(img, sz)
+    if u64(m) == 0:
+        puts(mod_err_str())
+        panic(": hello.ko rejected")
+    puts("module hello.ko: ")
+    put_u64(m.npages)
+    puts(" pages at ")
+    put_hex(m.base)
+    puts(", ABI ")
+    put_u64(m.abi >> 16)
+    putc(46)
+    put_u64(m.abi & 0xFFFF)
+    puts(", ")
+    put_u64(m.nsyms)
+    puts(" symbols\n")
+    fcall = mod_sym(m, "mod_call")
+    if call_ptr(fcall, 5) != 5 * 3 + 20 + 1 or call_ptr(fcall, 2) != 2 * 3 + 30 + 2:
+        panic("module call returned a wrong value")
+    call_ptr(mod_sym(m, "mod_hello"))
+    # W^X inside the module: text not writable, data not executable
+    te = vload64(pte_addr(kernel_pml4, mod_sym(m, "mod_call"), 0))
+    if (te & PTE_W) != 0 or (te & PTE_NX) != 0:
+        panic("module text mapped writable or NX")
+    # state transfer across an unload/load
+    st = kmalloc(64)
+    n = call_ptr(m.save, st, 64)
+    base0 = m.base
+    mod_unload(m)
+    if virt_to_phys(kernel_pml4, base0) != 1:
+        panic("module still mapped after unload")
+    m = mod_load_ok(img, sz)
+    if call_ptr(m.restore, st, n) != 1 or call_ptr(mod_sym(m, "mod_call"), 0) != 10 + 3:
+        panic("module state not restored")
+    kfree(st)
+    mod_unload(m)
+    puts("  state saved, module unloaded + reloaded, state restored\n")
+    # leak check over 1000 load / call / unload cycles
+    ff = frames_free
+    hl = heap_live
+    t0 = lapic_ticks
+    i: u64 = 0
+    while i < 1000:
+        m = mod_load(img, sz)
+        if u64(m) == 0:
+            panic("module load failed in the cycle test")
+        if call_ptr(mod_sym(m, "mod_call"), i) != i * 3 + (10 + 10 * (i & 3)) + 1:
+            panic("module call wrong in the cycle test")
+        mod_unload(m)
+        i += 1
+    puts("  1000 load/call/unload cycles in ")
+    put_u64((lapic_ticks - t0) * 10)
+    puts(" ms, frames leaked ")
+    put_u64(ff - frames_free)
+    puts(", heap bytes leaked ")
+    put_u64(hl - heap_live)
+    putc(10)
+    if frames_free != ff or heap_live != hl:
+        panic("module load/unload leaks memory")
+    mod_expect_reject(img, sz / 2, "truncated hello.ko")
+    bsz: u64 = 0
+    b = mod_read("EFI/Forge/mod/badabi.ko", addr(bsz))
+    mod_expect_reject(b, bsz, "badabi.ko")
+    kfree(b)
+    b = mod_read("EFI/Forge/mod/unresolved.ko", addr(bsz))
+    mod_expect_reject(b, bsz, "unresolved.ko")
+    kfree(b)
+    b = mod_read("EFI/Forge/mod/newer.ko", addr(bsz))
+    mod_expect_reject(b, bsz, "newer.ko")
+    kfree(b)
+    b = mod_read("EFI/Forge/mod/unsealed.ko", addr(bsz))
+    mod_expect_reject(b, bsz, "unsealed.ko")
+    kfree(b)
+    b = mod_read("EFI/Forge/mod/tampered.ko", addr(bsz))
+    mod_expect_reject(b, bsz, "tampered.ko")
+    kfree(b)
+    b = mod_read("EFI/Forge/mod/userimg.ko", addr(bsz))
+    mod_expect_reject(b, bsz, "userimg.ko")
+    kfree(b)
+    kfree(img)
+    puts("module ABI OK: ")
+    put_u64(mod_loads)
+    puts(" loads, ")
+    put_u64(mod_unloads)
+    puts(" unloads, ")
+    put_u64(mod_rejects)
+    puts(" rejected\n")
+
+blkd_img: u64
+blkd_sz: u64
+
+@unsafe
+def blk_same(buf: u64, sz: u64) -> u64:
+    hi = uimg(0)
+    if sz != uimg(1) - hi:
+        return 0
+    i: u64 = 0
+    while i < sz:
+        if vload8(buf + i) != vload8(hi + i):
+            return 0
+        i += 1
+    return 1
+
+def drv_strict_test():
+# strict DMA policy without a remapping unit (bootpol.cudi): the user-mode block driver must be refused its
+# DMA region (drv 402 EPERM), exit 1, and leave the disk to the in-kernel virtio-blk driver
+    ff = frames_free
+    hl = heap_live
+    t = blkd_start(blkd_img, blkd_sz)
+    if u64(t) == 0:
+        panic("blkd rejected by the ELF loader")
+    code = proc_reap(t)
+    vb_reinit()
+    sz: u64 = 0
+    buf = fs_read_file("EFI/Forge/init.elf", addr(sz))
+    if code != 1 or buf == 0 or blk_same(buf, sz) == 0:
+        panic("strict DMA policy: blkd was not refused cleanly")
+    kfree(buf)
+    if rq_buf != 0:
+        kfree(rq_buf)
+        rq_buf = 0
+    puts("blkd: DMA region refused under the strict policy (no remapping unit), driver exit ")
+    put_u64(code)
+    puts("; the in-kernel driver reads \\EFI\\Forge\\init.elf, identical; frames leaked ")
+    put_u64(ff - frames_free)
+    puts(", heap leaked ")
+    put_u64(hl - heap_live)
+    putc(10)
+    if ff != frames_free or hl != heap_live:
+        panic("strict DMA policy: refused driver leaks memory")
+
+def drv_test():
+    blkd_img = fs_read_file("EFI/Forge/bin/blkd", addr(blkd_sz))
+    if blkd_img == 0:
+        panic("cannot read \\EFI\\Forge\\bin\\blkd")
+    if iommu_grant_allowed() == 0:
+        drv_strict_test()
+        return
+    ff = frames_free
+    hl = heap_live
+    t = blkd_start(blkd_img, blkd_sz)
+    if u64(t) == 0:
+        panic("blkd rejected by the ELF loader")
+    # the FAT layer and file reads now go through the ring-3 driver
+    sz: u64 = 0
+    buf = fs_read_file("EFI/Forge/init.elf", addr(sz))
+    if buf == 0 or blk_same(buf, sz) == 0:
+        panic("read through blkd failed")
+    kfree(buf)
+    puts("blkd: read \\EFI\\Forge\\init.elf through the user-mode driver, identical; ")
+    put_u64(drv_served)
+    puts(" requests served\n")
+    iommu_report()
+    # a process without the capability is refused
+    if sys_drv(408, 5, 0, 0) != EPERM or blk_crash_after != 0:
+        panic("fault-injection hook usable while disarmed")
+    if sys_drv(400, vb_io, 1, 0) != EPERM:
+        panic("driver capability not enforced")
+    # fault injection: the driver dies with a request in flight on the device
+    sec = kmalloc(512)
+    blk_crash_next = 1
+    ok = vb_read(0, 1, sec)
+    code = proc_reap(t)
+    puts("blkd crashed (exit ")
+    put_hex(code)
+    puts("), client got ")
+    if ok == 0:
+        puts("EIO")
+    else:
+        puts("data")
+    puts(" and is still running; device reset, deaths=")
+    put_u64(drv_deaths)
+    putc(10)
+    if ok != 0 or code != 0x10E or drv_eio != 1:
+        panic("driver crash not contained")
+    vb_reinit()
+    if vb_read(0, 1, sec) == 0:
+        panic("kernel driver did not take the device back")
+    kfree(sec)
+    if rq_buf != 0:
+        kfree(rq_buf)
+        rq_buf = 0
+    puts("blkd: frames leaked ")
+    put_u64(ff - frames_free)
+    puts(", heap leaked ")
+    put_u64(hl - heap_live)
+    putc(10)
+    if ff != frames_free or hl != heap_live:
+        panic("driver service leaks memory")
+    puts("isolated driver service OK\n")
+    # after the blkd leak check: the edu self-test hooks a context table for the bridge's bus,
+    # which stays allocated by design (context tables are never freed)
+    iommu_dma_selftest()
+
+# ---- live patching test (Phase 2.5) ----
+lph_stop: u64
+lph_calls: u64
+lph_wrong: u64
+lph_iter: u64[4]
+
+def lp_hammer(i: u64):
+# kernel threads have no process: the right answer is 0, patched or not
+    while atomic_load(addr(lph_stop), acquire) == 0:
+        if sys_getpid() != 0 or sys_getppid() != 0:
+            atomic_fetch_add(addr(lph_wrong), 1, acq_rel)
+        atomic_fetch_add(addr(lph_calls), 1, acq_rel)
+        atomic_fetch_add(addr(lph_iter[i]), 1, acq_rel)
+        if (lph_iter[i] & 1023) == 0:
+            yield_cpu()
+
+@unsafe
+def lp_check_getpid(fn: u64) -> u64:
+    return u64(call_ptr(fn) == kcur_pid())
+
+@unsafe
+def lp_check_getppid(fn: u64) -> u64:
+    return u64(call_ptr(fn) == kcur_ppid())
+
+lp_fail_post: u64
+
+def lp_check_flaky(fn: u64) -> u64:
+# passes on the replacement, fails once on the live entry: exercises the post-install rollback
+    if fn == u64(sys_getpid) and lp_fail_post:
+        lp_fail_post = 0
+        return 0
+    return lp_check_getpid(fn)
+
+def lp_quiesce():
+# every hammer passes its loop head twice, i.e. has left any call it was in when the text changed
+    s: u64[4]
+    i: u64 = 1
+    while i < 4:
+        s[i] = atomic_load(addr(lph_iter[i]), acquire)
+        i += 1
+    i = 1
+    while i < 4:
+        while atomic_load(addr(lph_iter[i]), acquire) < s[i] + 2:
+            yield_cpu()
+        i += 1
+
+smx_lock: u64
+smx_stop: u64
+smx_spins: u64[8]
+
+def smx_hammer(i: u64):
+# contend one spinlock with interrupts on: the waiters sit in spin_lock's loop, which calls tlb_poll,
+# so a stop-machine IPI can nest inside a poll that already saw its request (kx-fix6 deadlock)
+    while atomic_load(addr(smx_stop), acquire) == 0:
+        spin_lock(addr(smx_lock))
+        smx_spins[i] += 1
+        k: u64 = 0
+        while k < 50:
+            cpu_relax()
+            k += 1
+        spin_unlock(addr(smx_lock))
+
+def stop_machine_stress():
+# regression: many stop-machine rounds against CPUs spinning on a lock with interrupts on
+    if ncpu_online < 2:
+        puts("stop_machine stress skipped (1 cpu)\n")
+        return
+    t0 = thread_spawn(u64(smx_hammer), 0)
+    t1 = thread_spawn(u64(smx_hammer), 1)
+    t2 = thread_spawn(u64(smx_hammer), 2)
+    sleep_ticks(2)
+    r: u64 = 0
+    while r < 3000:
+        f = stop_machine_begin()
+        stop_machine_end(f)
+        r += 1
+    atomic_store(addr(smx_stop), 1, release)
+    thread_reap(t0)
+    thread_reap(t1)
+    thread_reap(t2)
+    puts("stop_machine stress OK: ")
+    put_u64(r)
+    puts(" rounds against ")
+    put_u64(smx_spins[0] + smx_spins[1] + smx_spins[2])
+    puts(" contended lock passes\n")
+
+@unsafe
+def livepatch_test():
+    f0 = frames_free
+    h0 = heap_live
+    tgt = u64(sys_getpid)
+    if lp_register(u64(kcur_pid)) != LP_ENOTPATCHABLE:
+        panic("livepatch accepted a function without the patchable nop")
+    if lp_register(tgt) != 0:
+        panic("sys_getpid is not patchable")
+    tg2 = u64(sys_getppid)
+    if lp_register(tg2) != 0 or lp_register(tgt) != 0 or lp_nsites != 2:
+        panic("second live-patch site not registered")
+    if lp_apply(u64(kcur_ppid), tgt) != LP_ENOTPATCHABLE:
+        panic("live patch applied to an unregistered site")
+    sz: u64 = 0
+    img = mod_read("EFI/Forge/mod/getpid2.ko", addr(sz))
+    m = mod_load(img, sz)
+    if u64(m) == 0:
+        panic("getpid2.ko rejected")
+    good = mod_sym(m, "lp_getpid")
+    bad = mod_sym(m, "lp_getpid_bad")
+    good2 = mod_sym(m, "lp_getppid")
+    bad2 = mod_sym(m, "lp_getppid_bad")
+    th: u64[4]
+    i: u64 = 1
+    while i < 4:
+        th[i] = u64(thread_spawn(u64(lp_hammer), i))
+        i += 1
+    # a wrong replacement is rejected before it is installed
+    if lp_apply_checked(tgt, bad, u64(lp_check_getpid)) != LP_ESELFTEST or lp_is_nop(tgt) == 0:
+        panic("bad live patch installed")
+    # a patch that fails its check once installed is rolled back
+    lp_fail_post = 1
+    if lp_apply_checked(tgt, good, u64(lp_check_flaky)) != LP_ESELFTEST or lp_is_nop(tgt) == 0 or lp_fnv(tgt, 32) != lp_site_hash(tgt):
+        panic("failed live patch not rolled back")
+    if lp_apply_checked(tg2, bad2, u64(lp_check_getppid)) != LP_ESELFTEST or lp_is_nop(tg2) == 0:
+        panic("bad live patch installed on the second site")
+    both: u64 = 0
+    k: u64 = 0
+    while k < 25:
+    # the two sites are patched and reverted independently; the order alternates
+        if lp_apply_checked(tgt, good, u64(lp_check_getpid)) != 0:
+            panic("live patch failed")
+        if lp_apply(tgt, good) != LP_ENOTPATCHABLE:
+            panic("double patch accepted")
+        if lp_apply_checked(tg2, good2, u64(lp_check_getppid)) != 0:
+            panic("live patch of the second site failed")
+        if lp_npatched() == 2:
+            both += 1
+        sleep_ticks(2)
+        if (k & 1) == 0:
+            if lp_revert(tgt) != 0:
+                panic("live patch revert: text hash mismatch")
+            if lp_is_nop(tg2) != 0 or lp_npatched() != 1:
+                panic("revert of one site changed the other")
+            sleep_ticks(1)
+            if lp_revert(tg2) != 0:
+                panic("live patch revert (site 2): text hash mismatch")
+        else:
+            if lp_revert(tg2) != 0:
+                panic("live patch revert (site 2): text hash mismatch")
+            if lp_is_nop(tgt) != 0 or lp_npatched() != 1:
+                panic("revert of one site changed the other")
+            sleep_ticks(1)
+            if lp_revert(tgt) != 0:
+                panic("live patch revert: text hash mismatch")
+        sleep_ticks(1)
+        k += 1
+    if lp_npatched() != 0 or lp_fnv(tgt, 32) != lp_site_hash(tgt) or lp_fnv(tg2, 32) != lp_site_hash(tg2):
+        panic("live patch sites not restored")
+    lp_quiesce()
+    via = call_ptr(mod_sym(m, "lp_calls"))
+    via2 = call_ptr(mod_sym(m, "lp_pcalls"))
+    c1 = via
+    sleep_ticks(2)
+    if call_ptr(mod_sym(m, "lp_calls")) != c1 or call_ptr(mod_sym(m, "lp_active")) != 0 or call_ptr(mod_sym(m, "lp_pcalls")) != via2 or call_ptr(mod_sym(m, "lp_pactive")) != 0:
+        panic("patched code still reached after rollback")
+    atomic_store(addr(lph_stop), 1, seq_cst)
+    i = 1
+    while i < 4:
+        thread_reap(ptr[Thread](th[i]))
+        i += 1
+    mod_unload(m)
+    kfree(img)
+    puts("livepatch: sys_getpid patched + reverted ")
+    put_u64(k)
+    puts(" times on ")
+    put_u64(ncpu_online)
+    puts(" CPUs, stop-machine parked ")
+    put_u64(stop_parked)
+    puts(" CPUs per write, ")
+    put_u64(lph_calls)
+    puts(" concurrent calls (")
+    put_u64(via)
+    puts(" through the patch), wrong ")
+    put_u64(lph_wrong)
+    putc(10)
+    puts("livepatch: 2 sites (sys_getpid, sys_getppid) patched independently, both live in ")
+    put_u64(both)
+    puts(" rounds, ")
+    put_u64(via2)
+    puts(" calls through the getppid patch\n")
+    puts("livepatch: bad patch rejected before install (rejects ")
+    put_u64(lp_rejects)
+    puts("), failed patch rolled back (rollbacks ")
+    put_u64(lp_rollbacks)
+    puts("), text hash restored, frames leaked ")
+    put_u64(f0 - frames_free)
+    puts(", heap leaked ")
+    put_u64(heap_live - h0)
+    putc(10)
+    if lph_wrong != 0 or via == 0 or via >= lph_calls or lp_rollbacks != 1 or lp_rejects != 2 or both != k or via2 == 0 or frames_free != f0 or heap_live != h0:
+        panic("live patching test failed")
+    puts("live patching OK\n")
+
+# ---- tty hot swap (Phase 2.4): a swapper thread alternates the line discipline v1 <-> v2 every
+# 2 ticks while the shell session types; queued input is carried over by save/restore under rq_lock ----
+tsw_img: u64[4]
+tsw_sz: u64[4]
+tsw_mod: u64
+tsw_stop: u64
+tsw_swaps: u64
+tsw_partial: u64
+tsw_thread: u64
+
+@unsafe
+def tty_swap_to(v: u64) -> u64:
+    m: u64 = 0
+    rst = u64(tty0_restore)
+    fpush = u64(tty0_push)
+    flines = u64(tty0_lines)
+    fpop = u64(tty0_pop)
+    if v != 0:
+        m = u64(mod_load(tsw_img[v], tsw_sz[v]))
+        if m == 0:
+            puts("tty hot-swap refused: ")
+            puts(mod_err_str())
+            putc(10)
+            return 0
+        rst = ptr[Module](m).restore
+        fpush = mod_sym(ptr[Module](m), "tty_push")
+        flines = mod_sym(ptr[Module](m), "tty_lines")
+        fpop = mod_sym(ptr[Module](m), "tty_pop")
+    st = kmalloc(1100)
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    sv = u64(tty0_save)
+    if tsw_mod != 0:
+        sv = ptr[Module](tsw_mod).save
+    n = call_ptr(sv, st, 1100)
+    ok = call_ptr(rst, st, n)
+    if ok == 1:
+        tty_fp_push = fpush
+        tty_fp_lines = flines
+        tty_fp_pop = fpop
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    if ok == 1:
+        if n > 24 and vload8(st + n - 1) != 10:
+            tsw_partial += 1
+        if tsw_mod != 0:
+            mod_unload(ptr[Module](tsw_mod))
+        tsw_mod = m
+        tsw_swaps += 1
+    elif m != 0:
+        mod_unload(ptr[Module](m))
+    kfree(st)
+    return ok
+
+def kbd_report():
+    puts("input service: ")
+    put_u64(kb_in)
+    puts(" entries in, ")
+    put_u64(kb_committed)
+    puts(" committed by kbdd in ")
+    put_u64(kb_commits)
+    puts(" batches, ")
+    put_u64(kb_drained)
+    puts(" decoded by the kernel after stop, ")
+    put_u64(kb_dropped)
+    puts(" dropped, ")
+    put_u64(kb_chars)
+    puts(" chars; ")
+    put_u64(kb_swaps)
+    puts(" hot swaps v1<->v2 (")
+    put_u64(kb_swaps_queued)
+    puts(" with input queued), restarts ")
+    put_u64(kb_restarts)
+    puts(", replayed ")
+    put_u64(kb_replayed)
+    putc(10)
+    lost = kb_in - kb_committed - kb_drained - kb_dropped
+    puts("input service: lost ")
+    put_u64(lost)
+    putc(10)
+    puts("input service: ")
+    put_u64(kb_held)
+    puts(" swap request(s) held until the new driver reached recv, ")
+    put_u64(kb_starved)
+    puts(" driver(s) quiesced before their first recv\n")
+    if kb_starved != 0:
+        panic("input service: a driver was told to quiesce before its first recv (swap starvation)")
+    if lost != 0 or kb_dropped != 0 or kb_swaps < 10 or kb_restarts != 1 or kb_replayed == 0 or kb_commits == 0:
+        panic("input service test failed")
+    puts("input service hot-swap + supervised restart OK\n")
+
+def tty_swapper(arg: u64):
+    v: u64 = 1
+    while tsw_stop == 0:
+        tty_swap_to(v)
+        v = 3 - v
+        sleep_ticks(2)
+    if tty_swap_to(0) != 1:
+        panic("tty swap back to v0 failed")
+
+@unsafe
+def shell_test():
+# the interactive shell from \EFI\Forge\bin\sh; the boot test types its commands
+    input_init()
+    # the block driver runs as a supervised ring-3 service for the whole shell session
+    f0 = frames_free
+    h0 = heap_live
+    s0 = slab_pages + kpt_pages
+    blkd_supervised_start(blkd_img, blkd_sz)
+    tsw_img[1] = mod_read("EFI/Forge/mod/tty1.ko", addr(tsw_sz[1]))
+    tsw_img[2] = mod_read("EFI/Forge/mod/tty2.ko", addr(tsw_sz[2]))
+    tsw_img[3] = mod_read("EFI/Forge/mod/tty1u.ko", addr(tsw_sz[3]))
+    if tsw_img[1] == 0 or tsw_img[2] == 0 or tsw_img[3] == 0:
+        panic("tty modules missing")
+    # hot swap to an unsealed line discipline: refused, the running one stays in place
+    fp0 = tty_fp_push
+    if tty_swap_to(3) != 0 or tty_fp_push != fp0:
+        panic("unsealed tty module was hot-swapped in")
+    puts("tty hot-swap: unsealed tty1u.ko refused, current line discipline kept\n")
+    tsw_thread = u64(thread_spawn(u64(tty_swapper), 0))
+    kbd_service_start()
+    ktest_hooks = 1
+    nd_window_begin()
+    sz: u64 = 0
+    img = fs_read_file("/EFI/Forge/bin/sh", addr(sz))
+    if img == 0:
+        panic("cannot read \\EFI\\Forge\\bin\\sh")
+    t = proc_spawn(img, sz)
+    kfree(img)
+    if u64(t) == 0:
+        panic("sh rejected by ELF loader")
+    code = proc_reap(t)
+    nd_window_end()
+    orph = proc_reap_orphans()
+    kbd_service_stop()
+    input_off()
+    puts("sh exited with ")
+    put_u64(code)
+    puts(": ")
+    put_u64(nforks)
+    puts(" forks, ")
+    put_u64(nexecs)
+    puts(" execs, keyboard irqs ")
+    put_u64(kbd_irqs)
+    puts(", serial irqs ")
+    put_u64(com_irqs)
+    puts(", orphans reaped ")
+    put_u64(orph)
+    putc(10)
+    puts("virtio-blk: ")
+    put_u64(vb_reads)
+    puts(" requests, ")
+    put_u64(vb_irqs)
+    puts(" MSI-X completions, ")
+    put_u64(vb_sleeps)
+    puts(" sleeps, ")
+    put_u64(vb_polled)
+    puts(" polled\n")
+    ktest_hooks = 0
+    tsw_stop = 1
+    thread_reap(ptr[Thread](tsw_thread))
+    kfree(tsw_img[1])
+    kfree(tsw_img[2])
+    kfree(tsw_img[3])
+    puts("tty: ")
+    put_u64(tsw_swaps)
+    puts(" hot swaps (")
+    put_u64(tsw_partial)
+    puts(" with a partial line queued), pushed ")
+    put_u64(tty_pushed)
+    puts(", consumed ")
+    put_u64(tty_popped)
+    puts(", erased ")
+    put_u64(tty_erased)
+    puts(", lost ")
+    lost = tty_pushed - tty_popped - tty_erased - tty_dropped
+    put_u64(lost)
+    putc(10)
+    if lost != 0 or tty_dropped != 0 or tsw_swaps < 10 or tsw_partial == 0:
+        panic("tty hot swap lost input")
+    puts("tty hot-swap OK\n")
+    kbd_report()
+    blkd_supervised_stop()
+    # slab pages grown at a new allocation peak, and kernel page tables, are kept by the
+    # allocator by design (objects are checked by heap_live)
+    f0 -= slab_pages + kpt_pages - s0
+    puts("shell session: frames leaked ")
+    put_u64(f0 - frames_free)
+    puts(", heap leaked ")
+    put_u64(heap_live - h0)
+    putc(10)
+    if frames_free != f0 or heap_live != h0:
+        panic("shell session leaked memory")
+    puts("supervisor: blkd restarts ")
+    put_u64(sup_restarts)
+    puts(", requests served by blkd ")
+    put_u64(drv_served)
+    puts(", replayed ")
+    put_u64(drv_replays)
+    putc(10)
+    if sup_restarts != 1 or drv_replays != 1:
+        panic("driver restart test failed")
+    puts("supervised driver restart OK\n")
+    if vb_msix == 0 or vb_irqs == 0 or vb_sleeps == 0:
+        panic("virtio-blk interrupts not used")
+    if code != 0 or kbd_irqs == 0 or com_irqs == 0:
+        panic("interactive shell test failed")
+    puts("processes + VFS + keyboard/serial input + sh OK\n")
+    pcid_selftest()
+
+def kexec_test():
+# a second shell session that replaces the kernel under itself (sh builtin `kexec`, syscall 409)
+    ps_selftest()
+    input_init()
+    kbd_service_start()
+    ktest_hooks = 1
+    sz: u64 = 0
+    img = fs_read_file("/EFI/Forge/bin/sh", addr(sz))
+    t = proc_spawn_ok(img, sz)
+    kfree(img)
+    code = proc_reap(t)
+    ktest_hooks = 0
+    input_off()
+    panic("kexec session ended without a handoff")
+
+kxr_c0: u64
+kxr_n0: u64
+
+def kexec_input_resume():
+# called by kx_restore once the handoff is adopted, while the adopted threads are still parked
+    if kxd_adopted == 0:
+        panic("kexec: input service state not carried")
+    kxr_c0 = kb_commits
+    kxr_n0 = kb_committed
+    s0 = kb_state
+    v0 = kb_ver
+    kbd_service_start_from(1)
+    puts("kexec: input service state carried: kbdd v")
+    put_u64(v0)
+    puts(", decoder state ")
+    put_hex(s0)
+    puts(", ")
+    put_u64(kxd_sent)
+    puts(" uncommitted entries, ")
+    put_u64(kxr_c0)
+    puts(" commits so far\n")
+
+def kexec_resume():
+    input_init()
+    t = kx_restore()
+    if u64(t) == 0:
+        panic("kexec: the handoff was not adopted")
+    c0 = kxr_c0
+    n0 = kxr_n0
+    ktest_hooks = 1  # the shell may hand over again (tests/os/run.sh repeats kexec in one boot)
+    code = proc_reap(t)
+    ktest_hooks = 0
+    orph = proc_reap_orphans()
+    kbd_service_stop()
+    puts("kexec: input service in generation 1: ")
+    put_u64(kb_commits - c0)
+    puts(" more commits, carried entries replayed by the new driver: ")
+    if kb_committed >= n0 + kxd_sent:
+        puts("yes")
+    else:
+        puts("no")
+    puts(", restarts ")
+    put_u64(kb_restarts)
+    putc(10)
+    if kxd_sent < 2 or kb_commits <= c0 or kb_committed < n0 + kxd_sent or kb_dropped != 0:
+        panic("kexec: driver state not carried across the handoff")
+    puts("driver state carried across kexec OK\n")
+    input_off()
+    puts("sh exited with ")
+    put_u64(code)
+    puts(" after the handoff, orphans reaped ")
+    put_u64(orph)
+    puts(", running ")
+    puts(kernel_version())
+    putc(10)
+    if code != 0 or kx_restored == 0 or kx_nproc < 1 or (kx_gen == 1 and kx_nproc < 3):
+        panic("kexec handoff test failed")
+    puts("kexec handoff OK\n")
+
+@export
+@unsafe
+def after_overflow():
+    puts("recovered from #DF on a fresh stack\n")
+    pic_disable()
+    lapic_init()
+    ioapic_init()
+    idt_set(VEC_TIMER, u64(on_lapic_timer), 0)
+    idt_set(VEC_PIT, u64(on_pit), 0)
+    idt_set(VEC_SPURIOUS, u64(on_spurious), 0)
+    # the shootdown vector must have a gate before the first sti: after kexec the LAPIC (not reset by
+    # the handoff) can still hold a latched VEC_TLB from the previous kernel (#GP err=0x782 otherwise)
+    idt_set(VEC_TLB, u64(on_tlb_ipi), 0)
+    # IOAPIC: ISA IRQ0 (PIT channel 0) via its interrupt source override, one-shot ~1 ms
+    ioapic_route(0, VEC_PIT)
+    outb(0x43, 0x30)
+    outb(0x40, 0xA9)
+    outb(0x40, 0x04)
+    sti()
+    while lapic_ticks < 20:
+        hlt()
+    cli()
+    ioapic_mask(0)
+    if tsc_deadline_on:
+        puts("TSC-deadline timer: ")
+        put_u64(deadline_arms)
+        puts(" deadlines armed\n")
+        if deadline_arms < 20:
+            panic("TSC-deadline timer was not re-armed")
+    else:
+        puts("TSC-deadline timer: not offered, LAPIC periodic\n")
+    if hpet_fs != 0:
+    # under emulation a loaded host skews the polled PIT window, so a disagreement is reported, not fatal;
+    # lapic_init uses the HPET value
+        if hpet_tsc_10ms * 4 < pit_tsc_10ms * 3 or hpet_tsc_10ms * 3 > pit_tsc_10ms * 4:
+            puts("HPET: PIT calibration off by more than 25%, using HPET\n")
+        else:
+            puts("HPET: agrees with PIT calibration\n")
+    else:
+        puts("HPET: none\n")
+    puts("LAPIC timer ticks: ")
+    put_u64(lapic_ticks)
+    puts(", PIT IRQ0 via IOAPIC gsi ")
+    put_u64(irq_gsi[0])
+    puts(": ")
+    put_u64(pit_irqs)
+    puts(" irq(s)\n")
+    if pit_irqs == 0:
+        panic("no IOAPIC interrupt")
+    tlb_stray_report()
+    cpu_features_init()
+    cpu_syscall_init(0)
+    smp_init()
+    puts("SMP: ")
+    put_u64(ncpu_online)
+    puts(" cpus online\n")
+    sched_cpu_init(0, 0)
+    sched_on = 1
+    sti()
+    sched_test()
+    tlb_test()
+    sync_test()
+    vecmap_test()
+    user_test()
+    fs_test()
+    hw_test()
+    uaccess_test()
+    ffs_test()
+    module_test()
+    drv_test()
+    livepatch_test()
+    stop_machine_stress()
+    if bi.handoff != 0:
+        kexec_resume()
+    elif desktop_wanted() != 0:
+        puts("shell and kexec sessions skipped: desktop mode (forge.desktop)\n")
+        desktop_app()
+    elif iommu_grant_allowed() != 0:
+        shell_test()
+        kexec_test()
+    else:
+        puts("shell and kexec sessions skipped: both need the user-mode block driver, which the strict DMA policy refuses without a remapping unit\n")
+    cli()
+    if fb_base != 0:
+        if fb_consistent() == 0:
+            panic("fb console: back buffer and screen differ")
+        full = con_scrolls * fb_cols * fb_rows
+        if con_scrolls > 0 and con_redrawn >= full:
+            panic("fb console: scrolling redrew every cell")
+        puts("fb console: double-buffered ")
+        put_u64(fb_cols)
+        puts("x")
+        put_u64(fb_rows)
+        puts(" cells, ")
+        put_u64(con_scrolls)
+        puts(" scrolls, ")
+        put_u64(con_redrawn)
+        puts(" cells drawn (full redraws would be ")
+        put_u64(full)
+        puts("), back == front\n")
+    if desktop_wanted() != 0:
+        desktop_show()
+    puts("KERNEL OK\n")
+    # test harness: wait up to 5 s for 'q' on COM1 so it can take a screenshot first.
+    # Do not hlt(): COM1 is polled (no RX interrupt), and after kexec the LAPIC timer may not
+    # be firing, so hlt() would sleep through the 'q' until the harness's 60 s serial stall.
+    # Bound the wait with the TSC and spin with cpu_relax() so a dead timer cannot hang us.
+    t0 = rdtsc()
+    ticks0 = lapic_ticks
+    spins = 0
+    limit = tsc_per_ms * 5000
+    lapic_timer_start()
+    sti()
+    while 1:
+        if serial_poll() == 113:
+            break
+        if tsc_per_ms != 0 and rdtsc() - t0 >= limit:
+            break
+        if tsc_per_ms == 0 and (lapic_ticks >= ticks0 + 500 or spins >= 100000000):
+            break
+        spins += 1
+        cpu_relax()
+    cli()
+    waited = 0
+    if tsc_per_ms != 0:
+        waited = (rdtsc() - t0) / tsc_per_ms
+    puts("debug-exit ")
+    put_u64(waited)
+    puts(" ms after KERNEL OK\n")
+    qemu_exit(0x10)
+
+@export
+def kmain_mb2(magic: u32, info: u32):
+    serial_init()
+    vga_base = 0
+    puts("Forge kernel (multiboot2 entry)\n")
+    if magic != MB2_MAGIC:
+        panic("bad multiboot2 magic")
+    bi.magic = BI_MAGIC
+    bi.method = BOOT_MB2_BIOS
+    bi.kdelta = 0
+    p2v_base = 0
+    mb2_parse(u64(info))
+    kernel_start()
+
+@export
+@unsafe
+def kmain_efi(info: u64):
+    serial_init()
+    puts("Forge kernel (UEFI loader entry)\n")
+    p2v_base = 0
+    if load64(info) != BI_MAGIC:
+        panic("bad BootInfo magic")
+    memcpy(u64(addr(bi)), info, sizeof(BootInfo))
+    kernel_start()

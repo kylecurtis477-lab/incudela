@@ -1,12 +1,12 @@
 #!/bin/sh
 # tests/cpython-embed: Python calls into Forge @export functions, and Forge calls
 # back into Python (eval, object calls, and a Python function that calls Forge),
-# through the 11.5(a) embed API (tools/cpython/embed.fsi, written in Forge) and
-# the 11.2 C ABI. Also: tools/cpython/pylayout.fsi must match what tools/cpython/pylayout.forge
+# through the 11.5(a) embed API (tools/cpython/embed.cudi, written in Forge) and
+# the 11.2 C ABI. Also: tools/cpython/pylayout.cudi must match what tools/cpython/pylayout.cud
 # generates from the pinned headers (and the generator refuses non-pinned, free-threaded and debug
 # header sets), and the libpython guard refuses non-pinned and free-threaded Py_GetVersion strings.
 # Builds the pinned CPython if needed (warm when the prefix is current), compiles
-# api.forge and main.forge with forgec/fas, and links with gcc -no-pie against
+# api.cud and main.cud with cudc/fas, and links with gcc -no-pie against
 # prefix/lib/libpython3.13.a and the box libc (not fld). SKIP if there is no
 # tarball and no usable prefix.
 cd "$(dirname "$0")/../.." || exit 1
@@ -20,7 +20,7 @@ if [ ! -f $P/include/python3.13/Python.h ] || [ ! -f $P/lib/libpython3.13.a ]; t
   fi
 fi
 if [ -f $S/Python-3.13.5.tar.xz ]; then
-  ./forge tools/cpython/build.forge -o build/cpython-build >/dev/null || { echo "FAIL cpython-embed build-tool"; exit 1; }
+  ./cuditor tools/cpython/build.cud -o build/cpython-build >/dev/null || { echo "FAIL cpython-embed build-tool"; exit 1; }
   CP_SRC=$S CP_WORK=$W build/cpython-build >/dev/null || { echo "FAIL cpython-embed cpython-build"; exit 1; }
   P=$W/prefix
 fi
@@ -28,17 +28,17 @@ fi
 
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 fail=0
-# pylayout: the checked-in tools/cpython/pylayout.fsi must be exactly what the generator writes from
+# pylayout: the checked-in tools/cpython/pylayout.cudi must be exactly what the generator writes from
 # the pinned headers; non-pinned, free-threaded and debug header sets are refused with no output.
-./forge tools/cpython/pylayout.forge -o build/pylayout >/dev/null || { echo "FAIL cpython-embed pylayout build"; exit 1; }
+./cuditor tools/cpython/pylayout.cud -o build/pylayout >/dev/null || { echo "FAIL cpython-embed pylayout build"; exit 1; }
 I=$P/include/python3.13
-build/pylayout $I $T/gen.fsi 2>$T/ge; rc=$?
-if [ $rc = 0 ] && cmp -s $T/gen.fsi tools/cpython/pylayout.fsi && grep -q '^PYCONFIG_SIZE = 448$' $T/gen.fsi \
-   && grep -q '^PYCONFIG_OFF_HOME = 296$' $T/gen.fsi && grep -q '^PYSTATUS_SIZE = 32$' $T/gen.fsi && grep -q '^PYMETHODDEF_SIZE = 32$' $T/gen.fsi
-then echo "PASS cpython-embed/pylayout-generated"; else echo "FAIL cpython-embed/pylayout-generated (rc $rc; regenerate: build/pylayout $I tools/cpython/pylayout.fsi)"; cat $T/ge; diff $T/gen.fsi tools/cpython/pylayout.fsi | head -20; fail=1; fi
+build/pylayout $I $T/gen.cudi 2>$T/ge; rc=$?
+if [ $rc = 0 ] && cmp -s $T/gen.cudi tools/cpython/pylayout.cudi && grep -q '^PYCONFIG_SIZE = 448$' $T/gen.cudi \
+   && grep -q '^PYCONFIG_OFF_HOME = 296$' $T/gen.cudi && grep -q '^PYSTATUS_SIZE = 32$' $T/gen.cudi && grep -q '^PYMETHODDEF_SIZE = 32$' $T/gen.cudi
+then echo "PASS cpython-embed/pylayout-generated"; else echo "FAIL cpython-embed/pylayout-generated (rc $rc; regenerate: build/pylayout $I tools/cpython/pylayout.cudi)"; cat $T/ge; diff $T/gen.cudi tools/cpython/pylayout.cudi | head -20; fail=1; fi
 refuse() { # name rc pattern -- run pylayout on $T/inc (a modified copy of the pinned headers)
-  rm -f $T/bad.fsi; build/pylayout $T/inc $T/bad.fsi >$T/ro 2>$T/re; r=$?
-  if [ $r = $2 ] && [ ! -e $T/bad.fsi ] && grep -q "$3" $T/re
+  rm -f $T/bad.cudi; build/pylayout $T/inc $T/bad.cudi >$T/ro 2>$T/re; r=$?
+  if [ $r = $2 ] && [ ! -e $T/bad.cudi ] && grep -q "$3" $T/re
   then echo "PASS cpython-embed/pylayout-$1"; else echo "FAIL cpython-embed/pylayout-$1 (rc $r, want $2)"; cat $T/re; fail=1; fi
 }
 mkinc() { rm -rf $T/inc; mkdir -p $T/inc/cpython; cp $I/patchlevel.h $I/pyconfig.h $I/methodobject.h $T/inc/; cp $I/cpython/initconfig.h $T/inc/cpython/; }
@@ -48,9 +48,9 @@ mkinc; sed -i 's|^/\* #undef Py_GIL_DISABLED \*/|#define Py_GIL_DISABLED 1|' $T/
 refuse free-threaded 4 'free-threaded CPython (Py_GIL_DISABLED) is not supported'
 mkinc; printf '#define Py_DEBUG 1\n' >> $T/inc/pyconfig.h
 refuse debug 5 'debug CPython (Py_DEBUG) is not supported'
-build/forgec tests/cpython-embed/api.forge $T/api.s $FORGEC_FLAGS && build/fas -o $T/api.o $T/api.s \
+build/cudc tests/cpython-embed/api.cud $T/api.s $CUDC_FLAGS && build/fas -o $T/api.o $T/api.s \
   || { echo "FAIL cpython-embed compile-api"; exit 1; }
-build/forgec tests/cpython-embed/main.forge $T/main.s $FORGEC_FLAGS && build/fas -o $T/main.o $T/main.s \
+build/cudc tests/cpython-embed/main.cud $T/main.s $CUDC_FLAGS && build/fas -o $T/main.o $T/main.s \
   || { echo "FAIL cpython-embed compile-main"; exit 1; }
 gcc -no-pie -o $T/embed $T/main.o $T/api.o $P/lib/libpython3.13.a -ldl -lm -lpthread \
   || { echo "FAIL cpython-embed link"; exit 1; }

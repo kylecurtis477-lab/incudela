@@ -1,31 +1,33 @@
 #!/bin/sh
-# tests/*.forge: stdout must match .expected
-# tests/runtime/*.forge: stdout+stderr+exit code must match .expected (line-numbered runtime errors)
-# tests/errors/*.forge: compiler must fail with "error: line N: ..."
+# tests/*.cud: stdout must match .expected
+# tests/runtime/*.cud: stdout+stderr+exit code must match .expected (line-numbered runtime errors)
+# tests/errors/*.cud: compiler must fail with "error: line N: ..."
 # tests/os/run.sh: QEMU boot tests (kernel via multiboot2 on BIOS and OVMF, native PE32+ EFI app on a GPT disk)
-# tests/fs/*.forge: freestanding (--freestanding / no-runtime pragma) programs linked with plain ld, no runtime
+# tests/fs/*.cud: freestanding (--freestanding / no-runtime pragma) programs linked with plain ld, no runtime
 #   (each one again with --fs-opt, which must not change its output)
 # tests/ast/*.sh: --emit=ast-json / --emit=pretty round trips (AST equal, pretty fixpoint, same behaviour, self-host)
 # tests/grammar/: docs/GRAMMAR.md conformance (valid/ parse, invalid/ rejected) + grammar-based fuzzer
-# tests/diag/*.forge: --diagnostics=json output must match the golden .json (one object per error, schema v1)
-# tests/typeerrors/*.forge: static type errors; full diagnostic (line, col, source, caret) must match .expected
-# tests/bench/: tools/bench.forge regression-check logic on fixed records (bench timing never gates)
+# tests/diag/*.cud: --diagnostics=json output must match the golden .json (one object per error, schema v1)
+# tests/typeerrors/*.cud: static type errors; full diagnostic (line, col, source, caret) must match .expected
+# tests/bench/: tools/bench.cud regression-check logic on fixed records (bench timing never gates)
 cd "$(dirname "$0")"; fail=0; mkdir -p build
-for t in tests/*.forge; do
+# CUDC_FLAGS was FORGEC_FLAGS before the Cuditor rename (2026-11-16); the old name is honoured for one release
+[ -z "${CUDC_FLAGS+x}" ] && [ -n "${FORGEC_FLAGS+x}" ] && export CUDC_FLAGS="$FORGEC_FLAGS"
+for t in tests/*.cud; do
   case "$t" in tests/mod_*) continue;; esac
-  ./forge "$t" -o build/t_bin && build/t_bin a b | diff -q - "${t%.forge}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
+  ./cuditor "$t" -o build/t_bin && build/t_bin a b | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
 done
-for t in tests/runtime/*.forge; do
-  ./forge "$t" -o build/t_bin && (build/t_bin 2>&1; echo "exit $?") | diff -q - "${t%.forge}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
+for t in tests/runtime/*.cud; do
+  ./cuditor "$t" -o build/t_bin && (build/t_bin 2>&1; echo "exit $?") | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
 done
-for t in tests/errors/*.forge; do
-  m=$(timeout 20 build/forgec "$t" build/t_err.s 2>&1) && { echo "FAIL $t (no error)"; fail=1; } || { echo "$m" | grep -q "error: line" && echo "PASS $t: $m" || { echo "FAIL $t"; fail=1; }; }
+for t in tests/errors/*.cud; do
+  m=$(timeout 20 build/cudc "$t" build/t_err.s 2>&1) && { echo "FAIL $t (no error)"; fail=1; } || { echo "$m" | grep -q "error: line" && echo "PASS $t: $m" || { echo "FAIL $t"; fail=1; }; }
 done
-for t in tests/typeerrors/*.forge; do
-  build/forgec "$t" build/t_err.s > build/t_err.txt 2>&1 && { echo "FAIL $t (no error)"; fail=1; } || { diff -q build/t_err.txt "${t%.forge}.expected" >/dev/null && echo "PASS $t: $(head -1 build/t_err.txt)" || { echo "FAIL $t"; fail=1; }; }
+for t in tests/typeerrors/*.cud; do
+  build/cudc "$t" build/t_err.s > build/t_err.txt 2>&1 && { echo "FAIL $t (no error)"; fail=1; } || { diff -q build/t_err.txt "${t%.cud}.expected" >/dev/null && echo "PASS $t: $(head -1 build/t_err.txt)" || { echo "FAIL $t"; fail=1; }; }
 done
-for t in tests/diag/*.forge; do
-  build/forgec "$t" build/t_err.s --diagnostics=json > build/t_diag.json 2>&1 && { echo "FAIL $t (no error)"; fail=1; } || { diff -q build/t_diag.json "${t%.forge}.json" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }; }
+for t in tests/diag/*.cud; do
+  build/cudc "$t" build/t_err.s --diagnostics=json > build/t_diag.json 2>&1 && { echo "FAIL $t (no error)"; fail=1; } || { diff -q build/t_diag.json "${t%.cud}.json" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }; }
 done
 if command -v python3 >/dev/null; then
   python3 -c 'import json,sys,glob
@@ -33,27 +35,27 @@ for f in glob.glob("tests/diag/*.json"):
     for l in open(f):
         d=json.loads(l); assert d["version"]==1 and d["code"][0]=="E" and d["line"]>0 and d["col"]>0 and isinstance(d["fixits"],list), f' && echo "PASS diag-json-schema" || { echo "FAIL diag-json-schema"; fail=1; }
 fi
-build/forgec build/no_such_input.forge build/t_inc.s --diagnostics=json 2>&1 | grep -q '"code":"E0001"' && echo "PASS diag-json-input-missing" || { echo "FAIL diag-json-input-missing"; fail=1; }
-tests/ast/roundtrip.sh selfhost/compiler.forge selfhost/prelude.forge tools/*.forge tests/*.forge tests/runtime/*.forge tests/fs/*.forge tests/unit/*.forge tests/testblocks/*.forge tests/bounds/*.forge tests/nonnull/*.forge tests/unsafe/*.forge tests/own/*.forge tests/defer/*.forge tests/generic/*.forge tests/atomic/*.forge std/*.fsi examples/*/*.forge examples/*/*.fsi || fail=1
+build/cudc build/no_such_input.cud build/t_inc.s --diagnostics=json 2>&1 | grep -q '"code":"E0001"' && echo "PASS diag-json-input-missing" || { echo "FAIL diag-json-input-missing"; fail=1; }
+tests/ast/roundtrip.sh selfhost/compiler.cud selfhost/prelude.cud tools/*.cud tests/*.cud tests/runtime/*.cud tests/fs/*.cud tests/unit/*.cud tests/testblocks/*.cud tests/bounds/*.cud tests/nonnull/*.cud tests/unsafe/*.cud tests/own/*.cud tests/defer/*.cud tests/generic/*.cud tests/atomic/*.cud std/*.cudi examples/*/*.cud examples/*/*.cudi || fail=1
 tests/ast/semantic.sh || fail=1
 tests/grammar/run.sh || fail=1
 tests/fmt/run.sh || fail=1
 # tests/fas and tests/fld check every OS artifact (user programs, modules, EFI loader, kernel); build them
 # first so a clean tree (e.g. straight from the seed) runs the same checks instead of skipping them
-{ ./forge examples/kernel/build.forge -o build/kernel-build && build/kernel-build && ./forge examples/efi/build.forge -o build/efi-build && build/efi-build; } >/dev/null 2>&1 || { echo "FAIL os-artifacts-build (fas/fld artifact checks would be skipped)"; fail=1; }
+{ ./cuditor examples/kernel/build.cud -o build/kernel-build && build/kernel-build && ./cuditor examples/efi/build.cud -o build/efi-build && build/efi-build; } >/dev/null 2>&1 || { echo "FAIL os-artifacts-build (fas/fld artifact checks would be skipped)"; fail=1; }
 # the boot harness asm is one of the fas artifacts; build it here so every run checks the same file set
 # (before, build/os/boot.s existed only after an earlier OS run, so O2 and O0 counted 638 vs 639)
-mkdir -p build/os && build/forgec tests/os/boot.forge build/os/boot.s || { echo "FAIL os-boot-harness-asm"; fail=1; }
+mkdir -p build/os && build/cudc tests/os/boot.cud build/os/boot.s || { echo "FAIL os-boot-harness-asm"; fail=1; }
 tests/fas/run.sh || fail=1
 tests/fld/run.sh || fail=1
 tests/krel/run.sh || fail=1
-tests/forge-part/run.sh || fail=1
+tests/incudela-part/run.sh || fail=1
 tests/mkgpt/run.sh || fail=1
 tests/ed25519-tool/run.sh || fail=1
 tests/grammar-fuzz/run.sh || fail=1
 tests/mkfont/run.sh || fail=1
-tests/c2forge/run.sh || fail=1
-tests/forgeseal/run.sh || fail=1
+tests/c2cud/run.sh || fail=1
+tests/cudseal/run.sh || fail=1
 tests/modules-build/run.sh || fail=1
 tests/user-build/run.sh || fail=1
 tests/busybox-build/run.sh || fail=1
@@ -69,7 +71,7 @@ tests/oslib/run.sh || fail=1
 tests/reseed/run.sh || fail=1
 tests/pkg/run.sh || fail=1
 tests/lsp/run.sh || fail=1
-# tests/provenance: AI-provenance commit trailers (tools/provenance.forge, docs/PROVENANCE.md)
+# tests/provenance: AI-provenance commit trailers (tools/provenance.cud, docs/PROVENANCE.md)
 tests/provenance/run.sh || fail=1
 tests/testblocks/run.sh || fail=1
 tests/bounds/run.sh || fail=1
@@ -83,8 +85,8 @@ tests/generic/run.sh || fail=1
 tests/ed25519/run.sh || fail=1
 tests/atomic/run.sh || fail=1
 tests/ast/selfpp.sh || fail=1
-# tests/bench: tools/bench.forge record parser and regression logic on fixed records (timing itself never gates)
-./forge tools/bench.forge -o build/bench >/dev/null 2>&1 || { echo "FAIL bench-build"; fail=1; }
+# tests/bench: tools/bench.cud record parser and regression logic on fixed records (timing itself never gates)
+./cuditor tools/bench.cud -o build/bench >/dev/null 2>&1 || { echo "FAIL bench-build"; fail=1; }
 for c in ok slow ratio window; do
   (build/bench check --history tests/bench/$c.tsv --baseline tests/bench/base.tsv; echo "exit $?") | diff -q - tests/bench/$c.expected >/dev/null && echo "PASS bench-check-$c" || { echo "FAIL bench-check-$c"; fail=1; }
 done
@@ -93,59 +95,59 @@ done
 tests/bench/tree.sh build/bench || fail=1
 # --fs-opt asm discipline: every asm routine in examples/ must be checked off in docs/SYSTEMS.md (no build, no QEMU)
 tests/asm-audit/run.sh || fail=1
-build/forgec tests/tuples.forge build/t_ast.json --emit=ast-json && python3 -c 'import json;d=json.load(open("build/t_ast.json"));assert d["forge_ast"]==1 and d["root"]["k"]=="Module"' && echo "PASS ast-json-schema" || { echo "FAIL ast-json-schema"; fail=1; }
-for t in tests/fs/*.forge; do
-  c=""; [ -f "${t%.forge}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.forge}.c" && c=build/t_fsc.o
-  build/forgec "$t" build/t_fs.s $FORGEC_FLAGS && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.forge}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
+build/cudc tests/tuples.cud build/t_ast.json --emit=ast-json && python3 -c 'import json;d=json.load(open("build/t_ast.json"));assert d["forge_ast"]==1 and d["root"]["k"]=="Module"' && echo "PASS ast-json-schema" || { echo "FAIL ast-json-schema"; fail=1; }
+for t in tests/fs/*.cud; do
+  c=""; [ -f "${t%.cud}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.cud}.c" && c=build/t_fsc.o
+  build/cudc "$t" build/t_fs.s $CUDC_FLAGS && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
 done
 # --fs-opt (Phase 12.1 step 1, opt-in): every freestanding program must print the same with the flag, and
-# tests/fs/regalloc.forge must come out with ra_leaf fully in registers, ra_calls using a callee-saved register
+# tests/fs/regalloc.cud must come out with ra_leaf fully in registers, ra_calls using a callee-saved register
 # and ra_addr (address taken) untouched; step 4a: ra_arr (frame array), ra_cpy (rep movsb) and ra_mix (addr() of
 # one local) still promote their other scalars
-for t in tests/fs/*.forge; do
-  c=""; [ -f "${t%.forge}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.forge}.c" && c=build/t_fsc.o
-  build/forgec "$t" build/t_fs.s $FORGEC_FLAGS --fs-opt && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.forge}.expected" >/dev/null && echo "PASS fs-opt $t" || { echo "FAIL fs-opt $t"; fail=1; }
+for t in tests/fs/*.cud; do
+  c=""; [ -f "${t%.cud}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.cud}.c" && c=build/t_fsc.o
+  build/cudc "$t" build/t_fs.s $CUDC_FLAGS --fs-opt && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS fs-opt $t" || { echo "FAIL fs-opt $t"; fail=1; }
 done
-build/forgec tests/fs/regalloc.forge build/t_ra.s $FORGEC_FLAGS --fs-opt && [ "$(awk '/^ra_leaf:/,/ret$/' build/t_ra.s | grep -c '(%rbp)')" = 0 ] && [ "$(awk '/^ra_addr:/,/ret$/' build/t_ra.s | grep -c '(%rbp)')" -gt 0 ] && awk '/^ra_calls:/,/ret$/' build/t_ra.s | grep -q 'mov %rax,%rbx' && awk '/^ra_arr:/,/ret$/' build/t_ra.s | grep -q '%rbx' && awk '/^ra_cpy:/,/ret$/' build/t_ra.s | grep -q 'rep movsb' && awk '/^ra_cpy:/,/ret$/' build/t_ra.s | grep -q '%rbx' && awk '/^ra_mix:/,/ret$/' build/t_ra.s | grep -q 'lea -[0-9]*(%rbp)' && awk '/^ra_mix:/,/ret$/' build/t_ra.s | grep -q '%r8' && echo "PASS fs-opt-shape" || { echo "FAIL fs-opt-shape"; fail=1; }
+build/cudc tests/fs/regalloc.cud build/t_ra.s $CUDC_FLAGS --fs-opt && [ "$(awk '/^ra_leaf:/,/ret$/' build/t_ra.s | grep -c '(%rbp)')" = 0 ] && [ "$(awk '/^ra_addr:/,/ret$/' build/t_ra.s | grep -c '(%rbp)')" -gt 0 ] && awk '/^ra_calls:/,/ret$/' build/t_ra.s | grep -q 'mov %rax,%rbx' && awk '/^ra_arr:/,/ret$/' build/t_ra.s | grep -q '%rbx' && awk '/^ra_cpy:/,/ret$/' build/t_ra.s | grep -q 'rep movsb' && awk '/^ra_cpy:/,/ret$/' build/t_ra.s | grep -q '%rbx' && awk '/^ra_mix:/,/ret$/' build/t_ra.s | grep -q 'lea -[0-9]*(%rbp)' && awk '/^ra_mix:/,/ret$/' build/t_ra.s | grep -q '%r8' && echo "PASS fs-opt-shape" || { echo "FAIL fs-opt-shape"; fail=1; }
 # --fs-live (Phase 12.1 step 4b, opt-in): every freestanding program must print the same with it, and
-# tests/fs/regalloc.forge's ra_seq (14 phase-local scalars plus 2 long-lived ones, 16 slots for 11 registers) keeps
+# tests/fs/regalloc.cud's ra_seq (14 phase-local scalars plus 2 long-lived ones, 16 slots for 11 registers) keeps
 # frame slots under --fs-opt and none under --fs-live
-for t in tests/fs/*.forge; do
-  c=""; [ -f "${t%.forge}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.forge}.c" && c=build/t_fsc.o
-  build/forgec "$t" build/t_fs.s $FORGEC_FLAGS --fs-live && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.forge}.expected" >/dev/null && echo "PASS fs-live $t" || { echo "FAIL fs-live $t"; fail=1; }
+for t in tests/fs/*.cud; do
+  c=""; [ -f "${t%.cud}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.cud}.c" && c=build/t_fsc.o
+  build/cudc "$t" build/t_fs.s $CUDC_FLAGS --fs-live && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS fs-live $t" || { echo "FAIL fs-live $t"; fail=1; }
 done
-build/forgec tests/fs/regalloc.forge build/t_ra.s $FORGEC_FLAGS --fs-opt && [ "$(awk '/^ra_seq:/,/ret$/' build/t_ra.s | grep -c '(%rbp)')" -gt 0 ] && build/forgec tests/fs/regalloc.forge build/t_ra.s $FORGEC_FLAGS --fs-live && [ "$(awk '/^ra_seq:/,/ret$/' build/t_ra.s | grep -c '(%rbp)')" = 0 ] && echo "PASS fs-live-shape" || { echo "FAIL fs-live-shape"; fail=1; }
+build/cudc tests/fs/regalloc.cud build/t_ra.s $CUDC_FLAGS --fs-opt && [ "$(awk '/^ra_seq:/,/ret$/' build/t_ra.s | grep -c '(%rbp)')" -gt 0 ] && build/cudc tests/fs/regalloc.cud build/t_ra.s $CUDC_FLAGS --fs-live && [ "$(awk '/^ra_seq:/,/ret$/' build/t_ra.s | grep -c '(%rbp)')" = 0 ] && echo "PASS fs-live-shape" || { echo "FAIL fs-live-shape"; fail=1; }
 # --fs-temps (Phase 12.1 step 4c, opt-in, implies --fs-live): call arguments go straight to their registers and
 # constant loads skip the stack; every freestanding program must print the same, and ra_rec keeps (%rsp)
 # operands under --fs-live and none under --fs-temps
-for t in tests/fs/*.forge; do
-  c=""; [ -f "${t%.forge}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.forge}.c" && c=build/t_fsc.o
-  build/forgec "$t" build/t_fs.s $FORGEC_FLAGS --fs-temps && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.forge}.expected" >/dev/null && echo "PASS fs-temps $t" || { echo "FAIL fs-temps $t"; fail=1; }
+for t in tests/fs/*.cud; do
+  c=""; [ -f "${t%.cud}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.cud}.c" && c=build/t_fsc.o
+  build/cudc "$t" build/t_fs.s $CUDC_FLAGS --fs-temps && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS fs-temps $t" || { echo "FAIL fs-temps $t"; fail=1; }
 done
-build/forgec tests/fs/regalloc.forge build/t_ra.s $FORGEC_FLAGS --fs-live && [ "$(awk '/^ra_rec:/,/ret$/' build/t_ra.s | grep -c '(%rsp)')" -gt 0 ] && build/forgec tests/fs/regalloc.forge build/t_ra.s $FORGEC_FLAGS --fs-temps && [ "$(awk '/^ra_rec:/,/ret$/' build/t_ra.s | grep -c '(%rsp)')" = 0 ] && echo "PASS fs-temps-shape" || { echo "FAIL fs-temps-shape"; fail=1; }
+build/cudc tests/fs/regalloc.cud build/t_ra.s $CUDC_FLAGS --fs-live && [ "$(awk '/^ra_rec:/,/ret$/' build/t_ra.s | grep -c '(%rsp)')" -gt 0 ] && build/cudc tests/fs/regalloc.cud build/t_ra.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ra_rec:/,/ret$/' build/t_ra.s | grep -c '(%rsp)')" = 0 ] && echo "PASS fs-temps-shape" || { echo "FAIL fs-temps-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps; any output diff fails
-./forge tools/fsfuzz.forge -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
+./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs
 build/fsfuzz-tool --combos --seed 7 --n 3 > build/t_fscombos.log 2>&1 && echo "PASS fs-opt-combos" || { echo "FAIL fs-opt-combos"; cat build/t_fscombos.log; fail=1; }
 # build-plan item 3 (c): optimizer-gate programs (tests/optgate) give the same output under every fs optimizer level
-for t in tests/optgate/*.forge; do
+for t in tests/optgate/*.cud; do
   for f in "" --fs-opt --fs-live --fs-temps; do
-    build/forgec "$t" build/t_og.s $FORGEC_FLAGS $f && build/fas -o build/t_og.o build/t_og.s && build/fld -o build/t_og build/t_og.o && build/t_og | diff -q - "${t%.forge}.expected" >/dev/null && echo "PASS optgate$f $t" || { echo "FAIL optgate$f $t"; fail=1; }
+    build/cudc "$t" build/t_og.s $CUDC_FLAGS $f && build/fas -o build/t_og.o build/t_og.s && build/fld -o build/t_og build/t_og.o && build/t_og | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS optgate$f $t" || { echo "FAIL optgate$f $t"; fail=1; }
   done
 done
 # build-plan item 3 (a, c): block coverage of the fs optimizer passes; --check fails on any never-hit block not in
 # tools/optcov-allow.txt and on any stale allow-list entry (docs/tools-optcov.md, ~45 s)
-./forge tools/optcov.forge -o build/optcov-tool >/dev/null 2>&1 && build/optcov-tool --check > build/t_optcov.log 2>&1 && echo "PASS optimizer-coverage" || { echo "FAIL optimizer-coverage"; cat build/t_optcov.log; fail=1; }
+./cuditor tools/optcov.cud -o build/optcov-tool >/dev/null 2>&1 && build/optcov-tool --check > build/t_optcov.log 2>&1 && echo "PASS optimizer-coverage" || { echo "FAIL optimizer-coverage"; cat build/t_optcov.log; fail=1; }
 # constant division: in c_i64_7 and c_u64_641 only the three divisions by a variable keep div/idiv
-build/forgec tests/fs/cdiv.forge build/t_cd.s $FORGEC_FLAGS --fs-opt && [ "$(awk '/^c_i64_7:/,/ret$/' build/t_cd.s | grep -c '    idiv ')" = 3 ] && [ "$(awk '/^c_u64_641:/,/ret$/' build/t_cd.s | grep -c '    div ')" = 3 ] && echo "PASS fs-opt-cdiv-shape" || { echo "FAIL fs-opt-cdiv-shape"; fail=1; }
-# float globals take float or integer literals only (tests/fs/fglobals.forge checks the bits)
-printf '# forge: no-runtime\nK = 3\nx: f64 = K\n' > build/t_fgk.forge
-build/forgec build/t_fgk.forge build/t_fgk.s 2>&1 | grep -q "a float global's initializer must be a float or integer literal" && echo "PASS fs-float-global-literal-only" || { echo "FAIL fs-float-global-literal-only"; fail=1; }
+build/cudc tests/fs/cdiv.cud build/t_cd.s $CUDC_FLAGS --fs-opt && [ "$(awk '/^c_i64_7:/,/ret$/' build/t_cd.s | grep -c '    idiv ')" = 3 ] && [ "$(awk '/^c_u64_641:/,/ret$/' build/t_cd.s | grep -c '    div ')" = 3 ] && echo "PASS fs-opt-cdiv-shape" || { echo "FAIL fs-opt-cdiv-shape"; fail=1; }
+# float globals take float or integer literals only (tests/fs/fglobals.cud checks the bits)
+printf '# cuditor: no-runtime\nK = 3\nx: f64 = K\n' > build/t_fgk.cud
+build/cudc build/t_fgk.cud build/t_fgk.s 2>&1 | grep -q "a float global's initializer must be a float or integer literal" && echo "PASS fs-float-global-literal-only" || { echo "FAIL fs-float-global-literal-only"; fail=1; }
 # missing input / include files: clean diagnostic, exit 1, no crash
-printf 'include "no_such_file.fsi"\n' > build/t_inc.forge
-build/forgec build/t_inc.forge build/t_inc.s --freestanding > build/t_inc.txt 2>&1; rc=$?
-[ $rc = 1 ] && grep -q "^error: cannot read include file .*no_such_file.fsi" build/t_inc.txt && echo "PASS include-missing" || { echo "FAIL include-missing (rc=$rc)"; fail=1; }
-build/forgec build/no_such_input.forge build/t_inc.s > build/t_inc.txt 2>&1; rc=$?
+printf 'include "no_such_file.cudi"\n' > build/t_inc.cud
+build/cudc build/t_inc.cud build/t_inc.s --freestanding > build/t_inc.txt 2>&1; rc=$?
+[ $rc = 1 ] && grep -q "^error: cannot read include file .*no_such_file.cudi" build/t_inc.txt && echo "PASS include-missing" || { echo "FAIL include-missing (rc=$rc)"; fail=1; }
+build/cudc build/no_such_input.cud build/t_inc.s > build/t_inc.txt 2>&1; rc=$?
 [ $rc = 1 ] && grep -q "^error: cannot read input file" build/t_inc.txt && echo "PASS input-missing" || { echo "FAIL input-missing (rc=$rc)"; fail=1; }
 # tests/os: boot the Forge kernel (BIOS + UEFI via GRUB multiboot2) and the native EFI app in headless QEMU
 if [ -z "$SKIP_OS" ] && command -v qemu-system-x86_64 >/dev/null && command -v grub-mkrescue >/dev/null; then
@@ -162,7 +164,7 @@ elif [ -n "$SKIP_OS" ]; then
   echo "SKIP tests/os (SKIP_OS set: the $(grep -vc '^#' tests/os/expected-results.txt) OS results were not run, so this run is not a gate pass)"
 else
   # fail closed: a run without the OS-test toolchain must not look like a full pass (the gate harness reinstalls
-  # the tools with tools/ostools.forge before it starts; 2026-11-15 assessment)
+  # the tools with tools/ostools.cud before it starts; 2026-11-15 assessment)
   echo "FAIL tests/os (qemu-system-x86_64 or grub-mkrescue missing: build/ostools reinstalls them; SKIP_OS=1 skips on purpose)"; fail=1
 fi
 exit $fail

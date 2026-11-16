@@ -1,11 +1,11 @@
-# mkfont (tools/mkfont.forge)
+# mkfont (tools/mkfont.cud)
 
 This is the Forge port of `tools/mkfont.py`, which builds the kernel's 8×16 console font.
 
-    mkfont FONT.ttf OUT.fsi      writes OUT.fsi (u8[1520], ASCII 32..126) and previews 'F' and 'g' on stdout
+    mkfont FONT.ttf OUT.cudi      writes OUT.cudi (u8[1520], ASCII 32..126) and previews 'F' and 'g' on stdout
 
 The output is byte-identical to the PIL version: `mkfont /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf`
-reproduces `examples/kernel/font.fsi` exactly. Exit codes: 2 with a usage line on stderr for bad arguments, 1 if the
+reproduces `examples/kernel/font.cudi` exactly. Exit codes: 2 with a usage line on stderr for bad arguments, 1 if the
 font can't be read or uses something outside the supported subset.
 
 ## How it works
@@ -29,13 +29,13 @@ The program is hosted and contains no `@unsafe` code.
 
 ## Status and tests
 
-`tools/mkfont.py` stays as the reference. Nothing ran it at build time, because `font.fsi` is committed, so no
+`tools/mkfont.py` stays as the reference. Nothing ran it at build time, because `font.cudi` is committed, so no
 script needed switching.
 
 tests/mkfont/run.sh builds the tool and checks:
 
-- that its output is identical to `examples/kernel/font.fsi`;
-- when PIL is installed, that the `.fsi` and stdout match `mkfont.py` on DejaVu Sans Mono, Mono-Bold, Mono-Oblique and
+- that its output is identical to `examples/kernel/font.cudi`;
+- when PIL is installed, that the `.cudi` and stdout match `mkfont.py` on DejaVu Sans Mono, Mono-Bold, Mono-Oblique and
   Sans-Bold;
 - that a font needing an unimplemented opcode (DejaVu Serif) fails with exit 1.
 

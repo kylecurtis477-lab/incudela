@@ -1,0 +1,6 @@
+# expect: arrays/slices of own/ref/mut need per-element move tracking
+# cuditor: no-runtime
+struct Node:
+    value: u64
+struct Queue:
+    slots: own[Node][2][3]

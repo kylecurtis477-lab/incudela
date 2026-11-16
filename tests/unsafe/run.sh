@@ -1,22 +1,22 @@
 #!/bin/bash
-# Phase 4.3 unsafe gating: ok.forge builds and runs; each bad_*.forge is rejected with its "# expect:" text;
+# Phase 4.3 unsafe gating: ok.cud builds and runs; each bad_*.cud is rejected with its "# expect:" text;
 # the --unsafe-report counts of the freestanding programs must not grow past baseline.txt.
 cd "$(dirname "$0")"
-FC=$PWD/../../build/forgec
+FC=$PWD/../../build/cudc
 T=$(mktemp -d)
 fail=0
-if $FC ok.forge $T/ok.s && ../../build/fas -o $T/ok.o $T/ok.s && ../../build/fld -o $T/ok $T/ok.o && [ "$($T/ok)" = "unsafe ok" ]; then
+if $FC ok.cud $T/ok.s && ../../build/fas -o $T/ok.o $T/ok.s && ../../build/fld -o $T/ok $T/ok.o && [ "$($T/ok)" = "unsafe ok" ]; then
     echo "PASS unsafe-ok"
 else
     echo "FAIL unsafe-ok"; fail=1
 fi
-for f in bad_*.forge; do
+for f in bad_*.cud; do
     want=$(sed -n 's/^# expect: //p' $f)
     out=$($FC $f $T/x.s 2>&1)
     if [ $? -ne 0 ] && echo "$out" | grep -qF -- "$want"; then
-        echo "PASS unsafe-${f%.forge}"
+        echo "PASS unsafe-${f%.cud}"
     else
-        echo "FAIL unsafe-${f%.forge}: $out"; fail=1
+        echo "FAIL unsafe-${f%.cud}: $out"; fail=1
     fi
 done
 # baseline: "<dir> <file> <functions> <blocks> <ops> <asm>"
@@ -31,7 +31,7 @@ while read d f bf bb bo ba; do
     fi
 done < baseline.txt
 # provenance (v1.3): integer-to-pointer only inside @unsafe functions (--provenance-lint)
-out=$($FC prov_block.forge $T/p.s --provenance-lint 2>&1)
+out=$($FC prov_block.cud $T/p.s --provenance-lint 2>&1)
 if [ $? -ne 0 ] && echo "$out" | grep -qF "provenance lint failed"; then
     echo "PASS unsafe-prov-block"
 else

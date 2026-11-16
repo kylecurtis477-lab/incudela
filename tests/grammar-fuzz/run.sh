@@ -1,11 +1,11 @@
 #!/bin/sh
-# tools/grammar_fuzz.forge must be byte-identical to tools/grammar_fuzz.py (the reference): same
+# tools/grammar_fuzz.cud must be byte-identical to tools/grammar_fuzz.py (the reference): same
 # stdout and exit code, and the same generated build/fuzz tree (every valid/invalid program plus
-# the last a.json / b.json / p.forge), for several seeds including 0, a multi-word seed and a
+# the last a.json / b.json / p.cud), for several seeds including 0, a multi-word seed and a
 # negative one (Python seeds with abs()).
 cd "$(dirname "$0")/../.." || exit 1
 B=build/grammar-fuzz; T=$(mktemp -d); trap 'rm -rf $T' EXIT; mkdir -p $B
-build/forgec tools/grammar_fuzz.forge $B/gf.s && build/fas -o $B/gf.o $B/gf.s && build/fld --base 0x100000000000 -o $B/grammar_fuzz $B/gf.o || { echo "FAIL grammar-fuzz-port/build"; exit 1; }
+build/cudc tools/grammar_fuzz.cud $B/gf.s && build/fas -o $B/gf.o $B/gf.s && build/fld --base 0x100000000000 -o $B/grammar_fuzz $B/gf.o || { echo "FAIL grammar-fuzz-port/build"; exit 1; }
 fail=0
 for sn in "1 160" "2 40" "3 40" "0 30" "1099511627783 30" "-5 30" "123456789 1"; do
   set -- $sn

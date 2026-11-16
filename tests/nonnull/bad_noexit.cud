@@ -1,0 +1,9 @@
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+# expect: before indexing
+g: nptr[u64]
+def main() -> u64:
+    p = g
+    if p == 0:
+        puts("null")
+    return p[0]

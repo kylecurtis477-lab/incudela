@@ -1,4 +1,4 @@
-# optcov (tools/optcov.forge)
+# optcov (tools/optcov.cud)
 
 Block coverage of the freestanding backend's optimizer passes: build-plan item 3 (optimizer correctness gate),
 parts (a) and (c). It answers "which code paths of each optimizer pass does our test corpus actually reach?",
@@ -9,20 +9,20 @@ unreachable.
 
 ## How it works
 
-1. It instruments `selfhost/forgec.forge` (the compiler source plus the embedded prelude and runtime; its first
-   lines are exactly `selfhost/compiler.forge`, so line numbers in the report point into compiler.forge). Every
+1. It instruments `selfhost/cudc.cud` (the compiler source plus the embedded prelude and runtime; its first
+   lines are exactly `selfhost/compiler.cud`, so line numbers in the report point into compiler.cud). Every
    block of the optimizer functions gets a counter: the function body, and the body of every `if`, `elif`, `else`,
    `while` and `for`. The counters are added into `build/optcov/counts.txt` when a freestanding compile finishes
    (a compile error adds nothing).
-2. It builds that compiler (`build/optcov/forgec-cov`) with build/forgec, build/fas and build/fld. The
-   instrumented compiler produces byte-identical assembly to build/forgec (checked on the kernel, default and
+2. It builds that compiler (`build/optcov/cudc-cov`) with build/cudc, build/fas and build/fld. The
+   instrumented compiler produces byte-identical assembly to build/cudc (checked on the kernel, default and
    `--fs-temps`).
 3. It compiles the corpus with it under five configurations: default, `--fs-opt`, `--fs-live`, `--fs-temps` and
    `--no-bounds`. The corpus is every freestanding program in tests/ and examples/ that should compile (bad_*,
    invalid/, diag/ and errors/ cases are left out), plus the fsfuzz programs in build/fsfuzz if a
    `fsfuzz --keep` run left them there.
 4. It writes the report: per pass group and per function, blocks hit out of blocks total, then every block that
-   was never hit, with its compiler.forge line and header.
+   was never hit, with its compiler.cud line and header.
 
 Pass groups: the `--fs-opt` allocator (`fs_regalloc`, `fs_ra_*`), its peepholes (`fs_rapeep`), `--fs-live`
 liveness (`fs_lv_*`), `--fs-temps` (`fs_tmp_*`), constant division by magic numbers (`fs_cdiv_try`, used under
@@ -43,7 +43,7 @@ the result depends only on the tree, then compares the blocks never hit with the
   (`CHECK stale ... now covered, remove it`): the list cannot hide a path that is reachable.
 
 Allow-list lines are `function | block header | reason`. The header is the block's `if`/`elif`/`else`/`while`/
-`for` line as written in selfhost/compiler.forge, stripped; when a function has several blocks with the same header
+`for` line as written in selfhost/compiler.cud, stripped; when a function has several blocks with the same header
 the entry ends with ` #N` (N-th in source order, from 1; `--check` prints the key it wants). Entries are keyed by
 text, not line numbers, so compiler edits elsewhere do not touch the list.
 
@@ -54,9 +54,9 @@ of the corpus, and run_tests.sh builds and runs every tests/optgate program unde
 ## Registry and landing rule (part d)
 
 `--registry` (also run first by `--check`, so run_tests.sh `optimizer-coverage` covers it) reads
-selfhost/compiler.forge without compiling anything and fails when
+selfhost/compiler.cud without compiling anything and fails when
 
-- the compiler parses a `--fs-*` option that is not one of optcov's configurations, or that tools/fsfuzz.forge
+- the compiler parses a `--fs-*` option that is not one of optcov's configurations, or that tools/fsfuzz.cud
   does not mention (so the combination fuzzer would never build with it);
 - a line that tests a pass switch (`if`/`elif`/`while` naming `fs_ra`, `fs_live`, `fs_temps` or, since the -O0
   commit, `fs_elide`) calls, or its
@@ -81,7 +81,7 @@ Of the 32 blocks never hit in the part (a) report, 2 were reachable and 30 are n
 
 - Reachable: the pin table limit. A function with no unsafe operation that names more than 4096 frame offsets in
   `lea`/other %rbp forms fills `fsp_pin`; `fs_ra_pin` returns -1 and `fs_regalloc` gives up on the function.
-  `tests/optgate/pins.forge` reads a frame array 4224 times in one function and covers both blocks (`fs_ra_pin:
+  `tests/optgate/pins.cud` reads a frame array 4224 times in one function and covers both blocks (`fs_ra_pin:
   if npin >= 4096` and `fs_regalloc: if npin < 0`); its output is the same under every level.
 - Unreachable, 29 defensive bail-outs and 1 capacity limit, each listed with its reason in tools/optcov-allow.txt.
   The defensive ones re-check the shape of text the fs code generator itself emits (every jump targets an
@@ -139,7 +139,7 @@ per function (hit / blocks):
   fs_tmp_call: 21 / 27
   fs_tmp_isld: 3 / 3
 
-blocks never hit (compiler.forge line: header):
+blocks never hit (compiler.cud line: header):
   18388 fs_cdiv_try: if not (str_eq(o, "/") or str_eq(o, "//") or str_eq(o, "%")):
   19817 fs_ra_slot: if not ends(o, "(%rbp)"):
   19820 fs_ra_slot: if len(t) == 0:
@@ -184,9 +184,9 @@ blocks never hit (compiler.forge line: header):
 - The only `fs_cdiv_try` block never hit is its "not a division" early return: callers already filter for `/`,
   `//` and `%`.
 - Finding (fixed 2026-11-13, "fix(fs): -O0 turns off bounds-check elision"): `-O0` changed nothing in freestanding
-  mode. The fs backend ignored `opt_on` (it only drives the hosted optimizer), so `forgec x.forge out.s -O0` gives byte-identical assembly to the default build for every
+  mode. The fs backend ignored `opt_on` (it only drives the hosted optimizer), so `cudc x.cud out.s -O0` gives byte-identical assembly to the default build for every
   freestanding program (checked on the kernel). Half of the eight fsfuzz builds per program were therefore
-  duplicates, and run_tests.sh's `FORGEC_FLAGS=-O0` pass does not exercise a different code generator for the
+  duplicates, and run_tests.sh's `CUDC_FLAGS=-O0` pass does not exercise a different code generator for the
   kernel or user programs. The combination fuzzer counts distinct assemblies instead of builds. Now `-O0` turns off
   the only default-on fs optimization, bounds-check elision (constant indices and `fs_bsafe` loop facts), so every
   check is kept; the opt-in `--fs-*` passes still run when named (see docs/SYSTEMS.md, "Optimization levels").

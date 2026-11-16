@@ -8,23 +8,23 @@ B=../../build/kernel; mkdir -p $B/iso/boot/grub
 klink() {
     ../../build/fld --format kernel -o $1.elf $1.o
 }
-# the user programs: examples/user/build.forge, BusyBox via build/busybox-build (tools/busybox/build.forge);
+# the user programs: examples/user/build.cud, BusyBox via build/busybox-build (tools/busybox/build.cud);
 # examples/user/build.sh and tools/busybox/build.sh are kept as the references (tests/user-build, tests/busybox-build)
-../../forge ../../tools/busybox/build.forge -o ../../build/busybox-build
-../../forge ../user/build.forge -o ../../build/user-build
+../../cuditor ../../tools/busybox/build.cud -o ../../build/busybox-build
+../../cuditor ../user/build.cud -o ../../build/user-build
 ../../build/user-build
-# the test modules: examples/modules/build.forge (examples/modules/build.sh is kept as the reference;
+# the test modules: examples/modules/build.cud (examples/modules/build.sh is kept as the reference;
 # tests/modules-build checks they produce identical artifacts)
-../../forge ../modules/build.forge -o ../../build/modules-build
+../../cuditor ../modules/build.cud -o ../../build/modules-build
 ../../build/modules-build
-../../build/forgec kernel.forge $B/kernel.s --fs-temps $FORGEC_FLAGS
+../../build/cudc kernel.cud $B/kernel.s --fs-temps $CUDC_FLAGS
 ../../build/fas -I ../../build/user -o $B/kernel.o $B/kernel.s
 klink $B/kernel
 grub-file --is-x86-multiboot2 $B/kernel.elf
 # a genuinely different build for the kexec test (\EFI\Forge\kernel-next.elf): another version string
-sed 's/"forge-kernel 0.2.6"/"forge-kernel 0.2.6-next"/' kernel.forge > .kernel_next.forge
-grep -q '"forge-kernel 0.2.6-next"' .kernel_next.forge
-../../build/forgec .kernel_next.forge $B/kernel-next.s --fs-temps $FORGEC_FLAGS; rm -f .kernel_next.forge
+sed 's/"forge-kernel 0.2.6"/"forge-kernel 0.2.6-next"/' kernel.cud > .kernel_next.cud
+grep -q '"forge-kernel 0.2.6-next"' .kernel_next.cud
+../../build/cudc .kernel_next.cud $B/kernel-next.s --fs-temps $CUDC_FLAGS; rm -f .kernel_next.cud
 ../../build/fas -I ../../build/user -o $B/kernel-next.o $B/kernel-next.s
 klink $B/kernel-next
 cmp -s $B/kernel.elf $B/kernel-next.elf && { echo "kernel-next.elf is identical to kernel.elf"; exit 1; }

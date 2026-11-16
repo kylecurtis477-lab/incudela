@@ -1,4 +1,4 @@
-/* C side of tests/fs/cabi.forge: built with gcc -ffreestanding, linked with the Forge object */
+/* C side of tests/fs/cabi.cud: built with gcc -ffreestanding, linked with the Forge object */
 typedef unsigned long u64;
 extern long forge_mix(long a, unsigned char b, short c, unsigned d, long e, long f);
 extern void puts(const char *s);

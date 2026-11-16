@@ -1,4 +1,4 @@
-# ostools (tools/ostools.forge)
+# ostools (tools/ostools.cud)
 
 Checks the OS-test toolchain before a gate, and reinstalls it if a box reset removed it.
 

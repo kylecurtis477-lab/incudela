@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/bzip2: tools/busybox/bzip2.forge (built to build/bzip2; what tools/busybox/build.forge puts on the
+# tests/bzip2: tools/busybox/bzip2.cud (built to build/bzip2; what tools/busybox/build.cud puts on the
 # BusyBox build's PATH for tar -xjf) must be byte-identical to the tools/busybox/bzip2 shim (Python's bz2,
 # kept as the reference): compress at -9 and decompress `-d`, same stdout and exit code, and on bad input
 # the same last stderr line (the Python exception). Inputs cover empty and tiny data, RLE1 run edges
@@ -10,7 +10,7 @@
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 fail=0
-./forge tools/busybox/bzip2.forge -o build/bzip2 >/dev/null || { echo "FAIL bzip2 build"; exit 1; }
+./cuditor tools/busybox/bzip2.cud -o build/bzip2 >/dev/null || { echo "FAIL bzip2 build"; exit 1; }
 python3 - "$T" <<'PY' || { echo "FAIL bzip2 inputs"; exit 1; }
 import bz2, random, sys
 t = sys.argv[1]
@@ -20,7 +20,7 @@ c = {"empty": b"", "one": b"a", "ab": b"ab", "run4": b"aaaa", "run5": b"aaaaa", 
      "run-edges": b"q" * 259 + b"r" * 4 + b"s" * 255 + b"t" * 256, "hello": b"hello world\n" * 50,
      "periodic3": b"abc" * 5000, "periodic3-big": b"abc" * 20000, "periodic7-2blk": b"xyzzy12" * 200000,
      "zeros-1m": bytes(1000000), "random1k": rb(1000), "random20k": rb(20000), "random-1m": rb(1000000),
-     "allbytes": bytes(range(256)) * 40, "text": open("tools/busybox/bzip2.forge", "rb").read() * 20,
+     "allbytes": bytes(range(256)) * 40, "text": open("tools/busybox/bzip2.cud", "rb").read() * 20,
      "runs": b"".join(bytes([r.randrange(4)]) * r.randrange(1, 300) for _ in range(20000)),
      "skewed": bytes(r.choice(b"aaaaaaaabbbbccd\n") for _ in range(300000))}
 for k, v in c.items():

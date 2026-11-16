@@ -1,8 +1,8 @@
 # The living object store (Phase 9)
 
-Sources: `examples/kernel/obj.fsi` (the store core and write-ahead log, in fully safe Forge and shared by the
-kernel and hosted tests) and `examples/kernel/objd.fsi` (persistence on the Forge partition, kernel only).
-Tests: `tests/fs/objstore.forge`, `tests/fs/objlog.forge`, and `os/objstore-crash-recover` in `tests/os/forgefs.sh`.
+Sources: `examples/kernel/obj.cudi` (the store core and write-ahead log, in fully safe Forge and shared by the
+kernel and hosted tests) and `examples/kernel/objd.cudi` (persistence on the Forge partition, kernel only).
+Tests: `tests/fs/objstore.cud`, `tests/fs/objlog.cud`, and `os/objstore-crash-recover` in `tests/os/forgefs.sh`.
 
 ## Model
 - **Types**: `ob_type_def(t, nfields)` fixes the field count of type `t`, with `t` below `OB_NT`.
@@ -18,10 +18,10 @@ Tests: `tests/fs/objstore.forge`, `tests/fs/objlog.forge`, and `os/objstore-cras
   - `obj_diff(o, t1, t2)` compares an object at two times, and `obj_nversions(o)` counts its versions.
 - **Search (9.3)**: `obj_find(t, field, value, start)`, `obj_text_find(term, start)` and `obj_type_first`/`obj_type_next` go through indexes (below); `obj_find_scan` is the linear reference.
 
-Capacities are consts that the includer defines before `include "obj.fsi"` (a missing one is a compile
+Capacities are consts that the includer defines before `include "obj.cudi"` (a missing one is a compile
 error): `OB_NT` types, `OB_NO` objects, `OB_NV` versions, `OB_NB` blobs, `OB_NW` blob words, `OB_NL` log words,
 `OB_HB` blob-hash slots (power of two, at least 2 x `OB_NB`), `OB_NX` index entries and `OB_HX` index-hash slots
-(power of two). The kernel uses 32 / 256 / 2048 / 1024 / 16384 / 32768 / 2048 / 8192 / 16384; tests/fs/objindex.forge
+(power of two). The kernel uses 32 / 256 / 2048 / 1024 / 16384 / 32768 / 2048 / 8192 / 16384; tests/fs/objindex.cud
 sizes the store for 100k objects. `OB_MAXW` (64 words per payload) is fixed. When a table is full, the call returns `OB_ERR`.
 
 ## Indexes (9.3)
@@ -38,7 +38,7 @@ All indexes are derived state, maintained in `ob_add_ver`, so writes, rewinds an
   digits and `_`, case-folded, hashed with FNV-1a (`ob_term_start`, `ob_term_byte`), and indexed under the pseudo
   field `OB_TXF`. `obj_text_find(h, start)` re-scans each candidate's current text, so it never returns a stale match.
 - **Overflow**: if `OB_NX` entries run out, `ob_ixfull` is set and lookups fall back to scanning, so answers stay correct.
-- **Latency** (tests/fs/objindex.forge, 100,100 objects, rdtsc cycles per lookup on the build box): indexed field
+- **Latency** (tests/fs/objindex.cud, 100,100 objects, rdtsc cycles per lookup on the build box): indexed field
   lookup about 50, full-text lookup about 21,000 (about 100 candidates rechecked), linear scan about 1,500,000. The
   test requires the index to be at least 50x and full-text at least 20x faster than the scan.
 
@@ -58,7 +58,7 @@ Records only refer to earlier ones, so any prefix of the log is a consistent sto
 arrives out of order, and truncates the log there.
 
 ## On disk (9.2b)
-`objd.fsi` keeps the log in a single Forge FS file, `objects.log`. The file is `OD_NB` logical blocks (65, two encrypted slots each since Phase 10.1, see docs/privacy.md), reserved and zero-filled
+`objd.cudi` keeps the log in a single Forge FS file, `objects.log`. The file is `OD_NB` logical blocks (65, two encrypted slots each since Phase 10.1, see docs/privacy.md), reserved and zero-filled
 up front. It lives on the explicitly created Forge-owned partition (see the Forge FS) and is never written anywhere else.
 - `od_open()` replays an existing log. If the log ends in a torn tail, it zeroes the tail both in memory and on disk, so later appends
   can't revive stale records. If there's no log, it creates one.
@@ -68,7 +68,7 @@ up front. It lives on the explicitly created Forge-owned partition (see the Forg
   before returning. Once a commit has returned, it is durable.
 
 ## System rewind (9.4)
-`objd.fsi` keeps a small "system configuration" as type 2 objects (`OD_NCFG` 8 slots; field 0 = slot,
+`objd.cudi` keeps a small "system configuration" as type 2 objects (`OD_NCFG` 8 slots; field 0 = slot,
 field 1 = 100 + slot, field 2 = 1 when healthy) and `od_health()` counts broken slots.
 - Boot 2 (after crash recovery) creates the slots, notes the last good clock and state fingerprint (`od_sfp`, the
   payload fingerprint without the clock), then commits a bad change durably: every slot broken and object 1
@@ -79,7 +79,7 @@ field 1 = 100 + slot, field 2 = 1 when healthy) and `od_health()` counts broken 
   which must equal boot 2's `boot done` fingerprint.
 
 ## Files as objects and the /obj VFS view (9.5)
-`examples/kernel/objfs.fsi` (safe Forge, shared by the kernel and the hosted test) stores a file as one object of
+`examples/kernel/objfs.cudi` (safe Forge, shared by the kernel and the hosted test) stores a file as one object of
 type `OFS_T` = 3 with `OB_MAXW` fields:
 
 | field | contents |
@@ -93,7 +93,7 @@ API: `ofs_init()` (defines the type once), `ofs_lookup()` (file named `ofs_nm`),
 with `ofs_buf[0:n]`; every write is a new version), `ofs_read_at(o, ts)` and `ofs_name_of(o, ts)`. Because files are
 ordinary objects, `obj_read_at`, `obj_rewind` and `sys_rewind` apply to them unchanged.
 
-`proc.fsi` serves them read-only under `/obj` through the normal `open`/`stat`/`read`/`getdents` syscalls:
+`proc.cudi` serves them read-only under `/obj` through the normal `open`/`stat`/`read`/`getdents` syscalls:
 - `/obj` lists the files (getdents records like FAT32 directories; is_dir 0), `/obj/<name>` opens one,
 - `/obj/@<clock>/<name>` opens a file as it was at that clock and `/obj/@<clock>` lists the files as of then.
 - A handle (`F_OBJ` / `F_ODIR`) records its clock at open, so later writes never change what it reads.
@@ -101,12 +101,12 @@ ordinary objects, `obj_read_at`, `obj_rewind` and `sys_rewind` apply to them unc
 - `ofs_m` serialises all objfs access from syscalls and the boot test.
 
 ## Testing
-- `tests/fs/objstore.forge` covers versions, dedup, rewind, diff and find.
-- `tests/fs/objindex.forge` builds 100k objects and checks field, type and text lookups against the scan,
+- `tests/fs/objstore.cud` covers versions, dedup, rewind, diff and find.
+- `tests/fs/objindex.cud` builds 100k objects and checks field, type and text lookups against the scan,
   across an update, a rewind and a log replay, plus the latency ratios.
-- `tests/fs/objlog.forge` replays every possible cut and every single-bit flip, then checks that writes after
+- `tests/fs/objlog.cud` replays every possible cut and every single-bit flip, then checks that writes after
   recovery work.
-- tests/fs/objfs.forge (hosted): create, overwrite, lookup among 200 files, reads as of old clocks, size limit, a
+- tests/fs/objfs.cud (hosted): create, overwrite, lookup among 200 files, reads as of old clocks, size limit, a
   system rewind of every file and log replay.
 - `os/objfs-vfs-view` and `os/objfs-persists` (tests/os/forgefs.sh boots 2 and 3) cover 9.5 through the /obj path resolver.
 - `os/objstore-system-rewind` and `os/objstore-rewind-persists` (tests/os/forgefs.sh, boots 2 and 3) cover 9.4.

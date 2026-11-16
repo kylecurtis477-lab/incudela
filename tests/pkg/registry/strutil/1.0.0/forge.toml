@@ -1,6 +1,0 @@
-[package]
-name = "strutil"
-version = "1.0.0"
-files = ["strutil.forge"]
-[dependencies]
-mathx = "^1.0"

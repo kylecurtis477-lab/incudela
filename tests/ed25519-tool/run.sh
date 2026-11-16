@@ -1,10 +1,10 @@
 #!/bin/sh
-# tools/ed25519.forge must produce byte-identical public keys and signatures to tools/ed25519.py
+# tools/ed25519.cud must produce byte-identical public keys and signatures to tools/ed25519.py
 # (the reference), over RFC 8032 vectors, random seeds of several lengths and message sizes that
 # cross SHA-512 block and the tool's 64 KiB read-buffer boundaries; plus usage/IO errors.
 cd "$(dirname "$0")/../.." || exit 1
 B=build/ed25519-tool; T=$(mktemp -d); trap 'rm -rf $T' EXIT; mkdir -p $B
-build/forgec tools/ed25519.forge $B/ed.s && build/fas -o $B/ed.o $B/ed.s && build/fld -o $B/ed25519 $B/ed.o || { echo "FAIL ed25519-tool/build"; exit 1; }
+build/cudc tools/ed25519.cud $B/ed.s && build/fas -o $B/ed.o $B/ed.s && build/fld -o $B/ed25519 $B/ed.o || { echo "FAIL ed25519-tool/build"; exit 1; }
 fail=0
 python3 - "$T" <<'P' || fail=1
 import os, sys, random

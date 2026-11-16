@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render ASCII 32..126 of DejaVu Sans Mono (Bitstream Vera license) into an 8x16 1-bpp bitmap font
 and write it as a Forge include (u8[1536] global, 16 bytes per glyph, MSB = leftmost pixel).
-usage: mkfont.py font.ttf out.fsi"""
+usage: mkfont.py font.ttf out.cudi"""
 import sys
 from PIL import Image, ImageDraw, ImageFont
 ttf, out = sys.argv[1], sys.argv[2]

@@ -3,14 +3,14 @@
 set -e
 cd "$(dirname "$0")"
 B=../../build/modules; mkdir -p $B
-# the sealer: tools/forgeseal.forge (tools/forgeseal.py is kept as the reference; tests/forgeseal)
-S=../../build/forgeseal
-../../build/forgec ../../tools/forgeseal.forge $S.s && ../../build/fas -o $S.o $S.s && ../../build/fld --base 0x100000000000 -o $S $S.o
+# the sealer: tools/cudseal.cud (tools/cudseal.py is kept as the reference; tests/cudseal)
+S=../../build/cudseal
+../../build/cudc ../../tools/cudseal.cud $S.s && ../../build/fas -o $S.o $S.s && ../../build/fld --base 0x100000000000 -o $S $S.o
 for m in hello badabi unresolved newer tty1 tty2 getpid2; do
-  ../../build/forgec $m.forge $B/$m.s --fs-opt $FORGEC_FLAGS
+  ../../build/cudc $m.cud $B/$m.s --fs-opt $CUDC_FLAGS
   ../../build/fas -o $B/$m.ko $B/$m.s
   cp $B/$m.ko $B/$m.raw
-  $S --module $m.forge $B/$m.ko ../../build/user/seal.key ../../tests/unsafe/baseline.txt >/dev/null
+  $S --module $m.cud $B/$m.ko ../../build/user/seal.key ../../tests/unsafe/baseline.txt >/dev/null
 done
 # negative modules: unsealed, one code byte flipped after sealing, a sealed user program
 cp $B/hello.raw $B/unsealed.ko

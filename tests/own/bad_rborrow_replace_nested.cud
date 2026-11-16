@@ -1,0 +1,59 @@
+# expect: cannot replace() through `h` while it is borrowed
+# cuditor: no-runtime
+include "../fs/linux.cudi"
+struct Node:
+    id: u64
+    next: own[Node]
+    slot: nown[Node]
+struct Holder:
+    n: u64
+    head: own[Node]
+    slot: nown[Node]
+struct Local:
+    n: u64
+    head: own[Node]
+mem: u64[24]
+hmem: u64[3]
+@unsafe
+def init() -> u64:
+    i = 0
+    while i < 8:
+        mem[3 * i] = i
+        mem[3 * i + 1] = u64(addr(mem[3 * ((i + 1) % 8)]))
+        i = i + 1
+    return 0
+@unsafe
+def mk(i: u64) -> own[Node]:
+    return own[Node](ptr[Node](addr(mem[3 * i])))
+@unsafe
+def mkh() -> own[Holder]:
+    hmem[1] = u64(addr(mem[3]))
+    return own[Holder](ptr[Holder](addr(hmem)))
+def consume(x: own[Node]) -> u64:
+    return x.id
+def eat(x: own[Holder]) -> u64:
+    return x.n
+def drop(x: nown[Node]) -> u64:
+    if x == 0:
+        return 0
+    return consume(x)
+def peek(x: ref[Node]) -> u64:
+    return x.id + x.next.id
+def bump(x: mut[Node]) -> u64:
+    x.id = x.id + 1
+    return x.id
+def two(a: mut[Node], b: ref[Node]) -> u64:
+    return a.id + b.id
+def twom(a: mut[Node], b: mut[Node]) -> u64:
+    return a.id + b.id
+def tworef(a: ref[Node], b: ref[Node]) -> u64:
+    return a.id + b.id
+def withn(a: ref[Node], n: u64) -> u64:
+    return a.id + n
+def hm(m: mut[Holder]) -> u64:
+    m.n = 1
+    return 0
+def t(h: own[Holder]) -> u64:
+    b = borrow(h.head.next)
+    x = replace(h.head.slot, mk(4))
+    return peek(b) + drop(x)

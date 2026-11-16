@@ -4,7 +4,7 @@ The kernel keeps device state and journals. Decoding and command building run in
 A driver can crash or be hot-swapped for a different implementation without losing input or I/O, and its state survives kexec.
 
 ## Input: kbdd (gap 1)
-Sources: `examples/kernel/kbd.fsi`, `examples/user/kbdd.forge` (v1), and `examples/user/kbdd2.forge` (v2).
+Sources: `examples/kernel/kbd.cudi`, `examples/user/kbdd.cud` (v1), and `examples/user/kbdd2.cud` (v2).
 - **Kernel side.** The PS/2 and COM1 IRQ handlers only append raw bytes to a 256-entry journal. Each entry is `kind<<8 | byte`, where kind 0 is a PS/2 scan code and kind 1 is a serial byte.
 - **Driver side.** The driver (DRV_KBD, caps(drv), no root fd) decodes scan-code set 1, shift and E0 prefixes, and CR→LF.
 - **Syscalls.** All three need CAPB_DRV and only work for the registered pid.
@@ -18,7 +18,7 @@ Sources: `examples/kernel/kbd.fsi`, `examples/user/kbdd.forge` (v1), and `exampl
 - **Crash hook.** `crash k N` (syscall 408 b=1) arms a fault on the batch that holds the N-th entry. It is gated by ktest_hooks.
 
 ## NVMe: nvmed (gap 2)
-Sources: `examples/kernel/nvsvc.fsi`, `examples/user/nvmed.forge`, and `examples/user/nvmed2.forge`.
+Sources: `examples/kernel/nvsvc.cudi`, `examples/user/nvmed.cud`, and `examples/user/nvmed2.cud`.
 - **Kernel side.** `nvme_read`, `nvme_write` and `nvme_flush` post requests through `nv_io` and `nvs_call`.
 - **Syscalls.** All need CAPB_DRV and only work for the registered pid.
   - 414 recv: takes a request. A return of 0 means quiesce.

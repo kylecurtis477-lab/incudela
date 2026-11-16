@@ -30,8 +30,11 @@ mkdir -p $O/build/user && cp build/user/seal.key build/user/seal2.key $O/build/u
 ( cd $O && ./build.sh ) > $L/kxcompat-build.log 2>&1
 grep -q "^SEED OK" $L/kxcompat-build.log || fail_all "old compiler build, see $L/kxcompat-build.log"
 grep -q "fas: " $L/kxcompat-build.log && fail_all "old compiler build has fas errors, see $L/kxcompat-build.log"
-( cd $O && ./forge examples/kernel/build.forge -o build/kernel-build && build/kernel-build && \
-  ./forge examples/efi/build.forge -o build/efi-build && build/efi-build ) >> $L/kxcompat-build.log 2>&1 || fail_all "old kernel/efi build, see $L/kxcompat-build.log"
+# the old tree is driven by its own names (before the Cuditor rename: ./forge and .forge sources)
+X=cud; [ -f $O/examples/kernel/build.cud ] || X=forge
+DRV=./cuditor; [ -x $O/cuditor ] || DRV=./forge
+( cd $O && $DRV examples/kernel/build.$X -o build/kernel-build && build/kernel-build && \
+  $DRV examples/efi/build.$X -o build/efi-build && build/efi-build ) >> $L/kxcompat-build.log 2>&1 || fail_all "old kernel/efi build, see $L/kxcompat-build.log"
 [ -f $O/build/kernel/forge.iso ] && [ -f $O/build/efi/disk.img ] || fail_all "old artifacts missing"
 cmp -s $O/build/kernel/kernel.elf build/kernel/kernel.elf && fail_all "the old kernel.elf is identical to this tree's"
 cmp -s $O/build/user/seal.pub build/user/seal.pub || fail_all "old and new builds trust different seal keys"

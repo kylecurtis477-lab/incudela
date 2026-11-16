@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scripted LSP session against `forge lsp` (Phase 7.5). Prints PASS/FAIL lines; exit 1 on failure."""
+"""Scripted LSP session against `cuditor lsp` (Phase 7.5). Prints PASS/FAIL lines; exit 1 on failure."""
 import json, os, subprocess, sys, shutil, tempfile, select, time
 
 D = os.path.dirname(os.path.abspath(__file__))
@@ -7,12 +7,12 @@ ROOT = os.path.dirname(os.path.dirname(D))
 tmp = tempfile.mkdtemp()
 proj = os.path.join(tmp, "proj")
 shutil.copytree(os.path.join(D, "proj"), proj)
-MAIN = os.path.join(proj, "main.forge")
-UTIL = os.path.join(proj, "util.forge")
+MAIN = os.path.join(proj, "main.cud")
+UTIL = os.path.join(proj, "util.cud")
 uri = lambda p: "file://" + p
 fails = 0
 
-srv = subprocess.Popen([os.path.join(ROOT, "forge"), "lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+srv = subprocess.Popen([os.path.join(ROOT, "cuditor"), "lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 buf = b""
 nid = [0]
 
@@ -89,7 +89,7 @@ try:
     check("initialize", caps.get("definitionProvider") and caps.get("hoverProvider") and caps.get("textDocumentSync", {}).get("change") == 2 and caps.get("referencesProvider") and caps.get("renameProvider") and "." in caps.get("completionProvider", {}).get("triggerCharacters", []), r)
     notify("initialized", {})
     text = open(MAIN).read()
-    notify("textDocument/didOpen", {"textDocument": {"uri": uri(MAIN), "languageId": "forge", "version": 1, "text": text}})
+    notify("textDocument/didOpen", {"textDocument": {"uri": uri(MAIN), "languageId": "cuditor", "version": 1, "text": text}})
     d = diags_for(uri(MAIN))
     check("clean-file-no-diagnostics", d == [], d)
 
@@ -99,7 +99,7 @@ try:
     d = diags_for(uri(MAIN))
     want = pos_of(bad, "\"oops\"")
     check("type-error-diagnostic", len(d) == 1 and d[0]["code"] == "E0302" and d[0]["range"]["start"] == want and d[0]["severity"] == 1 and "incompatible types" in d[0]["message"], d)
-    check("no-temp-files-left", sorted(os.listdir(proj)) == ["main.forge", "util.forge"], os.listdir(proj))
+    check("no-temp-files-left", sorted(os.listdir(proj)) == ["main.cud", "util.cud"], os.listdir(proj))
     check("disk-file-untouched", open(MAIN).read() == text)
 
     # a syntax error, then an undefined name
@@ -143,7 +143,7 @@ try:
     h = hover("add(i")
     check("hover-function-signature-doc", h and "def add(a: int, b: int) -> int" in h and "Add two ints." in h, h)
     h = hover("shout(\"hi", 0, 2)
-    check("hover-imported-function", h and "def shout(s: str) -> str" in h and "Upper-case s" in h and "util.forge:1" in h, h)
+    check("hover-imported-function", h and "def shout(s: str) -> str" in h and "Upper-case s" in h and "util.cud:1" in h, h)
     h = hover("a + b", 0, 0)
     check("hover-parameter-type", h and "(parameter) a: int" in h, h)
 
@@ -154,7 +154,7 @@ try:
     check("definition-attr-annotated-param", r and r["uri"] == uri(UTIL) and r["range"]["start"] == pos_of(ut, "inc("), r)
     h = hover("inc(2", 0, 1)
     check("hover-method", h and "def inc(self, k: int) -> int" in h and "Add k and return" in h, h)
-    notify("textDocument/didOpen", {"textDocument": {"uri": uri(UTIL), "languageId": "forge", "version": 1, "text": ut}})
+    notify("textDocument/didOpen", {"textDocument": {"uri": uri(UTIL), "languageId": "cuditor", "version": 1, "text": ut}})
     d = diags_for(uri(UTIL))
     r = request("textDocument/definition", {"textDocument": {"uri": uri(UTIL)}, "position": pos_of(ut, "self.n + k", 0, 5)}).get("result")
     check("definition-self-attribute", r and r["uri"] == uri(UTIL) and r["range"]["start"] == pos_of(ut, "n = 0"), r)

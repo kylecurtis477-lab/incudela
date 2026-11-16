@@ -1,4 +1,4 @@
-# ed25519 (tools/ed25519.forge)
+# ed25519 (tools/ed25519.cud)
 
 This is the Forge port of the signing side of `tools/ed25519.py` (RFC 8032 Ed25519).
 
@@ -11,8 +11,8 @@ This is the Forge port of the signing side of `tools/ed25519.py` (RFC 8032 Ed255
 
 ## How it works
 
-It's a freestanding (`# forge: no-runtime`) Linux program with its own `_start` and raw syscalls. It includes
-`examples/kernel/ed25519.fsi`, the kernel's verifier (a TweetNaCl port), and reuses that file's SHA-512,
+It's a freestanding (`# cuditor: no-runtime`) Linux program with its own `_start` and raw syscalls. It includes
+`examples/kernel/ed25519.cudi`, the kernel's verifier (a TweetNaCl port), and reuses that file's SHA-512,
 GF(2^255-19) and point code. On top of that it adds:
 
 - key clamping
@@ -22,8 +22,8 @@ The only `@unsafe` code reads argv and makes the syscalls.
 
 ## Status and tests
 
-`tools/ed25519.py` stays as the reference. The keypair step (`ed_key`) and `sc_muladd` live in `tools/ed25519sign.fsi`,
-shared with `tools/forgeseal.forge`, which signs seal trailers with the same code.
+`tools/ed25519.py` stays as the reference. The keypair step (`ed_key`) and `sc_muladd` live in `tools/ed25519sign.cudi`,
+shared with `tools/cudseal.cud`, which signs seal trailers with the same code.
 
 tests/ed25519-tool/run.sh compares the output byte for byte with the Python version on 26 vectors and checks the
 RFC 8032 known answers. tests/ed25519 still checks the kernel verifier against `cryptography`.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Minimal pure-Python Ed25519 (RFC 8032 reference algorithm) for build-time signing.
-# Sign-side only; the kernel verifies with examples/kernel/ed25519.fsi.
+# Sign-side only; the kernel verifies with examples/kernel/ed25519.cudi.
 import hashlib
 p = 2**255 - 19
 L = 2**252 + 27742317777372353535851937790883648493

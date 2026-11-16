@@ -1,4 +1,4 @@
-# grammar_fuzz (tools/grammar_fuzz.forge)
+# grammar_fuzz (tools/grammar_fuzz.cud)
 
 This is the Forge port of `tools/grammar_fuzz.py`. For the same seed it produces identical output: the same stdout, exit
 code and build/fuzz files.
@@ -9,9 +9,9 @@ code and build/fuzz files.
 
 It writes COUNT programs to build/fuzz, alternating valid and invalid ones:
 
-- **Valid (`vK.forge`):** generated from docs/GRAMMAR.md. Each must pass `forgec --emit=ast-json`, and its
+- **Valid (`vK.cud`):** generated from docs/GRAMMAR.md. Each must pass `cudc --emit=ast-json`, and its
   `--emit=pretty` form must parse to the same AST. The comparison ignores the file name and line numbers.
-- **Invalid (`iK.forge`):** one top-level line is broken (unbalanced, dangling, `= =`, bare keyword, header without a
+- **Invalid (`iK.cud`):** one top-level line is broken (unbalanced, dangling, `= =`, bare keyword, header without a
   block, or header without `:`). Each must exit 1 with an E0100–E0105 diagnostic.
 
 It prints `PASS grammar-fuzz (seed N: V valid round-tripped, I invalid rejected)` or one FAIL line per problem.
@@ -24,7 +24,7 @@ Byte-identical output relies on a bit-exact copy of CPython's `random.Random`:
 - `_randbelow` via `getrandbits`, and `choice`
 - `random()` taken as a 53-bit integer and compared with integer thresholds
 
-Every draw happens in the order the Python generator makes it. forgec runs through `/bin/sh` with stderr sent to a
+Every draw happens in the order the Python generator makes it. cudc runs through `/bin/sh` with stderr sent to a
 temporary file, `/tmp/grammar_fuzz.<pid>.err`, which is deleted at the end.
 
 ## Tests

@@ -1,4 +1,0 @@
-[package]
-name = "mathx"
-version = "1.0.0"
-files = ["mathx.forge"]

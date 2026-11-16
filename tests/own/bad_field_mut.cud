@@ -1,0 +1,6 @@
+# expect: ref/mut struct fields need lifetime tracking
+# cuditor: no-runtime
+struct Node:
+    value: u64
+struct Queue:
+    head: mut[Node]

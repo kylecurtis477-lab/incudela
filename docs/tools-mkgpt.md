@@ -1,6 +1,6 @@
-# mkgpt (examples/efi/mkgpt.forge)
+# mkgpt (examples/efi/mkgpt.cud)
 
-Forge port of `examples/efi/mkgpt.py`. With the same `FORGE_GUID_SEED`, the two write byte-identical images (tests/mkgpt/run.sh).
+Forge port of `examples/efi/mkgpt.py`. With the same `INCUDELA_GUID_SEED`, the two write byte-identical images (tests/mkgpt/run.sh).
 
     mkgpt out.img esp.fat [size_mib]      (default 128)
 
@@ -13,7 +13,7 @@ It writes a protective MBR, the primary and backup GPT, and three partitions sta
 
 It's used by examples/efi/build.sh to test that the Forge loader and kernel boot from a shared ESP.
 
-GUIDs are random (uuid4 / getrandom). With `FORGE_GUID_SEED=N` (0..2^64-1, tests only), GUID k is
+GUIDs are random (uuid4 / getrandom). With `INCUDELA_GUID_SEED=N` (0..2^64-1, tests only), GUID k is
 bytes_le = pack('<QQ', N, k), where k = 0..2 are the partitions and k = 3 is the disk.
 
 If the partitions don't fit, it exits 1 (the Python version fails an assert).

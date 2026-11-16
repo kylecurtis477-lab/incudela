@@ -1,13 +1,13 @@
 #!/bin/bash
-# forge fmt CI: golden rules, --help / bad option / missing file are clean errors (no segfault), repo is fmt-clean, fmt is idempotent and AST-preserving
+# cuditor fmt CI: golden rules, --help / bad option / missing file are clean errors (no segfault), repo is fmt-clean, fmt is idempotent and AST-preserving
 # (ast-json identical incl. line numbers on a formatted copy of every source).
 cd "$(dirname "$0")/../.." || exit 1
-FMT=build/fmt; FC=build/forgec; T=$(mktemp -d); fail=0
-./forge tools/fmt.forge -o $FMT >/dev/null || { echo "FAIL fmt-build"; exit 1; }
-cp tests/fmt/messy.forge.in $T/m.forge; $FMT $T/m.forge >/dev/null
-cmp -s $T/m.forge tests/fmt/messy.forge.expected && echo "PASS fmt-golden" || { echo "FAIL fmt-golden"; fail=1; }
-$FMT --check $T/m.forge >/dev/null && echo "PASS fmt-idempotent-golden" || { echo "FAIL fmt-idempotent-golden"; fail=1; }
-cp tests/fmt/messy.forge.in $T/n.forge; $FMT --check $T/n.forge >/dev/null && { echo "FAIL fmt-check-detects"; fail=1; } || echo "PASS fmt-check-detects"
+FMT=build/fmt; FC=build/cudc; T=$(mktemp -d); fail=0
+./cuditor tools/fmt.cud -o $FMT >/dev/null || { echo "FAIL fmt-build"; exit 1; }
+cp tests/fmt/messy.cud.in $T/m.cud; $FMT $T/m.cud >/dev/null
+cmp -s $T/m.cud tests/fmt/messy.cud.expected && echo "PASS fmt-golden" || { echo "FAIL fmt-golden"; fail=1; }
+$FMT --check $T/m.cud >/dev/null && echo "PASS fmt-idempotent-golden" || { echo "FAIL fmt-idempotent-golden"; fail=1; }
+cp tests/fmt/messy.cud.in $T/n.cud; $FMT --check $T/n.cud >/dev/null && { echo "FAIL fmt-check-detects"; fail=1; } || echo "PASS fmt-check-detects"
 FILES=$($FMT --list)
 [ -n "$FILES" ] && [ "$FILES" = "$(tools/fmt_files.sh)" ] && echo "PASS fmt-list-matches-sh" || { echo "FAIL fmt-list-matches-sh"; fail=1; }
 $FMT --check $FILES && echo "PASS fmt-repo-clean" || { echo "FAIL fmt-repo-clean"; fail=1; }
@@ -25,6 +25,6 @@ out=$($FMT --help); rc=$?
 [ $rc = 0 ] && echo "$out" | grep -q '^usage: fmt' && echo "PASS fmt-help" || { echo "FAIL fmt-help (rc=$rc)"; fail=1; }
 out=$($FMT --bogus 2>&1); rc=$?
 [ $rc = 2 ] && echo "$out" | grep -q '^fmt: unknown option --bogus' && echo "PASS fmt-bad-option" || { echo "FAIL fmt-bad-option (rc=$rc)"; fail=1; }
-out=$($FMT --check $T/missing.forge 2>&1); rc=$?
-[ $rc = 2 ] && [ "$out" = "fmt: no such file: $T/missing.forge" ] && echo "PASS fmt-missing-file" || { echo "FAIL fmt-missing-file (rc=$rc)"; fail=1; }
+out=$($FMT --check $T/missing.cud 2>&1); rc=$?
+[ $rc = 2 ] && [ "$out" = "fmt: no such file: $T/missing.cud" ] && echo "PASS fmt-missing-file" || { echo "FAIL fmt-missing-file (rc=$rc)"; fail=1; }
 rm -rf $T; exit $fail

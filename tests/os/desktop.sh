@@ -1,5 +1,5 @@
 #!/bin/bash
-# tests/os/desktop.sh: screen steps 1-6 (examples/kernel/gfx.fsi, input.fsi, wm.fsi, appwin.fsi, panel.fsi), one result, os/desktop.
+# tests/os/desktop.sh: screen steps 1-6 (examples/kernel/gfx.cudi, input.cudi, wm.cudi, appwin.cudi, panel.cudi), one result, os/desktop.
 # GRUB (BIOS) boot with `forge.desktop` on the multiboot2 command line: the kernel runs its self-tests (shell and
 # kexec sessions are skipped in desktop mode), checks the gfx back buffer, draws the desktop (background, 8 colour
 # bars, two text rows and a terminal that opens on the boot log) and presents it; from then on console text goes
@@ -12,7 +12,7 @@
 # Help at the new place, Help's title bar (unfocused) where About no longer covers it, and terminal (not About's
 # body) where About was. Step 5: before the desktop starts, gfxdeny (manifest caps(fs)) must be refused a
 # window and gfxapp (caps(gfx) only) opens one, draws in it and is refused a file and a foreign handle; its window
-# (at 600,420) must show the first colour bar it drew and an unfocused title bar. Step 6 (the desktop shell, panel.fsi): after
+# (at 600,420) must show the first colour bar it drew and an unfocused title bar. Step 6 (the desktop shell, panel.cudi): after
 # the drag the cursor goes down to the taskbar and presses About's button (About is focused, so it is minimized), opens
 # the launcher with the Forge button, chooses About Forge (restored and raised, menu closed), then presses Help's
 # button (Help raised); serial must show each step, and the screendump must show the taskbar, Help's button and

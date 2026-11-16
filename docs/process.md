@@ -1,7 +1,7 @@
 # Processes, ELF loading, fork, brk and mmap
 
-Kernel sources: `examples/kernel/user.fsi` (address spaces, ELF64 loader), `examples/kernel/proc.fsi`
-(process table, `sys_fork`, `sys_exec`, `sys_brk`, `sys_mmap`), user test `examples/user/forktest.forge`.
+Kernel sources: `examples/kernel/user.cudi` (address spaces, ELF64 loader), `examples/kernel/proc.cudi`
+(process table, `sys_fork`, `sys_exec`, `sys_brk`, `sys_mmap`), user test `examples/user/forktest.cud`.
 
 ## What it does
 Every user process has its own lower-half address space (PML4 slots 0..255; the kernel half is shared).

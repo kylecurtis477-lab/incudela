@@ -1,0 +1,9 @@
+[package]
+name = "app"
+version = "0.1.0"
+main = "app.cud"
+files = ["app.cud", "greet.cud"]
+
+[dependencies]
+strutil = "^1.0"
+mathx = "^1"

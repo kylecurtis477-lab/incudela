@@ -1,11 +1,11 @@
 #!/bin/sh
-# tests/pecheck: tests/fld/pecheck.forge must agree with tests/fld/pecheck.py (kept as the reference):
+# tests/pecheck: tests/fld/pecheck.cud must agree with tests/fld/pecheck.py (kept as the reference):
 # identical stdout and exit code on the real fld PE image, and the same exit code (1) on corrupted images
 # (Python fails with an AssertionError traceback, Forge with a one-line `pecheck: ...` message).
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 fail=0
-build/forgec tests/fld/pecheck.forge $T/p.s && build/fas -o $T/p.o $T/p.s && build/fld --base 0x100000000000 -o $T/pecheck $T/p.o || { echo "FAIL pecheck build"; exit 1; }
+build/cudc tests/fld/pecheck.cud $T/p.s && build/fas -o $T/p.o $T/p.s && build/fld --base 0x100000000000 -o $T/pecheck $T/p.o || { echo "FAIL pecheck build"; exit 1; }
 [ -f build/efi/loader.o ] || { echo "SKIP pecheck (no build/efi/loader.o)"; exit 0; }
 command -v python3 >/dev/null || { echo "SKIP pecheck (needs python3 for the reference)"; exit 0; }
 build/fld --format pe --subsystem 10 --image-base 0x10000000 -e efi_main -o $T/l.efi build/efi/loader.o || { echo "FAIL pecheck pe link"; exit 1; }
