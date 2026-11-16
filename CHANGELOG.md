@@ -47,6 +47,10 @@
   and `idle_thr` are `nown[Thread][8]`, linked through `Thread.rq_next: nown[Thread]`; `rq_pop` is safe
   code, `schedule_l` has one transfer point, `thread_adopt` panics on a second owner. Kernel unsafe
   report 170 / 708 -> 168 / 701.
+- `0bf232a` Stage 3f, kexec handoff records (designed with ChatGPT, implemented here): `struct PsRecord`
+  and `struct KxdRecord` at the documented offsets (checked at boot); each record is written through one
+  `own` that `ps_seal`/`kxd_seal` consume and adopted as one owner given back before the region is
+  released. Kernel unsafe report 168 / 701 -> 168 / 659.
 
 ### Optimizer: Phase 12.1 steps 4a-4c
 - `be09366` step 4a, `--fs-opt` promotes scalar locals in safe functions that also take frame addresses;
