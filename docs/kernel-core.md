@@ -136,7 +136,7 @@ outside that configuration. The interface in §§0–5 is unchanged.
 ### A.1 What is verified, and by which tests
 
 Markers in this section are exact serial (or framebuffer) substrings required by `tests/os/run.sh`
-or a kernel self-test. A result name is one of the 35 entries in `tests/os/expected-results.txt`
+or a kernel self-test. A result name is one of the 39 entries in `tests/os/expected-results.txt`
 (`os/result-count` fails if any is missing). The framebuffer check on the BIOS, UEFI, EFI-loader
 and IOMMU boots requires `back == front` and a row that decodes as `KERNEL OK`.
 
@@ -180,6 +180,15 @@ virtio-blk (`disable-legacy=on,iommu_platform=on`) and requires `VT-d: 1 remappi
 boots still reach `KERNEL OK` and 403 still returns a host PA. Input and NVMe services,
 Forge FS and the object store have their own result names (`os/drivers`, `os/forgefs-*`,
 `os/objstore-*`, `os/objfs-*`, `os/nvme-service-swap-restart-boot1` / `boot2`).
+
+**Other result names (count corrected 2026-11-15).** The list grew from 35 to 39 without this appendix
+following. Also required: `os/boot-harness-self-test` (the harness's own stall and drain checks, no QEMU),
+`os/drivers-no-disk-write` (the driver boot leaves its disk image byte-identical), the boot-policy boots
+`os/bootpol-cmdline-strict`, `os/bootpol-config-strict` and `os/bootpol-iommu-kexec` (tests/os/bootpol.sh: the
+sealed `\EFI\Forge\boot.cfg` and `forge.iommu=strict` only tighten the DMA policy, also across kexec),
+`dwarf/image-unchanged-by-g`, `dwarf/line-table` and `dwarf/gdb-schedule` (`-g` debug info leaves the loaded
+image unchanged and gdb resolves kernel lines), and `os/desktop` (tests/os/desktop.sh: colour bars, window
+drag, the app canvas, taskbar and launcher checked from a screendump).
 
 **Kexec and process-state.** `kexec handoff OK`, `kexec: handoff format v5`, `process-state: format
 v2 (adopts v1..v2), header and checksum checks OK (64 of 64 flipped bits caught)`, `TLB IPI: 1 stale shootdown IPI(s) from the previous kernel
