@@ -16,16 +16,16 @@ unreachable.
    (a compile error adds nothing).
 2. It builds that compiler (`build/optcov/cudc-cov`) with build/cudc, build/fas and build/fld. The
    instrumented compiler produces byte-identical assembly to build/cudc (checked on the kernel, default and
-   `--fs-temps`).
-3. It compiles the corpus with it under five configurations: default, `--fs-opt`, `--fs-live`, `--fs-temps` and
-   `--no-bounds`. The corpus is every freestanding program in tests/ and examples/ that should compile (bad_*,
+   `--fs-temps`, and since step 4d `--fs-ssa`).
+3. It compiles the corpus with it under six configurations: default, `--fs-opt`, `--fs-live`, `--fs-temps`,
+   `--fs-ssa` (since step 4d) and `--no-bounds`. The corpus is every freestanding program in tests/ and examples/ that should compile (bad_*,
    invalid/, diag/ and errors/ cases are left out), plus the fsfuzz programs in build/fsfuzz if a
    `fsfuzz --keep` run left them there.
 4. It writes the report: per pass group and per function, blocks hit out of blocks total, then every block that
    was never hit, with its compiler.cud line and header.
 
 Pass groups: the `--fs-opt` allocator (`fs_regalloc`, `fs_ra_*`), its peepholes (`fs_rapeep`), `--fs-live`
-liveness (`fs_lv_*`), `--fs-temps` (`fs_tmp_*`), constant division by magic numbers (`fs_cdiv_try`, used under
+liveness (`fs_lv_*`), `--fs-temps` (`fs_tmp_*`), `--fs-ssa` (`fs_ssa_*`, step 4d), constant division by magic numbers (`fs_cdiv_try`, used under
 any of the three flags) and bounds-check elision (`fs_bsafe`, always on unless `--no-bounds`).
 
 `--quick`: two programs, two configurations; it fails if the instrumented compiler does not build, writes no
@@ -49,7 +49,8 @@ text, not line numbers, so compiler edits elsewhere do not touch the list.
 
 A reachable hole gets a program in `tests/optgate/` instead (with a `.expected` output); optcov picks it up as part
 of the corpus, and run_tests.sh builds and runs every tests/optgate program under default, `--fs-opt`,
-`--fs-live` and `--fs-temps` (checks `optgate*`), so the program also proves the path computes the right answer.
+`--fs-live`, `--fs-temps` and `--fs-ssa` (checks `optgate*`), so the program also proves the path computes the
+right answer.
 
 ## Registry and landing rule (part d)
 
@@ -58,8 +59,8 @@ selfhost/compiler.cud without compiling anything and fails when
 
 - the compiler parses a `--fs-*` option that is not one of optcov's configurations, or that tools/fsfuzz.cud
   does not mention (so the combination fuzzer would never build with it);
-- a line that tests a pass switch (`if`/`elif`/`while` naming `fs_ra`, `fs_live`, `fs_temps` or, since the -O0
-  commit, `fs_elide`) calls, or its
+- a line that tests a pass switch (`if`/`elif`/`while` naming `fs_ra`, `fs_live`, `fs_temps`, since the -O0
+  commit `fs_elide`, or since step 4d `fs_ssa`) calls, or its
   block calls, an `fs_*` function that is in no optcov pass group (so its blocks would never be counted).
 
 `--src FILE` points it at another compiler source; a copy with a planted `fs_newpass(s0)` under `if fs_temps:`
@@ -74,6 +75,17 @@ lands only when, in the same gated batch,
 2. `fs-opt-combos` passes with the new flag in fsfuzz's flag sets (run_tests.sh runs `--combos --seed 7 --n 3`),
    and a longer `fsfuzz --combos` run (at least 25 programs) is recorded in the commit's docs;
 3. the pass does not raise the kernel's `--unsafe-report` count and the O2 and O0 gate runs are clean.
+
+### Step 4d, the first pass under the rule (2026-11-16)
+
+`--fs-ssa` landed under it: the `fs-ssa (fs_ssa_*)` group, `--fs-ssa` in CONFIGS, `fs_ssa` in GATES and both
+`--fs-ssa` and `--fs-temps --fs-ssa` in fsfuzz's spellings. `optcov --check`: 91 programs x 6 configurations, 452 optimizer blocks, `fs-ssa (fs_ssa_*)` 144 / 166
+blocks (86.7%), `CHECK OK, 52 allowed never-hit blocks, every other block hit`. The 22 new
+allow-list entries are the pass's defensive bail-outs (a jump to a label outside `.LFn`, an operand list of more
+than three, a register the tables do not know) and the SSA verifier's failure branches (`fs_ssa_check`), which a
+correct pass never takes; tests/fs/ssa.cud is the new corpus program. The `fsfuzz --combos` runs are recorded in
+docs/tools-fsfuzz.md, and the kernel's `--unsafe-report` is unchanged (168 functions, 0 blocks, 659 ops, 7
+top-level asm blocks; the kernel is still built with `--fs-temps`).
 
 ### Part (c) result (2026-11-13)
 

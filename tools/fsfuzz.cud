@@ -1,16 +1,17 @@
 # fsfuzz: differential fuzzer for the freestanding backend's --fs-opt (Phase 12.1).
 # usage: build/fsfuzz [--seed N] [--n COUNT] [--keep] [--combos]
-# --combos (build-plan item 3, optimizer correctness gate): instead of the eight fixed builds, build every
+# --combos (build-plan item 3, optimizer correctness gate): instead of the ten fixed builds, build every
 # program under every combination of the optimizer and code-generation switches: none / --fs-opt / --fs-live /
-# --fs-temps and the redundant spellings --fs-opt --fs-live, --fs-live --fs-temps, --fs-opt --fs-live --fs-temps
-# (7), times -O0 or not, --no-bounds or not, -g or not (56 flag sets), times two sources: the program as
-# generated and the same program with `# cuditor: stack-protector` (canary in every frame with an array): 112
-# builds. Builds whose assembly is byte-identical to an earlier build of the same source are not run again;
-# every distinct assembly is linked and run and must print the same output and exit code as the plain default
-# build. The summary counts distinct code generations per program.
+# --fs-temps / --fs-ssa and the redundant spellings --fs-opt --fs-live, --fs-live --fs-temps, --fs-opt --fs-live
+# --fs-temps, --fs-temps --fs-ssa (9), times -O0 or not, --no-bounds or not, -g or not (72 flag sets), times two
+# sources: the program as generated and the same program with `# cuditor: stack-protector` (canary in every frame
+# with an array): 144 builds. Builds whose assembly is byte-identical to an earlier build of the same source are
+# not run again; every distinct assembly is linked and run and must print the same output and exit code as the
+# plain default build. The summary counts distinct code generations per program.
 # Generates COUNT random, well-typed, deterministic freestanding programs (build/fsfuzz/pK.cud) and builds
-# each eight ways with build/cudc + build/fas + build/fld: default (O2), -O0, --fs-opt, -O0 --fs-opt, the
-# step 4b liveness-based allocation --fs-live and -O0 --fs-live, and step 4c --fs-temps and -O0 --fs-temps.
+# each ten ways with build/cudc + build/fas + build/fld: default (O2), -O0, --fs-opt, -O0 --fs-opt, the
+# step 4b liveness-based allocation --fs-live and -O0 --fs-live, step 4c --fs-temps and -O0 --fs-temps, and
+# step 4d --fs-ssa and -O0 --fs-ssa.
 # Every build must print the same output and exit with the same code; any difference (or a compile or link
 # failure) is reported with the seed and program index and fails the run (exit 1).
 # The programs exercise what --fs-opt rewrites: many scalar locals (more than the free registers), up to 8
@@ -223,8 +224,8 @@ def gen_prog():
     src = src + "    put_i64(s)\n    nl()\n    return s & 63\n"
     return src
 
-CONFIGS = [[], ["-O0"], ["--fs-opt"], ["-O0", "--fs-opt"], ["--fs-live"], ["-O0", "--fs-live"], ["--fs-temps"], ["-O0", "--fs-temps"]]
-CNAMES = ["O2", "O0", "O2 --fs-opt", "O0 --fs-opt", "O2 --fs-live", "O0 --fs-live", "O2 --fs-temps", "O0 --fs-temps"]
+CONFIGS = [[], ["-O0"], ["--fs-opt"], ["-O0", "--fs-opt"], ["--fs-live"], ["-O0", "--fs-live"], ["--fs-temps"], ["-O0", "--fs-temps"], ["--fs-ssa"], ["-O0", "--fs-ssa"]]
+CNAMES = ["O2", "O0", "O2 --fs-opt", "O0 --fs-opt", "O2 --fs-live", "O0 --fs-live", "O2 --fs-temps", "O0 --fs-temps", "O2 --fs-ssa", "O0 --fs-ssa"]
 
 def build_run(d, name, cfg, tag):
 # [ok, "exit N | output"] for one configuration
@@ -253,10 +254,10 @@ def opt(name, dflt):
         i += 1
     return dflt
 
-COPT = [[], ["--fs-opt"], ["--fs-live"], ["--fs-temps"], ["--fs-opt", "--fs-live"], ["--fs-live", "--fs-temps"], ["--fs-opt", "--fs-live", "--fs-temps"]]
+COPT = [[], ["--fs-opt"], ["--fs-live"], ["--fs-temps"], ["--fs-ssa"], ["--fs-opt", "--fs-live"], ["--fs-live", "--fs-temps"], ["--fs-opt", "--fs-live", "--fs-temps"], ["--fs-temps", "--fs-ssa"]]
 
 def combo_flags():
-# the 56 flag sets of --combos: COPT x {O2, -O0} x {bounds, --no-bounds} x {no debug info, -g}
+# the 72 flag sets of --combos: COPT x {O2, -O0} x {bounds, --no-bounds} x {no debug info, -g}
     res = []
     for o in COPT:
         for lvl in [[], ["-O0"]]:
@@ -402,7 +403,7 @@ def main():
                         os.remove(f)
                 c += 1
         i += 1
-    print("fsfuzz: seed " + str(s0) + ", " + str(n) + " programs (" + str(lines) + " lines), 8 builds each (O2, O0, --fs-opt, -O0 --fs-opt, --fs-live, -O0 --fs-live, --fs-temps, -O0 --fs-temps): " + str(n - bad) + " agree, " + str(bad) + " differ")
+    print("fsfuzz: seed " + str(s0) + ", " + str(n) + " programs (" + str(lines) + " lines), 10 builds each (O2, O0, --fs-opt, -O0 --fs-opt, --fs-live, -O0 --fs-live, --fs-temps, -O0 --fs-temps, --fs-ssa, -O0 --fs-ssa): " + str(n - bad) + " agree, " + str(bad) + " differ")
     if bad:
         sys.exit(1)
     sys.exit(0)

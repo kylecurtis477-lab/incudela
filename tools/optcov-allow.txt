@@ -35,3 +35,25 @@ fs_tmp_call | if d < 0 or d % 8 != 0 or d // 8 >= n or tr[d // 8] >= 0: | defens
 fs_tmp_call | if lr[x] == lr[q]: | defensive: each argument is reloaded into a different argument register
 fs_tmp_call | if dep == 0: | defensive: argument evaluation pushes and pops %rcx in balanced pairs
 fs_tmp_call | if found < n: | defensive: every reloaded argument has its `push %rax` inside the same function
+fs_ssa_split | if n >= 3: | defensive: generated instructions have at most three operands (imul $N,src,dst); functions with asm() text never reach fs_regalloc
+fs_ssa_line | if n < 0: | follows fs_ssa_split's unreachable -1 (more than three operands)
+fs_ssa_op | if contains(substr(o, 0, b), "%") or not ends(o, ")"): | defensive: generated memory operands are disp(base[,index,scale]) without a segment prefix (segment forms come only from asm() lines)
+fs_ssa_op | if r == -1 or r >= 0 and r % 2 == 1: | defensive: generated addresses use 64-bit base and index registers
+fs_ssa_op | elif len(t) > 0 and fs_lv_num(t) < 0: | defensive: the scale of a generated indexed address is a decimal
+fs_ssa_line | if n != 2 or starts(fs_sso[1], "$"): | defensive: generated mov/movz/movs/lea lines have a source and a register or memory destination
+fs_ssa_line | if n != 2: | defensive: generated add/sub/and/or/xor lines are two-operand
+fs_ssa_line | if n == 1: | defensive: the code generator writes every shift with its count ($N or %cl)
+fs_ssa_multi | if not starts(t, "    ") or starts(t, "     "): | defensive: multi-line entries are only fs_ra_save's restores before `leave` and the canary set-up after the frame `sub`, all plain instructions
+fs_ssa_multi | if starts(mn, "j") or str_eq(mn, "call") or str_eq(mn, "ret") or not fs_ssa_line(mn, ops, p, us, df): | defensive: those entries hold only mov/sub/leave lines
+fs_ssa_multi | if a != len(l): | defensive: every out[] entry ends with a newline
+fs_ssa_call | if not fs_ssa_op(ops, p, us, df, 0): | defensive: a generated call names a symbol or *%reg
+fs_ssa_run | if n == 0: | defensive: a function body always has its prologue lines when the pass runs
+fs_ssa_run | if not starts(ops, ".LF") or lmin < 0: | defensive: every fs jump target is an fs_newlab ".LFn" label inside the function (as in fs_lv_build)
+fs_ssa_run | if v < lmin or v > lmax or lpos[v - lmin] < 0: | defensive: jumps target labels of the same function (as in fs_lv_build)
+fs_ssa_run | elif fs_lv_lab(l) < 0 and not (starts(l, ".L") and ends(l, ":\n") and not contains(l, " ")): | defensive: column-0 lines inside a function body are its .LFn labels and the -g markers .Lfsd*
+fs_ssa_run | if not fs_ssa_check(n, s1, s2, df, vi): | verifier: the construction always gives a well-formed SSA form; this return is only taken on a construction bug
+fs_ssa_check | if x < 0: | verifier: every reached position gets a value for every register (merges set all ten at once)
+fs_ssa_check | if x % 10 != r or not df[x]: | verifier: a write id is only created for a line that writes that register
+fs_ssa_check | if x % 10 != r or vi[x - 10 * n - 10] != x: | verifier: a phi id is only created at the position that holds it
+fs_ssa_check | elif x != 10 * n + r: | verifier: incoming-value ids are only set at the entry, per register
+fs_ssa_check | if y != fs_ssa_vo(p, r, df, vi) and y != 10 * n + 10 + s * 10 + r: | verifier: the merge loop runs until every edge carries the predecessor's value or the successor's phi

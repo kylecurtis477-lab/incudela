@@ -131,13 +131,21 @@ for t in tests/fs/*.cud; do
   build/cudc "$t" build/t_fs.s $CUDC_FLAGS --fs-temps && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS fs-temps $t" || { echo "FAIL fs-temps $t"; fail=1; }
 done
 build/cudc tests/fs/regalloc.cud build/t_ra.s $CUDC_FLAGS --fs-live && [ "$(awk '/^ra_rec:/,/ret$/' build/t_ra.s | grep -c '(%rsp)')" -gt 0 ] && build/cudc tests/fs/regalloc.cud build/t_ra.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ra_rec:/,/ret$/' build/t_ra.s | grep -c '(%rsp)')" = 0 ] && echo "PASS fs-temps-shape" || { echo "FAIL fs-temps-shape"; fail=1; }
-# --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps; any output diff fails
+# --fs-ssa (Phase 12.1 step 4d, opt-in, implies --fs-temps): SSA values for the scratch registers fold a constant
+# into its one use and a 0/1 test into its branch; every freestanding program must print the same, and
+# tests/fs/ssa.cud's ssa_cmp keeps its setcc/movzbl/test chains under --fs-temps and has none under --fs-ssa
+for t in tests/fs/*.cud; do
+  c=""; [ -f "${t%.cud}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.cud}.c" && c=build/t_fsc.o
+  build/cudc "$t" build/t_fs.s $CUDC_FLAGS --fs-ssa && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS fs-ssa $t" || { echo "FAIL fs-ssa $t"; fail=1; }
+done
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_cmp:/,/ret$/' build/t_ssa.s | grep -c 'movzbl %al,%eax')" -gt 0 ] && [ "$(awk '/^ssa_cmp:/,/ret$/' build/t_ssa.s | grep -c 'mov \$[0-9-]*,%rcx')" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_cmp:/,/ret$/' build/t_ssa.s | grep -c 'movzbl %al,%eax')" = 0 ] && [ "$(awk '/^ssa_cmp:/,/ret$/' build/t_ssa.s | grep -c 'mov \$[0-9-]*,%rcx')" = 0 ] && echo "PASS fs-ssa-shape" || { echo "FAIL fs-ssa-shape"; fail=1; }
+# --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs
 build/fsfuzz-tool --combos --seed 7 --n 3 > build/t_fscombos.log 2>&1 && echo "PASS fs-opt-combos" || { echo "FAIL fs-opt-combos"; cat build/t_fscombos.log; fail=1; }
 # build-plan item 3 (c): optimizer-gate programs (tests/optgate) give the same output under every fs optimizer level
 for t in tests/optgate/*.cud; do
-  for f in "" --fs-opt --fs-live --fs-temps; do
+  for f in "" --fs-opt --fs-live --fs-temps --fs-ssa; do
     build/cudc "$t" build/t_og.s $CUDC_FLAGS $f && build/fas -o build/t_og.o build/t_og.s && build/fld -o build/t_og build/t_og.o && build/t_og | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS optgate$f $t" || { echo "FAIL optgate$f $t"; fail=1; }
   done
 done

@@ -412,7 +412,10 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
      diagnostic (on 1d4e26e both crashed).
 4. **SSA backend (12.1 step 4), gated by item 3**: a real SSA IR for fs/kernel mode with liveness-based register
    allocation (Phase 12 item 1), in safe steps that are byte-identical for code built without the new flag.
-   Steps 4b (`--fs-live`) and 4c (`--fs-temps`) are done and the kernel is built with both.
+   Steps 4b (`--fs-live`) and 4c (`--fs-temps`) are done and the kernel is built with both. Step 4d
+   (`--fs-ssa`, 2026-11-16, opt-in): SSA values over the control-flow graph for the scratch registers and the
+   flags, with a verifier, and three use-count folds; the first pass landed under item 3's rule. Next: the
+   kernel switch (QEMU-gated), then SSA-based allocation of the remaining %rax/%rcx temporaries.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -487,6 +490,7 @@ least.
 | Nov 16 | assessment fixes (README unsafe ceiling, unsafe result names, run_tests OS fail-closed, kernel-core Appendix A count, this schedule) | 1 batch | done: 630410a, bd07324, 94824c4, 0cd8e2c (inv163) |
 | Nov 16 | rename and licences: the OS becomes Incudela (Apache-2.0), the language becomes Cuditor (MIT); repo (`kylecurtis477-lab/incudela`), binaries, file extensions, docs; the ESP folder moves from `\EFI\Forge\` to `\EFI\Incudela\` with a one-time migration that keeps the old folder until the new one boots (tools/espmigrate.cud; the loader and kernel read an unmigrated `\EFI\Forge\` meanwhile) | 3 commits + the ESP migration commit (inv165) | *Kyle* approved 2026-11-15; names screened on the web, GitHub, package registries and domains, not a legal clearance |
 | Nov 16 | kexec from an older kernel build to the new one (the gate only swaps same-source kernels) | 1 item | tests/os/kexec-compat.sh, results `os/kexec-compat-build`, `os/kexec-old-to-new` (inv164) |
+| Nov 16 | SSA step 4d: `--fs-ssa` (opt-in), fsfuzz conditions with `not`/`and`/`or`, CHANGELOG for 0.20.1-0.21.1 | 1 batch | first optimizer pass under the item 3 landing rule (inv175) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -909,6 +913,32 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      Kernel .text 529,365 to 465,056 bytes (-12.1%), `(%rsp)` operands in kernel.s 8,204 to 899, `push %rax`
      13,117 to 3,912. The QEMU boot suite at O2 and O0 is the test. The loader, modules and user programs stay
      on `--fs-opt` for now.
+   - *Step 4d (2026-11-16): SSA values for the scratch registers, opt-in `--fs-ssa`.* After step 4c most of the
+     remaining instructions are %rax/%rcx chains: a constant loaded into %rcx for one ALU op or compare, and every
+     comparison materialized as 0/1 (`setCC %al; movzbl %al,%eax`) and tested again before the branch.
+     `--fs-ssa` (implies `--fs-temps`) runs after fs_tmp_args. `fs_ssa_run` builds each function's control-flow
+     graph the way fs_lv_build does (it gives up on a function with a jump outside its `.LFn` labels), gives each
+     instruction read/write semantics for the ten tracked registers (rax, rcx, rdx, rsi, rdi, r8-r11 and the
+     flags; partial-register writes also read; `ret` reads rax and rdx, a call reads the argument registers its
+     own set-up wrote; any mnemonic without semantics, any non-`.L` column-0 line and any jump inside a
+     multi-line entry is a barrier that reads and writes everything), and computes SSA value numbers with phis
+     at join points by a forward fixpoint. `fs_ssa_check` verifies every use names exactly one reaching
+     definition or a phi of that register, and the function is left alone if it does not. Use counts come from
+     instruction reads plus the operands of live phis. `fs_ssa_fold` then rewrites, when the counts allow: `mov
+     $N,%rcx` + `OP %rcx,%rax` (add, sub, and, or, xor, cmp; N an imm32) into `OP $N,%rax`; `xor %ecx,%ecx` +
+     `cmp %rcx,%rax` into `test %rax,%rax`; `setCC %al; movzbl %al,%eax; test %rax,%rax; je/jne L` into `jNCC
+     L`/`jCC L`; up to four rounds, since a fold can expose another. Code built without the flag is
+     byte-identical (the kernel default, `--fs-opt`, `--fs-live`, `--fs-temps` compared against the previous
+     compiler). On the kernel with the flag, against `--fs-temps`: instructions 134,600 to 120,544 (-10.4%),
+     `movzbl %al,%eax` 5,145 to 2,266, `mov $N,%rcx` 5,926 to 2,037, `xor %ecx,%ecx` 1,779 to 249; compile time
+     0.7 to 1.8 s; `--unsafe-report` unchanged. Tests: tests/fs/ssa.cud (compares, immediates, values across
+     joins, loops); every tests/fs program under `--fs-ssa` (`PASS fs-ssa ...`, 23 programs, O2 and -O0);
+     `fs-ssa-shape` (ssa_cmp has `movzbl` and `mov $N,%rcx` under `--fs-temps`, none under `--fs-ssa`);
+     tests/optgate under `--fs-ssa`. Landing rule: optcov group `fs-ssa (fs_ssa_*)`, `optcov --check` green;
+     fsfuzz builds ten ways and `--combos` 72 flag sets; `fsfuzz --combos` seeds 1-3 x 25 programs (10,800 builds,
+     4,236 distinct assemblies) and the ten-way form seeds 1-6 x 80: 0 differ; `optcov --check` OK (fs-ssa
+     144/166 blocks, 52 allowed never-hit overall). The kernel stays on `--fs-temps`; switching it
+     is a separate QEMU-gated commit.
    - *fsfuzz conditions (2026-11-16).* tools/fsfuzz.cud's generator now negates one condition in eight
      (`not (a < b)`) and joins two compares with `and`/`or` in another one in eight, so the 0/1 comparison values
      and short-circuit jumps that step 4d works on are in every fuzz run (the programs of every seed change). On

@@ -1,0 +1,92 @@
+# cuditor: no-runtime
+# --fs-ssa (Phase 12.1 step 4d): every comparison kind as a branch and as a value, constants folded into add,
+# sub, and, or, xor and cmp (imm32 edges included, 2**31 must stay in %rcx), compares with 0, and loops whose
+# values meet in phis. The output must be the same under every fs optimizer level.
+include "linux.cudi"
+
+def ssa_cmp(a: i64, b: i64, u: u64, v: u64) -> i64:
+    r: i64 = 0
+    if a == b:
+        r += 1
+    if a != b:
+        r += 2
+    if a < b:
+        r += 4
+    if a >= b:
+        r += 8
+    if a <= b:
+        r += 16
+    if a > b:
+        r += 32
+    if u < v:
+        r += 64
+    if u >= v:
+        r += 128
+    if u <= v:
+        r += 256
+    if u > v:
+        r += 512
+    if a == 0:
+        r += 1024
+    if not (a < 7):
+        r += 2048
+    return r
+
+def ssa_imm(a: i64) -> i64:
+    x: i64 = a + 2147483647
+    x = x - 2147483648
+    x = x + 2147483648
+    x = x & 1048575
+    x = x | 4096
+    x = x ^ -1
+    x = x - -5
+    if x == -2147483648:
+        x += 3
+    return x
+
+def ssa_val(a: i64, b: i64) -> i64:
+    lt: bool = a < b
+    eq: bool = a == b
+    n: i64 = 0
+    if lt:
+        n += 10
+    if eq:
+        n += 100
+    if lt and not eq:
+        n += 1000
+    return n
+
+def ssa_loop(n: i64) -> i64:
+    s: i64 = 0
+    i: i64 = 0
+    while i < n:
+        if i % 3 == 0:
+            s += i * 7
+        elif i % 3 == 1:
+            s -= 5
+        else:
+            s ^= 255
+        i += 1
+    return s
+
+def show(x: i64):
+    put_i64(x)
+    nl()
+
+def main() -> i64:
+    vals: i64 = -3
+    while vals <= 3:
+        show(ssa_cmp(vals, 0, 5, 9))
+        show(ssa_cmp(1, vals, 9, 5))
+        show(ssa_cmp(vals, vals, 7, 7))
+        show(ssa_imm(vals))
+        show(ssa_val(vals, 1))
+        vals += 1
+    show(ssa_cmp(7, 9, 0, 18446744073709551615))
+    show(ssa_cmp(-9223372036854775807, 9223372036854775807, 18446744073709551615, 0))
+    show(ssa_imm(-2147483648))
+    show(ssa_imm(9223372036854775807 - 2147483647))
+    show(ssa_loop(0))
+    show(ssa_loop(1))
+    show(ssa_loop(100))
+    return 0

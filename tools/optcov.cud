@@ -5,7 +5,7 @@
 #    counts.txt when a freestanding compile finishes (fs_main returned, so a compile error adds nothing).
 # 2. Builds that compiler (build/optcov/cudc-cov) with build/cudc, build/fas and build/fld.
 # 3. Compiles a corpus with it under each optimizer configuration (default, --fs-opt, --fs-live, --fs-temps,
-#    --no-bounds): every freestanding program in tests/ and examples/ that is expected to compile (no bad_*,
+#    --fs-ssa, --no-bounds): every freestanding program in tests/ and examples/ that is expected to compile (no bad_*,
 #    invalid/ or diag/ cases), plus the fsfuzz programs build/fsfuzz/p*.cud if present.
 # 4. Writes the report (FILE, default build/optcov/report.txt): per pass group and per function, blocks hit of
 #    blocks total, then every block never hit with its compiler.cud line and text.
@@ -27,11 +27,11 @@ import os
 import sys
 
 # pass groups: name, function-name prefixes (a function belongs to the first group whose prefix it starts with)
-GROUPS = [["fs-opt allocator (fs_regalloc, fs_ra_*)", ["fs_regalloc", "fs_ra_", "fs_ranext"]], ["fs-opt peepholes (fs_rapeep)", ["fs_rapeep"]], ["fs-live liveness (fs_lv_*)", ["fs_lv_"]], ["fs-temps (fs_tmp_*)", ["fs_tmp_"]], ["constant division (fs_cdiv_try)", ["fs_cdiv_try"]], ["bounds-check elision (fs_bsafe)", ["fs_bsafe"]]]
-CONFIGS = [[], ["--fs-opt"], ["--fs-live"], ["--fs-temps"], ["--no-bounds"]]
+GROUPS = [["fs-opt allocator (fs_regalloc, fs_ra_*)", ["fs_regalloc", "fs_ra_", "fs_ranext"]], ["fs-opt peepholes (fs_rapeep)", ["fs_rapeep"]], ["fs-live liveness (fs_lv_*)", ["fs_lv_"]], ["fs-temps (fs_tmp_*)", ["fs_tmp_"]], ["fs-ssa (fs_ssa_*)", ["fs_ssa_"]], ["constant division (fs_cdiv_try)", ["fs_cdiv_try"]], ["bounds-check elision (fs_bsafe)", ["fs_bsafe"]]]
+CONFIGS = [[], ["--fs-opt"], ["--fs-live"], ["--fs-temps"], ["--fs-ssa"], ["--no-bounds"]]
 HEADS = ["if ", "elif ", "else:", "while ", "for "]
 # variables that switch an fs optimizer pass on (the registry check, part d)
-GATES = ["fs_ra", "fs_live", "fs_temps", "fs_elide"]
+GATES = ["fs_ra", "fs_live", "fs_temps", "fs_ssa", "fs_elide"]
 
 def group_of(fn):
     g = 0
@@ -308,7 +308,7 @@ def main():
     progs = corpus(quick, not chk)
     cfgs = CONFIGS
     if quick:
-        cfgs = [["--fs-temps"], []]
+        cfgs = [["--fs-ssa"], []]
     ok = 0
     bad = 0
     for p in progs:
