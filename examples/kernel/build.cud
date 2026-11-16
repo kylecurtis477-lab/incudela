@@ -63,7 +63,9 @@ def main():
     # Step 4b: --fs-live (implies --fs-opt) adds liveness-based register sharing; same registers, same rules
     # Step 4c: --fs-temps (implies --fs-live) passes call arguments in registers and loads constants without
     # the stack; it only rewrites compiler-generated pushes, so the asm audit still covers it
-    flags = ["--fs-temps"]
+    # Step 4d: --fs-ssa (implies --fs-temps) folds constants, compares and branches by SSA use counts; like every
+    # --fs-* pass it never runs on a function with an asm() statement, so the asm audit still covers it
+    flags = ["--fs-ssa"]
     for f in cudc_flags().split():
         flags.append(f)
     # the user programs and BusyBox (examples/user/build.cud, tools/busybox/build.cud)

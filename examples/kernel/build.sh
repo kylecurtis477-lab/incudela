@@ -17,14 +17,14 @@ klink() {
 # tests/modules-build checks they produce identical artifacts)
 ../../cuditor ../modules/build.cud -o ../../build/modules-build
 ../../build/modules-build
-../../build/cudc kernel.cud $B/kernel.s --fs-temps $CUDC_FLAGS
+../../build/cudc kernel.cud $B/kernel.s --fs-ssa $CUDC_FLAGS
 ../../build/fas -I ../../build/user -o $B/kernel.o $B/kernel.s
 klink $B/kernel
 grub-file --is-x86-multiboot2 $B/kernel.elf
 # a genuinely different build for the kexec test (\EFI\Incudela\kernel-next.elf): another version string
 sed 's/"incudela-kernel 0.2.6"/"incudela-kernel 0.2.6-next"/' kernel.cud > .kernel_next.cud
 grep -q '"incudela-kernel 0.2.6-next"' .kernel_next.cud
-../../build/cudc .kernel_next.cud $B/kernel-next.s --fs-temps $CUDC_FLAGS; rm -f .kernel_next.cud
+../../build/cudc .kernel_next.cud $B/kernel-next.s --fs-ssa $CUDC_FLAGS; rm -f .kernel_next.cud
 ../../build/fas -I ../../build/user -o $B/kernel-next.o $B/kernel-next.s
 klink $B/kernel-next
 cmp -s $B/kernel.elf $B/kernel-next.elf && { echo "kernel-next.elf is identical to kernel.elf"; exit 1; }

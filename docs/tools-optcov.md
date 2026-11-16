@@ -85,7 +85,7 @@ allow-list entries are the pass's defensive bail-outs (a jump to a label outside
 than three, a register the tables do not know) and the SSA verifier's failure branches (`fs_ssa_check`), which a
 correct pass never takes; tests/fs/ssa.cud is the new corpus program. The `fsfuzz --combos` runs are recorded in
 docs/tools-fsfuzz.md, and the kernel's `--unsafe-report` is unchanged (168 functions, 0 blocks, 659 ops, 7
-top-level asm blocks; the kernel is still built with `--fs-temps`).
+top-level asm blocks; the kernel was switched to `--fs-ssa` in a later, QEMU-gated commit).
 
 ### Part (c) result (2026-11-13)
 

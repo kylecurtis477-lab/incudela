@@ -265,7 +265,7 @@ The full phased plan is in docs/BUILD_PLAN.md; the items below are the kernel su
 6. **Language and compiler:**
    - Weaker memory orderings (acquire/release) and `unsafe`-scoped raw pointers.
    - Slices with bounds checks, generics for containers, `defer`, and a register allocator for fs mode (the IR backend currently covers hosted code only).
-     Since started (Phase 12.1 step 1): `--fs-opt`, opt-in, keeps scalar locals in registers (caller-saved ones in leaf functions, callee-saved ones saved in the frame elsewhere) and removes stack-machine push/pop pairs, and divides by literal constants with a multiply (see BUILD_PLAN Phase 12.1). Since step 3 the kernel and kernel-next are built with it (examples/kernel/build.cud, build.sh and tests/dwarf/run.sh pass `--fs-opt`), since step 4b with `--fs-live`, which adds liveness-based register sharing over the same registers and rules, and since step 4c with `--fs-temps`, which only rewrites compiler-generated argument and constant pushes (no hand-written asm line), so the audit below covers it unchanged. `--fs-ssa` (step 4d, opt-in, not used for the kernel yet) treats any instruction it has no semantics for, and every column-0 line other than an `.L` label, as a barrier that reads and writes every register; see "Kernel asm and --fs-opt" below.
+     Since started (Phase 12.1 step 1): `--fs-opt`, opt-in, keeps scalar locals in registers (caller-saved ones in leaf functions, callee-saved ones saved in the frame elsewhere) and removes stack-machine push/pop pairs, and divides by literal constants with a multiply (see BUILD_PLAN Phase 12.1). Since step 3 the kernel and kernel-next are built with it (examples/kernel/build.cud, build.sh and tests/dwarf/run.sh pass `--fs-opt`), since step 4b with `--fs-live`, which adds liveness-based register sharing over the same registers and rules, and since step 4c with `--fs-temps`, which only rewrites compiler-generated argument and constant pushes (no hand-written asm line), so the audit below covers it unchanged. `--fs-ssa` (step 4d; the kernel is built with it since the step 4d kernel switch, and like every `--fs-*` pass it skips functions with an `asm()` statement) treats any instruction it has no semantics for, and every column-0 line other than an `.L` label, as a barrier that reads and writes every register; see "Kernel asm and --fs-opt" below.
    - Debug info (DWARF line tables), so GDB works on QEMU's gdbstub.
 7. **Toolchain independence:** a built-in assembler and an ELF64/PE32+ writer and linker in Forge, which removes `as`/`ld`/`objcopy`, plus linker-script equivalents (section placement, entry, image base). Assembler done (Phase 7.1, `tools/fas.cud`); linker done (Phase 7.2, `tools/fld.cud`): the build no longer uses as/ld/objcopy past the bootstrap seed.
 8. **ARM64 target:** an AArch64 backend for fs mode, UEFI on ARM (AAVMF in QEMU `virt`), PL011 serial, GIC, and the generic timer.
@@ -282,10 +282,10 @@ The full phased plan is in docs/BUILD_PLAN.md; the items below are the kernel su
 | `-O0 --fs-…` | the named opt-in passes, with every bounds check kept |
 | `--no-bounds` | no bounds checks at all (nothing to elide) |
 
-The `--fs-*` passes are opt-in, so naming one wins over `-O0`; the kernel build names `--fs-temps`, and the O0 gate
-pass (`CUDC_FLAGS=-O0 ./run_tests.sh`) builds it with every bounds check kept (2080 of 2080 sites checked vs
-1496 by default). Until 2026-11-13 `-O0` was ignored in freestanding mode. New optimizer passes follow the landing
-rule in docs/tools-optcov.md.
+The `--fs-*` passes are opt-in, so naming one wins over `-O0`; the kernel build names `--fs-ssa` (since the step
+4d kernel switch; `--fs-temps` before), and the O0 gate pass (`CUDC_FLAGS=-O0 ./run_tests.sh`) builds it with
+every bounds check kept (2080 of 2080 sites checked vs 1496 by default). Until 2026-11-13 `-O0` was ignored in
+freestanding mode. New optimizer passes follow the landing rule in docs/tools-optcov.md.
 
 Limits: one fs function holds at most 4096 locals (FSLMAX; every block's names, compiler temporaries and own-field
 slots count, nothing is reused); past that the compiler stops with "too many locals in one function" at the

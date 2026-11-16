@@ -397,7 +397,7 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
      fs_bsafe loop facts; the compile-time error for an out-of-range constant index stays), the only fs
      optimization on by default, so the O0 gate pass builds kernel, EFI loader, modules and user programs with
      every bounds check kept (kernel: 2080 sites, 2080 checked at -O0 vs 1496 at the default; 160,037 vs 153,896
-     asm lines). The opt-in `--fs-*` passes stay on when named (the kernel build names `--fs-temps`), so -O0 does
+     asm lines). The opt-in `--fs-*` passes stay on when named (the kernel build names `--fs-temps`, since step 4d `--fs-ssa`), so -O0 does
      not turn the regalloc shape checks into failures. Default-level output is byte-identical (kernel checked).
      The -O0 kernel was boot-checked with `CUDC_FLAGS=-O0 tests/os/run.sh` outside the gate. optcov GATES gained
      `fs_elide`. Its first gate (inv149) failed one O0 check, efi-build/esp-reproducible: the test compared a
@@ -414,8 +414,9 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    allocation (Phase 12 item 1), in safe steps that are byte-identical for code built without the new flag.
    Steps 4b (`--fs-live`) and 4c (`--fs-temps`) are done and the kernel is built with both. Step 4d
    (`--fs-ssa`, 2026-11-16, opt-in): SSA values over the control-flow graph for the scratch registers and the
-   flags, with a verifier, and three use-count folds; the first pass landed under item 3's rule. Next: the
-   kernel switch (QEMU-gated), then SSA-based allocation of the remaining %rax/%rcx temporaries.
+   flags, with a verifier, and three use-count folds; the first pass landed under item 3's rule. The kernel is
+   built with it since the step 4d kernel switch (2026-11-16). Next: SSA-based allocation of the remaining
+   %rax/%rcx temporaries.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -494,7 +495,7 @@ least.
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
-| Nov 17 | kernel O0 variant: one boot test of a kernel built without `--fs-temps` | 1 item | today -O0 still names `--fs-temps` for the kernel (documented) |
+| Nov 17 | kernel O0 variant: one boot test of a kernel built without the `--fs-*` passes | 1 item | today -O0 still names `--fs-ssa` for the kernel (documented) |
 | Nov 18 | data-at-rest keys: RDRAND/RDSEED mixed into the data key, a salted iterated KDF for the passphrase key, key rotation | 2 batches | objd.cudi; TPM sealing stays open (no TPM in QEMU tests) |
 | Nov 18 | per-CPU run-queue locks plus an SMP scaling benchmark (1/2/4 CPUs) | 1 batch | one `rq_lock` today; measure before and after |
 | Nov 18 | early USB smoke image and checklist | 1 item | *Kyle* boots it once |
@@ -939,6 +940,15 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      4,236 distinct assemblies) and the ten-way form seeds 1-6 x 80: 0 differ; `optcov --check` OK (fs-ssa
      144/166 blocks, 52 allowed never-hit overall). The kernel stays on `--fs-temps`; switching it
      is a separate QEMU-gated commit.
+   - *Step 4d kernel switch (2026-11-16).* The kernel and kernel-next are built with `--fs-ssa`
+     (examples/kernel/build.cud and build.sh; tests/dwarf/run.sh builds its `-g` kernel the same way). Like every
+     `--fs-*` pass it never runs on a function with an `asm()` statement (fs_regalloc is skipped for those), and
+     `@naked` functions and top-level asm blocks are not compiled code, so the step 3 asm audit covers it
+     unchanged. Kernel .text 508,896 to 457,536 bytes (-10.1%), instructions in kernel.s 134,600 to 120,544
+     (-10.4%); `--unsafe-report` unchanged (168 functions, 0 blocks, 659 ops, 7 top-level asm blocks). Before the gate, `tests/os/run.sh` at O2 with the
+     `--fs-ssa` kernel: 45 PASS, 0 FAIL (BIOS, SMP1, IOMMU, UEFI, GPT loader, kexec, old-to-new kexec, drivers,
+     boot policy, ForgeFS, object store, desktop, DWARF/gdb); the gate runs it at O2 and O0.
+     The loader, modules and user programs stay on `--fs-opt` for now.
    - *fsfuzz conditions (2026-11-16).* tools/fsfuzz.cud's generator now negates one condition in eight
      (`not (a < b)`) and joins two compares with `and`/`or` in another one in eight, so the 0/1 comparison values
      and short-circuit jumps that step 4d works on are in every fuzz run (the programs of every seed change). On
