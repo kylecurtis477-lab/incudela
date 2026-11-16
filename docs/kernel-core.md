@@ -159,7 +159,9 @@ condvars are exercised by the kernel sync self-test (`wait queues + sleeping mut
 `6 threads x 2000 increments = 12000`). Preemption and stealing: `preemptive SMP scheduler OK`,
 `per-CPU run queues:`, `SMP: 4 cpus online` (and `SMP: 1 cpus online` with zero IPIs on
 `os/kernel-bios-smp1`). Overflow into a kernel stack guard and a smashed canary kill the thread,
-not the kernel (`kernel stack guard pages:`, `stack canaries:`). Stop-machine rendezvous:
+not the kernel (`kernel stack guard pages:`, `stack canaries:`). A thread that has reported back is not yet
+dead: `thread reap: 4 workers reported done while 4 still ran; all reaped after T_DEAD` checks that the
+parent reaps (waits for `T_DEAD`) instead of freeing. Stop-machine rendezvous:
 `stop_machine stress OK: 3000 rounds`. Handle rights that only shrink, and the syscall-class
 gate, are pinned by `examples/user/captest.cud` (`captest: PASS`) and `capdeny` (`capability
 gate: undeclared spawn and probe denied at the syscall boundary`). Channel move, XFER, EOF on

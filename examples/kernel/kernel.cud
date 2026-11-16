@@ -723,7 +723,8 @@ def tlb_test():
     while i < n:
         if tlbt_seen[i] != 0x2222:
             ok = 0
-        thread_free(ptr[Thread](ths[i]))
+        # tlbt_done only says the worker has reported; it may still be running (thread_reap waits for T_DEAD)
+        thread_reap(ptr[Thread](ths[i]))
         i += 1
     unmap_page(kernel_pml4, TLBT_VA)
     tlb_shootdown(0, TLBT_VA, 1)
@@ -741,6 +742,50 @@ def tlb_test():
     else:
         puts("NO\n")
         panic("stale TLB entry after shootdown")
+
+reapt_done: u64
+reapt_go: u64
+
+def reapt_worker(arg: u64):
+# reports, then keeps running until released: a "done" count is not a dead thread (tlb_test, inv167 load runs)
+    atomic_fetch_add(addr(reapt_done), 1, acq_rel)
+    while atomic_load(addr(reapt_go), acquire) == 0:
+        cpu_relax()
+
+def reapt_alive(t: ptr[Thread]) -> u64:
+    if atomic_load(addr(t.state), acquire) != T_DEAD:
+        return 1
+    return 0
+
+def reap_test():
+# regression: a worker that has reported back can still be running; the parent must reap it (wait for T_DEAD),
+# not free it, or thread_free panics "thread still alive" (or, unchecked, frees a live stack)
+    n = ncpu_online
+    t0 = thread_new(u64(reapt_worker), 0)
+    t0.pin = 1
+    t1 = thread_new(u64(reapt_worker), 1)
+    t1.pin = 1 + 1 % n
+    t2 = thread_new(u64(reapt_worker), 2)
+    t2.pin = 1 + 2 % n
+    t3 = thread_new(u64(reapt_worker), 3)
+    t3.pin = 1 + 3 % n
+    thread_start_ready(t0)
+    thread_start_ready(t1)
+    thread_start_ready(t2)
+    thread_start_ready(t3)
+    while atomic_load(addr(reapt_done), acquire) < 4:
+        yield_cpu()
+    alive = reapt_alive(t0) + reapt_alive(t1) + reapt_alive(t2) + reapt_alive(t3)
+    atomic_store(addr(reapt_go), 1, seq_cst)
+    thread_reap(t0)
+    thread_reap(t1)
+    thread_reap(t2)
+    thread_reap(t3)
+    puts("thread reap: 4 workers reported done while ")
+    put_u64(alive)
+    puts(" still ran; all reaped after T_DEAD\n")
+    if alive != 4:
+        panic("thread reap test: a worker died before it was released")
 
 @unsafe
 def sched_test():
@@ -1896,6 +1941,7 @@ def after_overflow():
     sti()
     sched_test()
     tlb_test()
+    reap_test()
     sync_test()
     vecmap_test()
     user_test()
