@@ -3,9 +3,23 @@
      version-to-commit mapping comes from the project plan. There are no git tags: the versions are
      groupings of commits, not contiguous ranges of history (for example the 0.17.4 fixes 0bbe40c, 4ecde04,
      f5c66be and 2aba6e2 come before the 0.17.2 commits in the log). Newest version first. 0.18.1 is cut as
-     a grouping only; 0.19.0 and 0.20.0 are open. Entries before 0.21.0 use the names of their time
+     a grouping only; 0.19.0, 0.20.0 and 0.22.0 are open. Entries before 0.21.0 use the names of their time
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
+
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d and 4e
+
+- `f944491` tests: tools/fsfuzz.cud negates one generated condition in eight (`not (...)`) and joins two
+  compares with `and`/`or` in another one in eight.
+- `9764d45` `cudc --fs-ssa` (opt-in, implies `--fs-temps`): SSA values for the scratch and argument
+  registers and the flags over each function's control-flow graph, checked by a verifier, and three
+  use-count folds (a constant in %rcx into its ALU op or compare, `xor`+`cmp` into `test`, `setCC`/`movzbl`/
+  `test`/`je` into one `jCC`). The first pass landed under the optimizer landing rule (optcov group, fsfuzz
+  ten builds and 72 combination flag sets). Code built without the flag is byte-identical.
+- `55790c5` the kernel and kernel-next are built with `--fs-ssa`: .text 508,896 to 457,536 bytes (-10.1%),
+  instructions 134,600 to 120,544; `--unsafe-report` unchanged (168 functions, 659 ops).
+- `70e9cf8` `--fs-ssa` also deletes register writes nothing reads (step 4e): kernel instructions 120,544 to
+  119,967.
 
 ## 0.21.1 (unreleased): rename cleanup
 
