@@ -33,6 +33,16 @@
   `swap(a, b)` on named places (own/nown locals, Stage 2 fields, fields behind a local own/mut pointer);
   the only way an owner moves into or out of a field behind a pointer. A condition calling one of them
   proves nothing (found by the 78-program adversarial set).
+- `6caae93` fix: passing a `mut[T]` as a call argument while a shared borrow of it is live
+  (`r = borrow(m); bump(m)`) is refused; the callee could write what the `ref` still reads.
+- `b7f75eb` fix (to 3c): `swap(a, b)` refuses two places where one is reached through the other
+  (`swap(x, x.next)`), which stored an owner into its own child (a cycle, two owners).
+- `1a51b4b` Stage 3d (designed with ChatGPT, implemented here): `borrow(p.head)` / `borrow_mut(p.head.next)`
+  through a local own/mut/ref pointer record the borrow on the root; nested own-field paths for reads,
+  writes and `take`/`replace`/`swap`; `nown` steps need a check, `ref` roots stay read-only.
+- `7632ffe` `nown[T]` globals and global `nown[T][N]` arrays (designed with ChatGPT, implemented here):
+  they start none; a global and each element `a[i]` are places for `take`/`replace`/`swap` (index
+  evaluated once) or a test for none, nothing else.
 
 ### Optimizer: Phase 12.1 steps 4a-4c
 - `be09366` step 4a, `--fs-opt` promotes scalar locals in safe functions that also take frame addresses;
