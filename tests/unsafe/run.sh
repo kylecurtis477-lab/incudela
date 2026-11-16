@@ -25,9 +25,9 @@ while read d f bf bb bo ba; do
     s=$(cd ../../$d && $FC $f $T/r.s --unsafe-report 2>&1 | sed -n 's/^unsafe: \([0-9]*\) functions, \([0-9]*\) blocks, \([0-9]*\) ops, \([0-9]*\) top-level.*/\1 \2 \3 \4/p')
     set -- $s
     if [ -n "$s" ] && [ $1 -le $bf ] && [ $2 -le $bb ] && [ $3 -le $bo ] && [ $4 -le $ba ]; then
-        echo "PASS unsafe-baseline-$f ($s)"
+        echo "PASS unsafe-baseline-${d##*/}/$f ($s)"
     else
-        echo "FAIL unsafe-baseline-$f: now '$s', baseline '$bf $bb $bo $ba'"; fail=1
+        echo "FAIL unsafe-baseline-${d##*/}/$f: now '$s', baseline '$bf $bb $bo $ba'"; fail=1
     fi
 done < baseline.txt
 # provenance (v1.3): integer-to-pointer only inside @unsafe functions (--provenance-lint)
@@ -41,9 +41,9 @@ while read d f bf bb bo ba; do
     [ -z "$d" ] || [ "${d:0:1}" = "#" ] && continue
     s=$(cd ../../$d && $FC $f $T/r.s --provenance-lint 2>&1 | grep '^provenance:')
     if echo "$s" | grep -q ', 0 outside @unsafe'; then
-        echo "PASS unsafe-prov-$f ($s)"
+        echo "PASS unsafe-prov-${d##*/}/$f ($s)"
     else
-        echo "FAIL unsafe-prov-$f: $s"; fail=1
+        echo "FAIL unsafe-prov-${d##*/}/$f: $s"; fail=1
     fi
 done < baseline.txt
 rm -rf $T
