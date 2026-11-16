@@ -164,7 +164,7 @@ def create(disk, mib):
     s = best[0]
     e = best[0] + need - 1
     i = free[0]
-    name = "F\x00o\x00r\x00g\x00e\x00 \x00F\x00S\x00"
+    name = "I\x00n\x00c\x00u\x00d\x00e\x00l\x00a\x00 \x00F\x00S\x00"
     ent = FORGE + newguid(0) + le(s, 8) + le(e, 8) + le(0, 8) + name + "\x00" * (72 - len(name))
     ents = put(ents, i * 128, ent)
     ecrc = crc32(ents)
