@@ -48,3 +48,10 @@ The tool was checked on the box in four ways:
 - With `mtools` and `xorriso` removed: `--check` listed `xorriso mformat` and exited 1. A plain run fetched 2
   packages, reinstalled them, and reported "restored, all present".
 - The harness block itself, in both the new path and the old-tree fallback.
+
+## run_tests.sh without the toolchain
+
+`run_tests.sh` itself fails closed (2026-11-15): when qemu-system-x86_64 or grub-mkrescue is missing it prints
+`FAIL tests/os (... missing: build/ostools reinstalls them; SKIP_OS=1 skips on purpose)` and exits 1. `SKIP_OS=1`
+is the explicit opt-out for quick runs that must not touch QEMU (for example while a gate holds it); it prints
+`SKIP tests/os (SKIP_OS set: ... not a gate pass)`.
