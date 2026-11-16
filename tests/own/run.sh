@@ -64,6 +64,11 @@ if $FC nown_global_ok.forge $T/ng.s && ../../build/fas -o $T/ng.o $T/ng.s && ../
 else
     echo "FAIL own-nown-global-ok"; fail=1
 fi
+if $FC runqueue_ok.forge $T/rq.s && ../../build/fas -o $T/rq.o $T/rq.s && ../../build/fld -o $T/rq $T/rq.o && $T/rq | diff -q - runqueue_ok.expected >/dev/null; then
+    echo "PASS own-runqueue-ok"
+else
+    echo "FAIL own-runqueue-ok"; fail=1
+fi
 for f in bad_*.forge; do
     want=$(sed -n 's/^# expect: //p' $f)
     out=$($FC $f $T/x.s 2>&1)

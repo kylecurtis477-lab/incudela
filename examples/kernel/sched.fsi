@@ -36,6 +36,8 @@ struct Thread:
     sig_mask: u64  # 11.1d: Linux blocked signals (bit n = signal n)
     sig_pend: u64  # 11.1d: thread-directed pending signals (tgkill)
     sig_rx: u64[2]  # rcx, r11 that rt_sigreturn restores (the iretq exit in user.fsi reads them via SF pad)
+    rq_next: nown[Thread]  # Stage 3e: the run queue's owning link (wait queues keep using the raw `next`)
+    rq_owned: u64  # 1 while an owner exists (run queue, current[] or idle_thr[]): thread_adopt refuses a second one
 
 asm(
     ".text",
@@ -62,20 +64,54 @@ extern def ctx_switch(save: u64, rsp: u64)
 extern def thread_start_addr() -> u64
 
 rq_lock: u64
-rq_head: u64[8]  # Phase 8: one run queue per CPU (still under the one rq_lock)
+# Stage 3e: the run queues own their READY threads. rq_head[q] owns the first one and each Thread.rq_next the next;
+# rq_tail[q] is a non-owning view of the last one. current[cpu] owns the running thread and idle_thr[cpu] the idle
+# thread while it is not running, so a thread has one owner at a time and moves between them by take/replace. A
+# thread gets its owner from thread_adopt (thread_start_ready, wake_l, sched_cpu_init) and gives it up in
+# schedule_l when it blocks (the raw wait-queue link holds it until wake_l adopts it again) or dies (thread_reap
+# frees it through its handle). Everything is under rq_lock, as before.
+rq_head: nown[Thread][8]  # Phase 8: one run queue per CPU (still under the one rq_lock)
 rq_tail: u64[8]
 rq_len: u64[8]
 rq_enq: u64[8]
 rq_steals: u64
-current: u64[8]
-idle_thr: u64[8]
+current: nown[Thread][8]
+idle_thr: nown[Thread][8]
 next_tid: u64
 ctx_switches: u64
 
+def thread_release(t: nown[Thread]):
+# an owner given up: to a raw handle (blocked or dead thread) or a none returned by replace
+    return
+
+def thread_addr(t: ref[Thread]) -> u64:
+# a non-owning view of an owned thread (rq_tail, ctx_switch, cur_thread); it never becomes a second owner
+    return u64(t)
+
 @unsafe
-def rq_push(t: ptr[Thread]):
+def thread_adopt(t: ptr[Thread]) -> own[Thread]:
+# the one raw-to-owner step: a thread handle becomes the scheduler's owner (rq_lock held, or the boot CPU alone)
+    if t.rq_owned != 0:
+        panic("thread_adopt: thread already owned")
+    t.rq_owned = 1
+    return own[Thread](t)
+
+def rq_link_after(m: mut[Thread], t: own[Thread]):
+    thread_release(replace(m.rq_next, t))
+
+@unsafe
+def rq_link(q: u64, t: own[Thread]):
+# append t (and whatever chain hangs off it) to queue q; rq_tail[q] becomes t
+    v = thread_addr(borrow(t))
+    # the tail is owned by the chain under rq_head[q]; rq_lock makes the mut[Thread] below the only access to it
+    if rq_tail[q] == 0:
+        thread_release(replace(rq_head[q], t))
+    else:
+        rq_link_after(mut[Thread](ptr[Thread](rq_tail[q])), t)
+    rq_tail[q] = v
+
+def rq_push(t: own[Thread]):
 # pinned threads go to their CPU's queue; others to the shortest queue, preferring the pushing CPU on ties
-    t.next = 0
     n = ncpu_online
     if n == 0 or n > 8:
         n = 1
@@ -90,40 +126,45 @@ def rq_push(t: ptr[Thread]):
             if rq_len[i] < rq_len[q]:
                 q = i
             i += 1
-    if rq_tail[q] == 0:
-        rq_head[q] = u64(t)
-    else:
-        ptr[Thread](rq_tail[q]).next = u64(t)
-    rq_tail[q] = u64(t)
+    rq_link(q, t)
     rq_len[q] += 1
     rq_enq[q] += 1
 
-@unsafe
-def rq_pop(cpu: u64) -> u64:
+def rq_take_first(q: u64, cpu: u64) -> nown[Thread]:
+# the first thread of queue q that may run on cpu (unpinned or pinned to it); the others keep their order
+    last = rq_tail[q]
+    chain = take(rq_head[q])
+    rq_tail[q] = 0
+    while chain != 0:
+        rest = take(chain.rq_next)
+        p = chain.pin
+        if p == 0 or p == cpu + 1:
+            if rest != 0:
+                rq_link(q, rest)
+                rq_tail[q] = last
+            else:
+                thread_release(rest)
+            return chain
+        rq_link(q, chain)
+        chain = rest
+    return chain
+
+def rq_pop(cpu: u64) -> nown[Thread]:
 # own queue first; when empty, steal the first unpinned thread from the other queues (k = 1..7)
     k: u64 = 0
     while k < 8:
         q = (cpu + k) % 8
-        prev: u64 = 0
-        t = rq_head[q]
-        while t != 0:
-            p = ptr[Thread](t).pin
-            if p == 0 or p == cpu + 1:
-                nx = ptr[Thread](t).next
-                if prev == 0:
-                    rq_head[q] = nx
-                else:
-                    ptr[Thread](prev).next = nx
-                if rq_tail[q] == t:
-                    rq_tail[q] = prev
+        if rq_head[q] != 0:
+            t = rq_take_first(q, cpu)
+            if t != 0:
                 rq_len[q] -= 1
                 if k != 0:
                     rq_steals += 1
                 return t
-            prev = t
-            t = ptr[Thread](t).next
+            thread_release(t)
         k += 1
-    return 0
+    none: nown[Thread]
+    return none
 
 # the matching cast for a stored Thread address (run queue, Proc.thread / xthr[], wait queues)
 @unsafe
@@ -135,9 +176,14 @@ def cur_thread() -> ptr[Thread]:
 # irqs off across the CPU-id read and the current[] load: a preemption (and migration)
 # in between would return another CPU's thread (seen as cur_proc()==0 under chantest)
     f = irq_save()
-    t = current[lapic_cpu()]
+    c = lapic_cpu()
+    t = take(current[c])
+    v: u64 = 0
+    if t != 0:
+        v = thread_addr(borrow(t))
+    thread_release(replace(current[c], t))
     irq_restore(f)
-    return ptr[Thread](t)
+    return ptr[Thread](v)
 
 @unsafe
 def thread_new(fn: u64, arg: u64) -> ptr[Thread]:
@@ -166,7 +212,7 @@ def thread_new(fn: u64, arg: u64) -> ptr[Thread]:
 def thread_start_ready(t: ptr[Thread]):
     f = irq_save()
     spin_lock(addr(rq_lock))
-    rq_push(t)
+    rq_push(thread_adopt(t))
     spin_unlock(addr(rq_lock))
     irq_restore(f)
 
@@ -202,37 +248,59 @@ def schedule(exiting: u64):
 @unsafe
 def schedule_l(exiting: u64):
 # rq_lock held, interrupts off; returns with rq_lock released. A T_BLOCKED caller is parked on a
-# wait queue already and is not put back on the run queue.
+# wait queue already and is not put back on the run queue. current[cpu] keeps cur's owner until the one
+# transfer point below (replace by nxt), so cur_thread() is valid all the way to the switch.
     cpu = lapic_cpu()
-    cur = ptr[Thread](current[cpu])
+    cur = cur_thread()
+    if u64(cur) == 0:
+        panic("schedule: no current thread")
     if exiting:
         cur.state = T_DEAD
-    nxt = ptr[Thread](rq_pop(cpu))
-    if u64(nxt) == 0:
+    nxt = rq_pop(cpu)
+    if nxt == 0:
         if cur.state == T_RUNNING or cur.state == T_IDLE:
+            thread_release(nxt)
             spin_unlock(addr(rq_lock))
             return
-        nxt = ptr[Thread](idle_thr[cpu])
-    if cur.state == T_RUNNING:
-        cur.state = T_READY
-        rq_push(cur)
+        swap(nxt, idle_thr[cpu])
+    if nxt == 0:
+        thread_release(nxt)
+        panic("schedule: no idle thread")
+        return
     if nxt.state != T_IDLE:
         nxt.state = T_RUNNING
-    nd_hook(ND_SCHED, cpu, u64(nxt))
+    nd_hook(ND_SCHED, cpu, thread_addr(borrow(nxt)))
     nxt.cpus_seen = nxt.cpus_seen | (u64(1) << cpu)
     nxt.switches += 1
     ctx_switches += 1
-    current[cpu] = u64(nxt)
     tss[cpu].rsp0 = nxt.kstack_top
     percpu_kstack[cpu * 4] = nxt.kstack_top
-    if nxt.cr3 != cur.cr3:
-        switch_cr3(cpu, nxt.cr3)
+    ncr3 = nxt.cr3
+    nfs = nxt.fsbase
+    nfpu = nxt.fpu
+    nrsp = nxt.rsp
+    # the transfer point: nxt's owner becomes current[cpu]; cur's owner goes back to the run queue (running), to
+    # idle_thr (idle), or is given up (blocked: the wait queue's raw link; dead: thread_reap's handle)
+    old = replace(current[cpu], nxt)
+    if old != 0:
+        if old.state == T_RUNNING:
+            old.state = T_READY
+            rq_push(old)
+        elif old.state == T_IDLE:
+            thread_release(replace(idle_thr[cpu], old))
+        else:
+            old.rq_owned = 0
+            thread_release(old)
+    else:
+        thread_release(old)
+    if ncr3 != cur.cr3:
+        switch_cr3(cpu, ncr3)
     # 11.1b: the kernel never uses FS, so the MSR always holds the running thread's user FS base
-    if nxt.fsbase != cur.fsbase:
-        wrmsr(MSR_FS_BASE, nxt.fsbase)
+    if nfs != cur.fsbase:
+        wrmsr(MSR_FS_BASE, nfs)
     fpu_save(cur.fpu)
-    fpu_restore(nxt.fpu)
-    ctx_switch(u64(addr(cur.rsp)), nxt.rsp)
+    fpu_restore(nfpu)
+    ctx_switch(u64(addr(cur.rsp)), nrsp)
     spin_unlock(addr(rq_lock))
 
 def yield_cpu():
@@ -282,15 +350,14 @@ def sched_cpu_init(cpu: u64, boot_ctx_is_idle: u64):
     if boot_ctx_is_idle:
         t.state = T_IDLE
         t.kstack_top = tss[cpu].rsp0
-        idle_thr[cpu] = u64(t)
     else:
         t.state = T_RUNNING
         t.kstack_top = tss[cpu].rsp0
         t.id = atomic_fetch_add(addr(next_tid), 1, acq_rel) + 1
         it = thread_new(u64(idle_loop), 0)
         it.state = T_IDLE
-        idle_thr[cpu] = u64(it)
-    current[cpu] = u64(t)
+        thread_release(replace(idle_thr[cpu], thread_adopt(it)))
+    thread_release(replace(current[cpu], thread_adopt(t)))
     percpu_kstack[cpu * 4] = t.kstack_top
 
 # ---- wait queues, sleeping mutexes, condition variables, timed sleep ----
@@ -331,10 +398,9 @@ def wq_pop(q: ptr[WaitQ]) -> u64:
             q.tail = 0
     return t
 
-@unsafe
 def wq_block_l(q: ptr[WaitQ]):
 # rq_lock held, irqs off: park the current thread on q and run something else; returns with rq_lock re-held
-    cur = ptr[Thread](current[lapic_cpu()])
+    cur = cur_thread()
     cur.state = T_BLOCKED
     wq_push(q, cur)
     wq_blocks += 1
@@ -343,7 +409,7 @@ def wq_block_l(q: ptr[WaitQ]):
 
 def wake_l(t: ptr[Thread]):
     t.state = T_READY
-    rq_push(t)
+    rq_push(thread_adopt(t))
     wq_wakes += 1
 
 @unsafe
@@ -378,19 +444,19 @@ def wq_wake_all(q: ptr[WaitQ]) -> u64:
 def mutex_lock(m: ptr[Mutex]):
     f = irq_save()
     spin_lock(addr(rq_lock))
-    cur = current[lapic_cpu()]
+    cur = u64(cur_thread())
     if m.locked and m.owner == cur:
         panic("mutex_lock: recursive lock")
     while m.locked:
         m.contended += 1
         wq_block_l(addr(m.q))
     m.locked = 1
-    m.owner = current[lapic_cpu()]
+    m.owner = u64(cur_thread())
     spin_unlock(addr(rq_lock))
     irq_restore(f)
 
 def mutex_unlock_l(m: ptr[Mutex]):
-    if m.locked == 0 or m.owner != current[lapic_cpu()]:
+    if m.locked == 0 or m.owner != u64(cur_thread()):
         panic("mutex_unlock: not owner")
     m.locked = 0
     m.owner = 0
@@ -423,11 +489,10 @@ def cond_signal(c: ptr[CondVar]):
 def cond_broadcast(c: ptr[CondVar]):
     wq_wake_all(addr(c.q))
 
-@unsafe
 def sleep_ticks(n: u64):
     f = irq_save()
     spin_lock(addr(rq_lock))
-    cur = ptr[Thread](current[lapic_cpu()])
+    cur = cur_thread()
     cur.wake_at = lapic_ticks + n
     wq_block_l(addr(sleepq))
     spin_unlock(addr(rq_lock))

@@ -1,0 +1,131 @@
+# forge: no-runtime
+# Stage 3e model of the kernel run queue (examples/kernel/sched.fsi): per-CPU FIFOs that own their threads through
+# rq_head[q] and Thread.rq_next, a non-owning tail view, local-first pop with stealing of unpinned threads, and
+# current[] owning the running thread. Same code shapes as the kernel; each line printed is computed.
+include "../fs/linux.fsi"
+struct Thread:
+    id: u64
+    pin: u64
+    state: u64
+    rq_next: nown[Thread]
+    rq_owned: u64
+mem: u64[256]
+rq_head: nown[Thread][8]
+rq_tail: u64[8]
+rq_len: u64[8]
+rq_steals: u64
+current: nown[Thread][8]
+idle_thr: nown[Thread][8]
+@unsafe
+def mk(i: u64, pin: u64) -> ptr[Thread]:
+    mem[8 * i] = i
+    mem[8 * i + 1] = pin
+    return ptr[Thread](addr(mem[8 * i]))
+def thread_release(t: nown[Thread]):
+# an owner given up to raw handles: nothing to free here
+    return
+def thread_addr(t: ref[Thread]) -> u64:
+    return u64(t)
+def rq_link_after(m: mut[Thread], t: own[Thread]):
+    thread_release(replace(m.rq_next, t))
+@unsafe
+def rq_link(q: u64, t: own[Thread]):
+    v = thread_addr(borrow(t))
+    if rq_tail[q] == 0:
+        thread_release(replace(rq_head[q], t))
+    else:
+        rq_link_after(mut[Thread](ptr[Thread](rq_tail[q])), t)
+    rq_tail[q] = v
+def rq_push_q(q: u64, t: own[Thread]):
+    rq_link(q, t)
+    rq_len[q] += 1
+def rq_take_first(q: u64, cpu: u64) -> nown[Thread]:
+    last = rq_tail[q]
+    chain = take(rq_head[q])
+    rq_tail[q] = 0
+    while chain != 0:
+        rest = take(chain.rq_next)
+        p = chain.pin
+        if p == 0 or p == cpu + 1:
+            if rest != 0:
+                rq_link(q, rest)
+                rq_tail[q] = last
+            else:
+                thread_release(rest)
+            return chain
+        rq_link(q, chain)
+        chain = rest
+    return chain
+def rq_pop(cpu: u64) -> nown[Thread]:
+    k: u64 = 0
+    while k < 8:
+        q = (cpu + k) % 8
+        if rq_head[q] != 0:
+            t = rq_take_first(q, cpu)
+            if t != 0:
+                rq_len[q] -= 1
+                if k != 0:
+                    rq_steals += 1
+                return t
+            thread_release(t)
+        k += 1
+    none: nown[Thread]
+    return none
+@unsafe
+def adopt(t: ptr[Thread]) -> own[Thread]:
+    if t.rq_owned != 0:
+        puts("owned twice\n")
+    t.rq_owned = 1
+    return own[Thread](t)
+@unsafe
+def cur_thread(c: u64) -> ptr[Thread]:
+    t = take(current[c])
+    v: u64 = 0
+    if t != 0:
+        v = thread_addr(borrow(t))
+    thread_release(replace(current[c], t))
+    return ptr[Thread](v)
+def show(cpu: u64):
+    t = rq_pop(cpu)
+    if t != 0:
+        put_u64(t.id)
+        thread_release(replace(current[cpu], t))
+    else:
+        puts("-")
+        thread_release(t)
+    puts(" ")
+def drain(cpu: u64) -> u64:
+    n = 0
+    t = take(current[cpu])
+    if t != 0:
+        n = t.id
+    thread_release(t)
+    return n
+def main() -> u64:
+    rq_push_q(0, adopt(mk(1, 0)))
+    rq_push_q(0, adopt(mk(2, 1)))
+    rq_push_q(0, adopt(mk(3, 2)))
+    rq_push_q(0, adopt(mk(4, 0)))
+    rq_push_q(0, adopt(mk(5, 2)))
+    show(1)
+    show(1)
+    show(1)
+    show(0)
+    show(0)
+    show(0)
+    put_u64(rq_len[0] * 100 + rq_steals * 10 + (rq_tail[0] == 0))
+    puts(" ")
+    put_u64(cur_thread(0).id * 10 + cur_thread(1).id)
+    puts(" FIFO order, pinned threads skipped, stealing counted, current[] views\n")
+    rq_push_q(1, adopt(mk(6, 0)))
+    rq_push_q(1, adopt(mk(7, 0)))
+    rq_push_q(2, adopt(mk(8, 3)))
+    show(2)
+    show(2)
+    show(2)
+    show(2)
+    put_u64(rq_len[1] * 1000 + rq_len[2] * 100 + rq_steals * 10 + (rq_tail[1] == 0) + (rq_tail[2] == 0))
+    puts(" own queue first, then the next queues\n")
+    put_u64(drain(0) * 10 + drain(1))
+    puts(" current drained\n")
+    return 0

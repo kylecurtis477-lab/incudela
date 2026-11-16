@@ -33,6 +33,13 @@ kexec handoff (SYSTEMS.md "Process-state format", `pstate.fsi`), the nondetermin
   (preempted / yield); RUNNING -> BLOCKED (`wq_block_l`); BLOCKED -> READY (`wake_l`);
   RUNNING -> DEAD (`thread_exit`). No other transition is legal.
 - Every pick passes the nondeterminism hook (`nd_hook(ND_SCHED, cpu, thread)`).
+- Ownership (Stage 3e): each thread has at most one owner at a time. The run queue owns its READY threads
+  (`rq_head[q]: nown[Thread]`, then `Thread.rq_next`; `rq_tail[q]` is a non-owning view), `current[cpu]`
+  owns the running thread and `idle_thr[cpu]` the idle thread while it is not running. The owner is
+  created once by `thread_adopt` (`thread_start_ready`, `wake_l`, `sched_cpu_init`), which panics on a
+  thread that already has one, and is given up in `schedule_l` when the thread blocks (its raw wait-queue
+  link holds it until `wake_l`) or dies (`thread_reap` frees it through its handle). `schedule_l` has one
+  transfer point, `replace(current[cpu], nxt)`; `cur_thread()` is a non-owning view of `current[cpu]`.
 - Each thread has a 16 KiB kernel stack with a guard page; overflowing it ends the thread
   (`thread_overflow_exit`), not the kernel.
 
@@ -103,7 +110,8 @@ Two independent layers; a call must pass both.
 ## 4. Guarantees the rest of the system may rely on
 1. No syscall widens a handle right or a process capability.
 2. Capability checks happen before any side effect of a syscall.
-3. A blocked thread is on exactly one wait queue; a READY thread on exactly one run queue.
+3. A blocked thread is on exactly one wait queue; a READY thread on exactly one run queue (the queue
+   owns it, so pushing a thread that already has an owner panics in `thread_adopt`).
 4. Moved handles exist in exactly one place (sender table, channel slot, or receiver table).
 5. Scheduler choices, timer ticks, syscall results and random values all pass `nd_hook`.
 

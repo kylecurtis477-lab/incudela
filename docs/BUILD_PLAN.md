@@ -324,6 +324,21 @@ count stays at or under 709.
      records proved layout-compatible at every offset across the old and new kernel, adopted once by the receiver and
      released by `kx_release`; no casting the raw region into several owning pointers. The kernel unsafe count stays
      at or under 709 through all of it.
+     *Status (3e, run queue): done (2026-11-15).* `rq_head`, `current` and `idle_thr` are `nown[Thread][8]`; the
+     queue is linked through a new owning field `Thread.rq_next: nown[Thread]` (wait queues keep the raw `next`),
+     `rq_tail` stays a non-owning `u64` view. `rq_push(own[Thread])`, `rq_pop(cpu) -> nown[Thread]` (safe code:
+     `rq_take_first` takes the chain off `rq_head[q]`, re-links the threads it skips in order and hands back the
+     first that may run on `cpu`; same placement, pinning, stealing and counters as before) and one owning append,
+     `rq_link`, whose mut[Thread] to the tail is the only unsafe step (the tail is owned by the chain, rq_lock held).
+     Owners are made only by `thread_adopt` (raw handle -> own; `Thread.rq_owned` makes a second adoption panic):
+     `thread_start_ready`, `wake_l`, `sched_cpu_init` and the Linux clone path. `schedule_l` keeps cur's owner in
+     `current[cpu]` until the one transfer point `old = replace(current[cpu], nxt)`, then returns `old` to the run
+     queue (running), to `idle_thr` (idle) or gives it up (blocked: the wait queue's raw link until `wake_l`; dead:
+     `thread_reap`'s handle). `cur_thread()` is a take/replace view of `current[cpu]`; mutex owners compare
+     `u64(cur_thread())`. No compiler change. Kernel unsafe report 170 functions / 708 ops -> 168 / 701 (rq_push 1
+     -> 0, rq_pop 4 -> 0, schedule_l 4 -> 1, wq_block_l and sleep_ticks 1 -> 0 and no longer @unsafe; new
+     thread_adopt 1, rq_link 2); tests/unsafe/baseline.txt ratcheted to 168 / 701. Model test tests/own/runqueue_ok
+     (FIFO, pinned skips, stealing, the tail view, current[] views); tests/own 177 checks.
    - *Gate infrastructure (2026-11-13):* a box reset removed the QEMU/GRUB/xorriso/OVMF packages and failed a
      gate on setup, not code. tools/ostools.forge now checks the OS-test toolchain and reinstalls what is missing
      (signed Debian index and .debs fetched with curl, installed by apt offline); the gate harness runs it after

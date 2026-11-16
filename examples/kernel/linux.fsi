@@ -329,7 +329,7 @@ def lx_clone(frame: u64, flags: u64, stack: u64, ptid: u64, ctid: u64, tls: u64)
     p.nxthr += 1
     p.nmade += 1
     lx_nthreads += 1
-    rq_push(ct)
+    rq_push(thread_adopt(ct))
     spin_unlock(addr(rq_lock))
     irq_restore(f)
     return ct.id
