@@ -25,7 +25,10 @@ old names as history.
 | ESP folder `\EFI\Forge\`, loader `forgex64.efi` | `\EFI\Incudela\`, `incudelax64.efi`; old disks keep booting from `\EFI\Forge\` until `tools/espmigrate.cud` moves them ([docs/tools-espmigrate.md](docs/tools-espmigrate.md)) |
 
 Kept for one release: `./forge` (runs `./cuditor`), `# forge:` pragmas, imports of `.forge` modules,
-`forge.toml`/`forge.lock`, `FORGEC_FLAGS`, `FORGE_GUID_SEED` and the `forge.` boot command-line keys. Kept for
+`forge.toml`/`forge.lock`, `FORGEC_FLAGS`, `FORGE_GUID_SEED` and the `forge.` boot command-line keys; they are
+removed in 0.22.0. Each of them except the boot keys prints one `warning: OLD is deprecated, use NEW` line on stderr
+and otherwise gives byte-for-byte the same output as the new name (tests/oldnames; cudseal's `forge: caps(...)`
+lines are checked in tests/cudseal). Kept for
 good (on-disk and wire formats): the magics `FORGEKRN` (kernel header), `FORGEFS1` (Incudela FS superblock)
 and `FORGEPRF` (seal proof slot), the Incudela FS partition type GUID D0C2E3A1-6B7F-4F0A-9E11-466F72676546, the
 Linux personality's `uname` strings, and internal symbol names such as `forge_alloc` and `forge_py_*`.

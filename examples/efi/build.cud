@@ -11,6 +11,17 @@
 import os
 import sys
 
+def cudc_flags():
+# $CUDC_FLAGS; the pre-rename $FORGEC_FLAGS still works, with a warning, until 0.22.0
+    v = os.getenv("CUDC_FLAGS")
+    if v is None:
+        v = os.getenv("FORGEC_FLAGS")
+        if v is not None:
+            eputs("warning: FORGEC_FLAGS is deprecated, use CUDC_FLAGS (renamed 2026-11-16; the old name is removed in 0.22.0)")
+    if v is None:
+        return ""
+    return v
+
 def step(args):
     r = os.run(args)
     os.write(1, r[1])
@@ -35,7 +46,7 @@ def main():
     # 12.1 step 3b: the loader is built with --fs-opt (it has no hand-written asm; the UEFI entry wrapper
     # saves rdi/rsi and firmware calls preserve rbx/rsi/rdi/r12-r15, a superset of what SysV needs)
     flags = ["--fs-opt"]
-    for f in os.getenv("CUDC_FLAGS", os.getenv("FORGEC_FLAGS", "")).split():
+    for f in cudc_flags().split():
         flags.append(f)
     step(["../../build/cudc", "loader.cud", b + "/loader.s"] + flags)
     step(["../../build/fas", "-o", b + "/loader.o", b + "/loader.s"])

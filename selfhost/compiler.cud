@@ -819,7 +819,27 @@ def has_pragma(src, p):
     if contains(src, concat("# cuditor: ", p)):
         return 1
     if contains(src, concat(concat("# for", "ge: "), p)):
+        deprecated(concat(concat("`# for", "ge: "), concat(strip_nl(p), "`")), concat(concat("`# cuditor: ", strip_nl(p)), "`"))
         return 1
+    return 0
+
+def strip_nl(p):
+    if len(p) > 0 and char_at(p, len(p) - 1) == 10:
+        return substr(p, 0, len(p) - 1)
+    return p
+
+dep_said = ""
+
+# one stderr warning per old spelling and compile (not in --diag-json mode, whose stderr is JSON lines);
+# the code generated is the same as for the new spelling
+def deprecated(old, new):
+    global dep_said
+    key = concat(concat("|", old), "|")
+    if contains(dep_said, key):
+        return 0
+    dep_said = concat(dep_said, key)
+    if diag_json == 0:
+        eputs(concat(concat(concat(concat("warning: ", old), " is deprecated, use "), new), " (renamed 2026-11-16; the old name is removed in 0.22.0)"))
     return 0
 def atoi(s):
     i = 0
@@ -6253,6 +6273,8 @@ def load_mod(name, dir):
     if ms is None:
         ext = concat(".for", "ge")
         ms = read_file(concat(concat(dir, name), ext))
+        if ms is not None:
+            deprecated(concat(concat("module file ", dir), concat(name, ext)), concat(concat(dir, name), ".cud"))
     if ms is None:
         return 0
     ms = test_desugar(ms, 0)

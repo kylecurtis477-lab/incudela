@@ -11,6 +11,17 @@
 import os
 import sys
 
+def cudc_flags():
+# $CUDC_FLAGS; the pre-rename $FORGEC_FLAGS still works, with a warning, until 0.22.0
+    v = os.getenv("CUDC_FLAGS")
+    if v is None:
+        v = os.getenv("FORGEC_FLAGS")
+        if v is not None:
+            eputs("warning: FORGEC_FLAGS is deprecated, use CUDC_FLAGS (renamed 2026-11-16; the old name is removed in 0.22.0)")
+    if v is None:
+        return ""
+    return v
+
 def step(args):
     r = os.run(args)
     os.write(1, r[1])
@@ -53,7 +64,7 @@ def main():
     # Step 4c: --fs-temps (implies --fs-live) passes call arguments in registers and loads constants without
     # the stack; it only rewrites compiler-generated pushes, so the asm audit still covers it
     flags = ["--fs-temps"]
-    for f in os.getenv("CUDC_FLAGS", os.getenv("FORGEC_FLAGS", "")).split():
+    for f in cudc_flags().split():
         flags.append(f)
     # the user programs and BusyBox (examples/user/build.cud, tools/busybox/build.cud)
     step(["../../cuditor", "../../tools/busybox/build.cud", "-o", "../../build/busybox-build"])

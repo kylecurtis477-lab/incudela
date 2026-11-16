@@ -116,6 +116,8 @@ def exists(path):
     except FileNotFoundError:
         return False
 
+WARNED = []
+
 def old_name(path):
 # cuditor.toml / cuditor.lock were forge.toml / forge.lock before the rename (2026-11-16); still read for one release
     for n in ["toml", "lock"]:
@@ -126,6 +128,9 @@ def old_name(path):
 def readf(path):
     if not exists(path):
         if old_name(path) != path and exists(old_name(path)):
+            if old_name(path) not in WARNED:
+                WARNED.append(old_name(path))
+                sys.stderr.write("warning: " + old_name(path) + " is deprecated, use " + path + " (renamed 2026-11-16; the old name is removed in 0.22.0)\n")
             return read_file(old_name(path))
         die("missing file " + path)
     return read_file(path)

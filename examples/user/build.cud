@@ -14,6 +14,17 @@
 import os
 import sys
 
+def cudc_flags():
+# $CUDC_FLAGS; the pre-rename $FORGEC_FLAGS still works, with a warning, until 0.22.0
+    v = os.getenv("CUDC_FLAGS")
+    if v is None:
+        v = os.getenv("FORGEC_FLAGS")
+        if v is not None:
+            eputs("warning: FORGEC_FLAGS is deprecated, use CUDC_FLAGS (renamed 2026-11-16; the old name is removed in 0.22.0)")
+    if v is None:
+        return ""
+    return v
+
 def step(args):
     r = os.run(args)
     os.write(1, r[1])
@@ -76,7 +87,7 @@ def main():
     if not os.path.isdir(out):
         os.mkdir(out)
     flags = ["--fs-opt"]  # step 3c: user programs get fs-mode register allocation too
-    for f in os.getenv("CUDC_FLAGS", os.getenv("FORGEC_FLAGS", "")).split():
+    for f in cudc_flags().split():
         flags.append(f)
     s = "../../build/cudseal"
     step(["../../build/cudc", "../../tools/cudseal.cud", s + ".s"])

@@ -3,7 +3,10 @@
 set -e
 D="$(cd "$(dirname "$0")" && pwd)"
 # CUDC_FLAGS was FORGEC_FLAGS before the Cuditor rename (2026-11-16); the old name is honoured for one release
-[ -z "${CUDC_FLAGS+x}" ] && [ -n "${FORGEC_FLAGS+x}" ] && export CUDC_FLAGS="$FORGEC_FLAGS"
+if [ -z "${CUDC_FLAGS+x}" ] && [ -n "${FORGEC_FLAGS+x}" ]; then
+  echo "warning: FORGEC_FLAGS is deprecated, use CUDC_FLAGS (renamed 2026-11-16; the old name is removed in 0.22.0)" >&2
+  export CUDC_FLAGS="$FORGEC_FLAGS"
+fi
 # cuditor test [files] / cuditor verify [files] : JSON reports (tools/cud_test.cud, tools/cud_verify.cud;
 # tools/cud_test.sh and tools/cud_verify.sh are kept as the references)
 if [ "$1" = "test" ]; then
