@@ -348,12 +348,12 @@ def lock_text(reg, root, sel, mans):
 
 def read_lock(path):
 # -> (header dict, list of package dicts)
-    if not exists(path):
+    if not exists(path) and not exists(old_name(path)):
         die("no cuditor.lock (run `cuditor pkg lock`)")
     hdr = {}
     pk = []
     cur = hdr
-    for raw in read_file(path).split("\n"):
+    for raw in readf(path).split("\n"):
         l = raw.strip()
         if len(l) == 0 or l[0] == "#":
             continue
@@ -407,7 +407,7 @@ def cmd_stage(reg, out):
     for dn in root["deps"]:
         if not (dn in sel) or not vmatch(root["dependencies." + dn], sel[dn]):
             die("cuditor.lock does not satisfy " + dn + " " + root["dependencies." + dn])
-    if lock_text(reg, root, sel, mans) != read_file("cuditor.lock"):
+    if lock_text(reg, root, sel, mans) != readf("cuditor.lock"):
         die("cuditor.lock was edited or is stale (run `cuditor pkg lock`)")
     owner = {}
     srcs = []

@@ -815,7 +815,7 @@ def contains(s, p):
 
 
 def has_pragma(src, p):
-# a `# cuditor: p` pragma; the old `# cuditor: p` spelling is still accepted for one release (renamed 2026-11-16)
+# a `# cuditor: p` pragma; the old `# forge: p` spelling is still accepted for one release (renamed 2026-11-16)
     if contains(src, concat("# cuditor: ", p)):
         return 1
     if contains(src, concat(concat("# for", "ge: "), p)):
@@ -6241,7 +6241,7 @@ lmods = list(256)
 nlm = 0
 
 def load_mod(name, dir):
-# lex dir/name.cud (or the old dir/name.cud) once; returns 1 if it is a user module
+# lex dir/name.cud (or the old dir/name.forge) once; returns 1 if it is a user module
     global num, nlm, lex_fname
     if find(lmods, nlm, name) >= 0:
         return 1
