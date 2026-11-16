@@ -4,7 +4,8 @@
 # kernel is built from an older commit (KXC_OLD, default 61b3e85: the last one before the Stage 3e/3f run queue
 # and handoff-record conversions) and it kexecs into this tree's kernel-next.elf, which must adopt the old
 # kernel's handoff (format v5, process-state v2 records, driver-state record), then hand over once more to itself.
-#   kexec-compat-build    the old tree (git archive of KXC_OLD, no worktree, no change to this repository) builds
+#   kexec-compat-build    the old tree (git archive of KXC_OLD, no worktree, no change to this repository; old
+#                         build plus the 411b601 self-test teardown fix, handoff format untouched) builds
 #                         its compiler, kernel, ISO and ESP disk; user programs are sealed with this tree's key so
 #                         both kernels trust the same images; the old kernel differs from this tree's kernel.elf
 #   kexec-old-to-new      BIOS boot of the old ISO, the usual shell session, `kexec next` into the new kernel
@@ -26,6 +27,17 @@ git rev-parse -q --verify "$OLD^{commit}" >/dev/null || fail_all "commit $OLD no
 # the old tree, built like a fresh checkout; its logs stay in $L for a failure report
 O=$T/old
 mkdir -p $O && git archive "$OLD" | tar -x -C $O || fail_all "git archive $OLD"
+# old build plus the 411b601 self-test teardown fix; the handoff format is untouched. The old tlb_test freed its
+# workers once they had reported, while they could still be running, and panicked "thread_free: thread still
+# alive" under host load (inv167 repeats); this one line makes it reap them (wait for T_DEAD) like this tree does
+OK=$O/examples/kernel/kernel.cud; [ -f $OK ] || OK=$O/examples/kernel/kernel.forge
+FREE="^        thread_free(ptr\[Thread\](ths\[i\]))$"
+if [ "$(grep -c "$FREE" $OK)" = 1 ]; then
+  sed -i "s/$FREE/        thread_reap(ptr[Thread](ths[i]))/" $OK
+  grep -q "$FREE" $OK && fail_all "tlb_test teardown fix did not apply to $OLD"
+elif grep -q "$FREE" $OK; then
+  fail_all "more than one tlb_test-style thread_free in $OLD"
+fi
 mkdir -p $O/build/user && cp build/user/seal.key build/user/seal2.key $O/build/user/ || fail_all "seal keys"
 ( cd $O && ./build.sh ) > $L/kxcompat-build.log 2>&1
 grep -q "^SEED OK" $L/kxcompat-build.log || fail_all "old compiler build, see $L/kxcompat-build.log"

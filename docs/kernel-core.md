@@ -199,7 +199,9 @@ the GPT image to be byte-identical after the loader boot. The bios suite repeats
 (`kexec: generation 3 kernel adopted`). Those handoffs are between kernels built from the same tree,
 so a record layout change on both sides would still agree with itself; tests/os/kexec-compat.sh closes that
 gap. `os/kexec-compat-build` builds an older commit (`KXC_OLD`, default 61b3e85, the last one before the
-Stage 3e/3f conversions) from `git archive` with this tree's seal key and requires its `kernel.elf` to differ;
+Stage 3e/3f conversions) from `git archive` with this tree's seal key and requires its `kernel.elf` to differ
+(old build plus the 411b601 self-test teardown fix; the handoff format is untouched: its tlb_test reaps its
+workers instead of freeing them while they may still run, which panicked under host load);
 `os/kexec-old-to-new` boots that old ISO and `kexec next`s into this tree's `kernel-next.elf` and then once more
 into itself (`kexec: generation 1 kernel adopted`, `kexec: generation 2 kernel adopted`), with the shell, its fd
 and the input service state carried across.
