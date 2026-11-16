@@ -15,8 +15,9 @@
 # failure) is reported with the seed and program index and fails the run (exit 1).
 # The programs exercise what --fs-opt rewrites: many scalar locals (more than the free registers), up to 8
 # parameters (stack arguments), calls between functions (callee-saved promotion), bounded loops, narrow casts,
-# unsigned shifts and compares, division and modulo by constants (magic numbers) and by variables, frame arrays
-# indexed by masked values, array parameters (rep movsb copies) and addr() of a local (step 4a pinning).
+# unsigned shifts and compares, negated and and/or conditions, division and modulo by constants (magic numbers)
+# and by variables, frame arrays indexed by masked values, array parameters (rep movsb copies) and addr() of a
+# local (step 4a pinning).
 # No undefined behaviour: ints wrap, divisors are positive, shift counts are masked, indices are masked, every
 # loop has a constant bound. Deterministic: the same seed writes the same programs.
 import os
@@ -65,6 +66,16 @@ def expr(vs, d):
     return "(0 - " + a + ")"
 
 def cond(vs):
+# a condition: a comparison, sometimes negated or two joined by and/or (so the 0/1 values and short-circuit
+# jumps these compile to are exercised too)
+    k = rnd(8)
+    if k == 0:
+        return "not (" + cmp1(vs) + ")"
+    if k == 1:
+        return cmp1(vs) + " " + pick(["and", "or"]) + " " + cmp1(vs)
+    return cmp1(vs)
+
+def cmp1(vs):
     a = expr(vs, 1)
     b = expr(vs, 1)
     if rnd(2) == 0:

@@ -909,6 +909,10 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      Kernel .text 529,365 to 465,056 bytes (-12.1%), `(%rsp)` operands in kernel.s 8,204 to 899, `push %rax`
      13,117 to 3,912. The QEMU boot suite at O2 and O0 is the test. The loader, modules and user programs stay
      on `--fs-opt` for now.
+   - *fsfuzz conditions (2026-11-16).* tools/fsfuzz.cud's generator now negates one condition in eight
+     (`not (a < b)`) and joins two compares with `and`/`or` in another one in eight, so the 0/1 comparison values
+     and short-circuit jumps that step 4d works on are in every fuzz run (the programs of every seed change). On
+     the unchanged compiler: `fsfuzz --seed 1 --n 20` and `fsfuzz --combos --seed 7 --n 3` agree.
    - *Asm audit as a checked list (2026-11-12).* The step 3 audit table in docs/SYSTEMS.md ("Kernel asm and
      --fs-opt") is now a `- [x]` checklist covering the kernel and the user programs, and tests/asm-audit/run.sh
      keeps it complete: it lists every `@naked` function, every top-level `asm(...)` block (its `.globl` symbols,

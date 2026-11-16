@@ -73,7 +73,8 @@ results. A function can have:
 - `if`/`else` blocks and nested `while` loops with constant bounds. Loop counters are read-only inside the loop, so
   every program ends.
 - wrapping `+ - *`, `& | ^`, shifts by masked counts, unsigned shifts, narrow casts (u8, i8, u16, i32, u32), signed
-  and unsigned compares, division and modulo by constants (the magic-number path) and by variables forced positive
+  and unsigned compares (since 2026-11-16 one condition in eight is negated with `not (...)` and one in eight joins
+  two compares with `and`/`or`, so 0/1 comparison values and short-circuit jumps are exercised), division and modulo by constants (the magic-number path) and by variables forced positive
   (`(b & 1023) + 1`), and array reads and writes with masked indices.
 
 None of this is undefined: ints wrap, divisors are positive, shift counts and indices are masked. The programs are
