@@ -72,7 +72,7 @@ being reported as a bare `qemu rc=-9` (which was just the harness's own SIGKILL)
 - **SLOW**: serial output was still arriving, so the deadline is extended (up to 2x the timeout) and the
   line says SLOW with the time used.
 - **HANG**: no serial output for 60 s (`FORGE_BOOT_STALL`). The vCPU state (`info cpus`,
-  `info registers -a`, 64 words at each vCPU's stack: RSP (ESP before long mode) is parsed from the register dump and read with `cpu N` + `x/64gx 0xADDR`, because QEMU's HMP has no `$rsp`, so the old `x/64gx $rsp` only printed "unknown register") is saved to `LOG.hangN`. A HANG is always a FAIL: the boot
+  `info registers -a`, 64 words at each vCPU's stack: RSP (ESP before long mode) is parsed from the register dump and read with `cpu N` + `x/64gx 0xADDR`, because QEMU's HMP has no `$rsp`, so the old `x/64gx $rsp` only printed "unknown register") is saved to `LOG.hangN`, followed by the interrupt-delivery state: `info pic` (8259 and IOAPIC, with masks), `info irq` (per-IRQ counts) and `info lapic N` for every vCPU (IRR/ISR/TPR and LVT masks), so a hang with interrupts enabled (inv167's lost keyboard input after kexec) shows where an IRQ stopped. A HANG is always a FAIL: the boot
   is retried once only for information (`FLAKY os/NAME ... informational retry PASS`, `[retry PASS; a HANG
   always fails, dump kept ...]`), so a real hang can never be hidden by a lucky second boot.
   `FORGE_BOOT_NO_RETRY=1` skips the retry.

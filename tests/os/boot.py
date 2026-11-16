@@ -96,6 +96,14 @@ def monitor(cmd, wait=1.0):
     except Exception as ex:
         return f'[monitor {cmd!r} failed: {ex}]'
 
+def irq_dump():
+    """interrupt delivery at a hang: 8259/IOAPIC masks ('info pic'), per-IRQ counts ('info irq') and each vCPU's
+    local APIC ('info lapic N'), as in boot.cud"""
+    out = '---- info pic ----\n' + monitor('info pic') + '\n---- info irq ----\n' + monitor('info irq')
+    for i in range(monitor('info cpus').count('CPU #')):
+        out += f'\n---- info lapic {i} ----\n' + monitor(f'info lapic {i}')
+    return out + '\n'
+
 def stack_dump(regs):
     """64 words at each vCPU's rsp, parsed from 'info registers -a' (QEMU's HMP has no $rsp register
     name: 'x/64gx $rsp' only printed "unknown register"). 'cpu N' selects the vCPU (its CR3) first."""
@@ -138,7 +146,7 @@ def boot(attempt):
                 open(dump, 'w').write(f'hang: no serial output for {now - tlast:.0f}s (stopped at +{tlast - t0:.0f}s), '
                     f'load {open("/proc/loadavg").read().split()[0]}\nlast line: {last_line(buf.decode("latin-1"))}\n\n'
                     + monitor('info cpus') + '\n' + (regs := monitor('info registers -a', 2.0))
-                    + '\n' + stack_dump(regs))
+                    + '\n' + stack_dump(regs) + '\n' + irq_dump())
                 break
         if now >= deadline:
             if now < t0 + 2 * float(tmo):
