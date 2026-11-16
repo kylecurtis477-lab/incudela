@@ -61,5 +61,6 @@ VD="-drive file=$T/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio
 M="multiboot2 (BIOS)|kernel version: forge-kernel 0.2.6|KERNEL OK|kexec: generation 1 kernel (kernel-next.elf) loaded at"
 M="$M|kexec: handoff format v5 from forge-kernel 0.2.6 (this kernel, incudela-kernel 0.2.6-next, adopts v5..v5)"
 M="$M|ESP: no \\EFI\\Incudela\\ yet, reading the old \\EFI\\Forge\\ (tools/espmigrate.cud migrates it)|kexec: generation 1 kernel adopted|hashes ok; handoff region|sh: survived kexec: |hello: args = 'after kexec'"
+M="$M|from the build that wrote the old \\EFI\\Forge\\ (not migrated yet), not this build"
 M="$M|driver state carried across kexec OK|kexec handoff OK|kexec: generation 2 kernel adopted"
 FORGE_BOOT_KEXEC=2 $B kexec-old-to-new $L/kxcompat.log 200 "$M" "$FB" -- $Q $VD -boot d -cdrom $O/build/kernel/forge.iso

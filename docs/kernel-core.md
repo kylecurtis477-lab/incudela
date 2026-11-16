@@ -204,7 +204,11 @@ Stage 3e/3f conversions) from `git archive` with this tree's seal key and requir
 workers instead of freeing them while they may still run, which panicked under host load);
 `os/kexec-old-to-new` boots that old ISO and `kexec next`s into this tree's `kernel-next.elf` and then once more
 into itself (`kexec: generation 1 kernel adopted`, `kexec: generation 2 kernel adopted`), with the shell, its fd
-and the input service state carried across.
+and the input service state carried across. The old ISO's disk still has the pre-rename `\EFI\Forge\` layout,
+so the new kernel reads it through the alias and its init.elf identity check accepts the old build's init.elf
+(`from the build that wrote the old \EFI\Forge\ (not migrated yet), not this build`); on a disk with
+`\EFI\Incudela\` a differing init.elf still panics (`init.elf contents differ`). The user-mode block driver's read of init.elf is then compared with the in-kernel driver's read instead of
+the build output.
 
 **Linux personality, modules, live patch, nondeterminism.** `lxtest: PASS`, `lxthreads: PASS`,
 `lxfs: PASS`, `lxexec: PASS`, `lxsig: PASS`, and BusyBox ash (`hello from ash, forge`,

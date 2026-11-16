@@ -5,6 +5,7 @@ fs_fat: u64  # FAT start LBA
 fs_data: u64  # cluster 2 LBA
 fs_root: u64
 fs_alias: u64  # 1 after fs_mount: EFI/Incudela may resolve to the old EFI/Forge (fs_lookup_at)
+fs_oldesp: u64  # 1 when fs_mount found only the old \EFI\Forge\ (a disk written before the rename)
 fs_sec: u64  # scratch sector (kmalloc 512)
 fs_fatsec_lba: u64
 fs_fatsec: u64
@@ -83,10 +84,12 @@ def fs_mount() -> u64:
     # yet is read through the alias in fs_lookup_at (EFI/Incudela -> EFI/Forge), never written
     ent: u8[32]
     fs_alias = 0
+    fs_oldesp = 0
     if fs_lookup("EFI/Incudela", u64(addr(ent[0]))) == 1:
         puts("ESP: kernel files under \\EFI\\Incudela\\\n")
     elif fs_lookup("EFI/Forge", u64(addr(ent[0]))) == 1:
         puts("ESP: no \\EFI\\Incudela\\ yet, reading the old \\EFI\\Forge\\ (tools/espmigrate.cud migrates it)\n")
+        fs_oldesp = 1
     fs_alias = 1
     return 1
 

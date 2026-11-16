@@ -1129,17 +1129,26 @@ def fs_test():
     puts(" bytes, ")
     put_u64(vb_reads)
     puts(" virtio requests")
+    # an unmigrated pre-rename disk carries the init.elf of the build that wrote it (kexec from an older
+    # kernel, tests/os/kexec-compat.sh); it is still run, the identity check needs this build's ESP
     if same:
         puts(", identical to the build output")
+    elif fs_oldesp == 1:
+        puts(", from the build that wrote the old \\EFI\\Forge\\ (not migrated yet), not this build")
     putc(10)
-    if same == 0:
+    if same == 0 and fs_oldesp == 0:
         panic("init.elf contents differ")
     t = proc_spawn(buf, sz)
     if u64(t) == 0:
         panic("init.elf rejected by ELF loader")
     id = t.id
     code = proc_reap(t)
-    kfree(buf)
+    # old-layout disk: the in-kernel driver's read is the reference for the user-mode driver's (blk_same)
+    if same == 0:
+        init_ref = buf
+        init_ref_sz = sz
+    else:
+        kfree(buf)
     puts("init (pid ")
     put_u64(id)
     puts(") from disk exited with ")
@@ -1291,11 +1300,19 @@ def module_test():
 
 blkd_img: u64
 blkd_sz: u64
+init_ref: u64  # fs_test's in-kernel read of an older build's init.elf (unmigrated \EFI\Forge\ disk), else 0
+init_ref_sz: u64
 
+# the init.elf read through the user-mode driver must equal this build's init, or on an unmigrated
+# disk the in-kernel driver's read of the older build's init.elf (fs_test)
 @unsafe
 def blk_same(buf: u64, sz: u64) -> u64:
     hi = uimg(0)
-    if sz != uimg(1) - hi:
+    n = uimg(1) - hi
+    if init_ref != 0:
+        hi = init_ref
+        n = init_ref_sz
+    if sz != n:
         return 0
     i: u64 = 0
     while i < sz:
