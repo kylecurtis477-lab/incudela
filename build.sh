@@ -35,6 +35,6 @@ build/fas -o build/stage3.chk.o build/stage3.s && cmp build/stage3.o build/stage
 if cmp -s build/fas $SAS && cmp -s build/fld seed/fld-seed; then echo "SEED TOOLS OK: rebuilt fas/fld are byte-identical to the seed fas/fld"; else echo "SEED NOTE: fas/fld differ from the seed (tools/reseed.sh)"; fi
 if [ "${FORGE_RUST_CHECK:-0}" = 1 ]; then
   cargo build --release -q
-  ./target/release/mylang selfhost/cudc.cud -o build/stage1.rust
+  ./target/release/cuditor-bootstrap selfhost/cudc.cud -o build/stage1.rust
   build/stage1.rust selfhost/cudc.cud build/stage2.rust.s && cmp build/stage2.s build/stage2.rust.s && echo "RUST CROSS-CHECK OK: Rust bootstrap stage1 produces the same stage2.s"
 fi

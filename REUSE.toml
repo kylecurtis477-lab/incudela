@@ -1,0 +1,39 @@
+# REUSE.toml: the license of every path (REUSE specification 3.2, https://reuse.software/spec-3.2/).
+# Incudela, the operating system, is Apache-2.0; Cuditor, the language and its tools, is MIT (LICENSE).
+# Later annotations override earlier ones for the paths they match ("override"); an SPDX header inside a
+# file wins over both.
+version = 1
+
+[[annotations]]
+path = "**"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Kyle Curtis"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
+  "examples/kernel/**", "examples/efi/**", "examples/user/**", "examples/modules/**", "examples/apps/**",
+  "tools/cudseal*", "tools/incudela-part*", "tools/krel*", "tools/mkfont*", "tools/ostools.cud",
+  "tools/repro-*", "tools/ed25519*", "tools/busybox/**",
+  "tests/os/**", "tests/dwarf/**", "tests/cudseal/**", "tests/incudela-part/**", "tests/krel/**",
+  "tests/mkfont/**", "tests/mkgpt/**", "tests/ed25519/**", "tests/ed25519-tool/**", "tests/efi-build/**",
+  "tests/kernel-build/**", "tests/modules-build/**", "tests/user-build/**", "tests/busybox-build/**",
+  "tests/bzip2/**", "tests/pecheck/**", "tests/memimg/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Kyle Curtis"
+SPDX-License-Identifier = "Apache-2.0"
+
+# BusyBox's build configuration (its own Kconfig format, applied to the GPL-2.0 BusyBox sources)
+[[annotations]]
+path = "tools/busybox/busybox.config"
+precedence = "override"
+SPDX-FileCopyrightText = "BusyBox authors; 2026 Kyle Curtis (option choices)"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+# upstream release-signing public keys (musl, CPython), kept only to verify the downloaded sources
+[[annotations]]
+path = ["tools/busybox/keys/**", "tools/cpython/keys/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "the respective upstream release managers"
+SPDX-License-Identifier = "LicenseRef-public-key"

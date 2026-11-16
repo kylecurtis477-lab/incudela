@@ -1,0 +1,3 @@
+Public keys of upstream release signers (musl, CPython), kept in this repository only so the
+build can verify the sources it downloads. They are not covered by this project's licenses;
+they are published by their owners for exactly this use.

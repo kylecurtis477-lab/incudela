@@ -1,6 +1,7 @@
 # Forge
 
-Forge is a small language with Python-like syntax. It is compiled ahead of time to x86-64 Linux assembly (GNU `as`, AT&T syntax) and linked with `ld`. It has no libc and no runtime dependencies. The compiler, `selfhost/cudc.cud`, is written in Forge and compiles itself to a fixpoint.
+Forge is a small language with Python-like syntax. It is compiled ahead of time to x86-64 Linux assembly (GNU `as`, AT&T syntax) and linked with `ld`. It has no libc and no runtime dependencies. The compiler, `selfhost/cudc.cud`, is written in Forge and compiles itself to a fixpoint. The language is Cuditor under the MIT License and the OS built with it is Incudela under Apache-2.0: LICENSE says which applies where, REUSE.toml gives every path its SPDX identifier, and the texts are LICENSE-APACHE and LICENSE-MIT (also under LICENSES/ for REUSE tools).
+
 
 ## Status
 - **Renamed (2026-11-16):** the language is now **Cuditor**: sources are `.cud` (library includes `.cudi`), the compiler is `cudc` (`seed/cudc-seed`), the driver is `./cuditor` (`./forge` still works for one release), pragmas are `# cuditor: ...`, packages use `cuditor.toml`/`cuditor.lock`, and the tools are `cudseal`, `incudela-part`, `cud_test`, `cud_verify` and `c2cud`. For one release the compiler still reads `# forge:` pragmas and finds `import`ed modules with the old `.forge` extension, `cuditor pkg` still reads `forge.toml`/`forge.lock`, and `FORGEC_FLAGS`/`FORGE_GUID_SEED` are honoured when `CUDC_FLAGS`/`INCUDELA_GUID_SEED` are unset.
@@ -20,7 +21,7 @@ Forge is a small language with Python-like syntax. It is compiled ahead of time 
 ./run_tests.sh
 bench/run_bench.py         # Forge vs Rust vs CPython (reference; tools/bench.cud is the Forge tracker)
 ```
-Optional bootstrap: `target/release/mylang file.cud [-o out] [-S]`, or `-e 'src'`.
+Optional bootstrap: `target/release/cuditor-bootstrap file.cud [-o out] [-S]`, or `-e 'src'`.
 
 ## Syntax
 ```python

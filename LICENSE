@@ -1,0 +1,19 @@
+Incudela (the operating system) is licensed under the Apache License, Version 2.0 (LICENSE-APACHE).
+Cuditor (the language: compiler, assembler, linker, standard library and language tools) is licensed
+under the MIT License (LICENSE-MIT).
+
+Copyright 2026 Kyle Curtis.
+
+Which license applies to a path is recorded in REUSE.toml (REUSE specification 3.2, SPDX identifiers);
+an SPDX-License-Identifier line inside a file, where present, wins. In short:
+
+  Apache-2.0  examples/kernel, examples/efi, examples/user, examples/modules, examples/apps,
+              tools that build, seal or partition OS images (tools/cudseal*, tools/incudela-part*,
+              tools/krel*, tools/mkfont*, tools/ostools.cud, tools/repro-*, tools/busybox,
+              tools/ed25519*), tests/os, tests/dwarf and the tests of those tools
+  MIT         everything else: selfhost/, std/, seed/, src/ (the Rust bootstrap), tools/fas, fld,
+              fmt, lsp, pkg, embed, c2cud, bench, provenance, the fuzzers, bench/, the compiler's
+              tests, build.sh, run_tests.sh, ./cuditor and the docs
+
+Not covered by either license: third-party sources that the build downloads and verifies but does
+not vendor, such as BusyBox (GPL-2.0) and CPython (PSF-2.0).
