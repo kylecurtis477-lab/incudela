@@ -1,9 +1,58 @@
-<!-- CHANGELOG.md: release notes for Forge from 0.17.1 (5b8e7af) on. Each entry names its commit; the
+<!-- CHANGELOG.md: release notes for Incudela (the OS) and Cuditor (the language), both named Forge until
+     2026-11-16, from 0.17.1 (5b8e7af) on. Each entry names its commit; the
      version-to-commit mapping comes from the project plan. There are no git tags: the versions are
      groupings of commits, not contiguous ranges of history (for example the 0.17.4 fixes 0bbe40c, 4ecde04,
      f5c66be and 2aba6e2 come before the 0.17.2 commits in the log). Newest version first. 0.18.1 is cut as
-     a grouping only; 0.19.0 and 0.20.0 are open. -->
-# Changelog
+     a grouping only; 0.19.0 and 0.20.0 are open. Entries before 0.21.0 use the names of their time
+     (Forge, forgec, c2forge, `\EFI\Forge\`). -->
+# Incudela and Cuditor changelog
+
+## 0.21.1 (unreleased): rename cleanup
+
+- `e67d124` fix: tools/fsfuzz.cud generated its programs with `# forge: no-runtime` and
+  `# forge: stack-protector`, which 0.22.0 would stop reading (the fuzzers would then test the hosted
+  path); they write `# cuditor:`. `cuditor pkg` now really reads a project's old `forge.lock` (it checked
+  and compared only `cuditor.lock`). Two compiler comments name the real old spellings again.
+- `e0f1573` every old spelling kept until 0.22.0 (`# forge:` pragmas and caps lines, `.forge` modules,
+  `forge.toml`/`forge.lock`, `FORGEC_FLAGS`, `FORGE_GUID_SEED`, `./forge`) prints one
+  `warning: OLD is deprecated, use NEW` line on stderr; the output stays byte-identical (tests/oldnames, which clears the old names it does not test, since the O0 gate
+  exports `FORGEC_FLAGS`).
+- `2c242f9` tests: OS hang dumps also record interrupt delivery (`info pic`, `info irq`, `info lapic N`
+  for every vCPU).
+- `5e2c56d` fix(tests): the OS boot harness times guest silence on CLOCK_MONOTONIC. The box VM is
+  suspended now and then and the wall clock jumps; the harness counted the jump as guest silence, which
+  gave the inv167 kexec-old-to-new and inv171 bootpol2 false HANGs (each claimed more silence than the
+  QEMU process had lived). Suspensions are logged and not counted; the stall limit and timeouts are
+  unchanged.
+
+## 0.21.0 (unreleased): Forge becomes Incudela (the OS) and Cuditor (the language)
+
+The old names keep working for this release (README, "Renamed from Forge"); on-disk magics, the FS
+partition type GUID and the Linux personality's `uname` strings are kept for good.
+- `da81abc` the language is Cuditor: `.cud`/`.cudi` sources, the compiler `cudc` (`seed/cudc-seed`), the
+  driver `./cuditor`, `# cuditor:` pragmas, `cuditor.toml`/`cuditor.lock`, `CUDC_FLAGS`,
+  `INCUDELA_GUID_SEED`, and the tools cudseal, incudela-part, cud_test, cud_verify and c2cud.
+- `1aec031` fix: cudseal (and cudseal.py) read `# cuditor: caps(...)` and still the old `# forge:`.
+  After the rename both matched only `forge:`, so every program was sealed with caps 0 and every boot
+  panicked at the `bin/cat` seal check (gate inv165).
+- `81c05dd` licences: Incudela under Apache-2.0, Cuditor under MIT (LICENSE says which applies where;
+  LICENSE-APACHE, LICENSE-MIT, REUSE.toml).
+- `c01b041` the OS is Incudela: `incudela-kernel 0.2.6`, the Incudela UEFI loader, Incudela FS, the
+  `incudela.iommu=`/`incudela.desktop` boot keys (the `forge.` keys still read).
+- `36252c3` fix: tests/t3.expected and tools/incudela-part.cud follow the new name (inv165).
+- `f429c5a` the ESP folder moves from `\EFI\Forge\` to `\EFI\Incudela\` with a one-time migration
+  (tools/espmigrate.cud) that keeps the old folder until the new one boots.
+- `0b6ceeb` fix: a disk not migrated yet may carry an older build's init.elf; the kernel accepts it only
+  from `\EFI\Forge\` (kexec-old-to-new requires the alias line), and migrated disks keep the strict check.
+
+## 0.20.1 (unreleased): self-test race fix
+
+- `411b601` fix: the boot-time tlb_test freed its worker threads after they reported done but possibly
+  before they exited; under host load the kernel panicked "thread_free: thread still alive". It reaps
+  them (waits for T_DEAD), and a new boot self-test (`thread reap: 4 workers ...`) reproduces the race
+  without load.
+- `f334521` tests: kexec-compat builds the old 61b3e85 kernel with that one-line teardown fix ("old build
+  plus the 411b601 self-test teardown fix; the handoff format is untouched").
 
 ## 0.20.0 (unreleased)
 
