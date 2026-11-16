@@ -339,6 +339,19 @@ count stays at or under 709.
      -> 0, rq_pop 4 -> 0, schedule_l 4 -> 1, wq_block_l and sleep_ticks 1 -> 0 and no longer @unsafe; new
      thread_adopt 1, rq_link 2); tests/unsafe/baseline.txt ratcheted to 168 / 701. Model test tests/own/runqueue_ok
      (FIFO, pinned skips, stealing, the tail view, current[] views); tests/own 177 checks.
+     *Status (3f, handoff records): done (2026-11-15).* `struct PsRecord` (pstate.fsi) and `struct KxdRecord`
+     (kexec.fsi, from header +1016) give the process-state v2 record and the driver-state record fields at exactly
+     the documented offsets; `ps_selftest` panics at boot unless every `offsetof` and `sizeof` matches
+     (`ps_layout_ok`, `kxd_layout_ok`), so handoff format v5 and process-state v2 stay byte-identical. The writer
+     turns the zeroed record page into an `own[PsRecord]` once, fills it through field stores (the syscall frame
+     word by word from the caller's frame or the parked thread's kernel stack) and `ps_seal` consumes it (header
+     word and checksum last); the receiver takes one owner per record, `ps_check` (version, then checksum, same
+     panics), reads it through field loads and gives it back with `ps_done` before `kx_release` (the handed-over
+     pids are kept in `oldp[]`, so nothing reads a record afterwards). `kxd_save`/`kxd_adopt` do the same with
+     `kxd_seal`/`kxd_done` on every path. The FPU page and the page index stay raw. Record order, header and
+     checksum checks, panics and boot-log lines are unchanged. Kernel unsafe report 168 / 701 -> 168 / 659
+     (sys_kexec 65 -> 58, kx_restore 56 -> 41, kxd_save 13 -> 3, kxd_adopt 12 -> 2); baseline ratcheted. In the gate
+     both kexec kernels are built from the same tree; the layout checks are what hold the format to older builds.
    - *Gate infrastructure (2026-11-13):* a box reset removed the QEMU/GRUB/xorriso/OVMF packages and failed a
      gate on setup, not code. tools/ostools.forge now checks the OS-test toolchain and reinstalls what is missing
      (signed Debian index and .debs fetched with curl, installed by apt offline); the gate harness runs it after

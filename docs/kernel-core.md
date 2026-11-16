@@ -40,6 +40,9 @@ kexec handoff (SYSTEMS.md "Process-state format", `pstate.fsi`), the nondetermin
   thread that already has one, and is given up in `schedule_l` when the thread blocks (its raw wait-queue
   link holds it until `wake_l`) or dies (`thread_reap` frees it through its handle). `schedule_l` has one
   transfer point, `replace(current[cpu], nxt)`; `cur_thread()` is a non-owning view of `current[cpu]`.
+- kexec handoff records (Stage 3f): process records are `own[PsRecord]` while written (consumed by `ps_seal`)
+  and while adopted (given back by `ps_done` before the region is released); the driver-state record likewise
+  (`KxdRecord`, `kxd_seal` / `kxd_done`). Their layouts are checked against the format at boot.
 - Each thread has a 16 KiB kernel stack with a guard page; overflowing it ends the thread
   (`thread_overflow_exit`), not the kernel.
 

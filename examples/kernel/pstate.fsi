@@ -41,6 +41,49 @@ FNV_PRIME = 0x100000001B3
 FNV_BASIS = 0xCBF29CE484222325
 PS_PAGES = 2
 
+# Stage 3f: the record page as a typed struct, field for field at the offsets above (ps_selftest checks every
+# offset and the size at boot). The writer (sys_kexec) turns the zeroed record page into an own[PsRecord] once,
+# fills it through field stores and hands it to ps_seal, which consumes it; the adopter (kx_restore) gets one
+# own[PsRecord] per record and gives it back through ps_done once its words are read.
+struct PsRecord:
+    pid: u64
+    ppid: u64
+    state: u64
+    exit_code: u64
+    brk_base: u64
+    brk: u64
+    mmap_next: u64
+    flags: u64
+    npg: u64
+    first_pg: u64
+    sc: u64[5]
+    fsbase: u64
+    fds: u64[16]
+    args: u8[128]
+    frame: u64[16]
+    hdr: u64
+    sum: u64
+
+def ps_addr(r: ref[PsRecord]) -> u64:
+# a non-owning view of a record (its address for the word hash and the FPU page after it)
+    return u64(r)
+
+def ps_seal(r: own[PsRecord]):
+# the writer's last step: header word and checksum once every word at +0..+504 is final; consumes the record
+    r.hdr = ps_hdr_word()
+    r.sum = ps_sum_fold(kx_hash(ps_addr(borrow(r)), PS_HDR), r.hdr)
+
+def ps_check(r: ref[PsRecord]):
+# the adopter's first step: a supported version, then the checksum (panics, as before)
+    if ps_hdr_ok(r.hdr) == 0:
+        panic("kexec: process record is not a supported process-state version")
+    if ps_sum_ok(r.hdr, r.sum, kx_hash(ps_addr(r), PS_HDR)) == 0:
+        panic("kexec: process record checksum mismatch")
+
+def ps_done(r: own[PsRecord]):
+# the adopter is done with a record: the owner ends here, before kx_release gives the region back
+    return
+
 def ps_hdr_word() -> u64:
     return (PS_MAGIC << 32) | PS_VERSION
 
@@ -66,9 +109,34 @@ def ps_sum_ok(hdr: u64, stored: u64, body: u64) -> u64:
         return 1
     return 0
 
+def ps_layout_ok() -> u64:
+# 1 if struct PsRecord puts every field at its documented offset (the handoff format must not move)
+    if offsetof(PsRecord, pid) != PS_PID or offsetof(PsRecord, ppid) != PS_PPID or offsetof(PsRecord, state) != PS_STATE:
+        return 0
+    if offsetof(PsRecord, exit_code) != PS_EXIT or offsetof(PsRecord, brk_base) != PS_BRK_BASE:
+        return 0
+    if offsetof(PsRecord, brk) != PS_BRK or offsetof(PsRecord, mmap_next) != PS_MMAP_NEXT:
+        return 0
+    if offsetof(PsRecord, flags) != PS_FLAGS or offsetof(PsRecord, npg) != PS_NPG:
+        return 0
+    if offsetof(PsRecord, first_pg) != PS_FIRST_PG or offsetof(PsRecord, sc) != PS_SYSCALL:
+        return 0
+    if offsetof(PsRecord, fsbase) != PS_FSBASE or offsetof(PsRecord, fds) != PS_FDS:
+        return 0
+    if offsetof(PsRecord, args) != PS_ARGS or offsetof(PsRecord, frame) != PS_FRAME:
+        return 0
+    if offsetof(PsRecord, hdr) != PS_HDR or offsetof(PsRecord, sum) != PS_SUM or sizeof(PsRecord) != PS_SUM + 8:
+        return 0
+    return 1
+
 def ps_selftest():
 # boot check of the header rules: own word accepted; wrong magic, version 0 and a newer version refused; and of
-# the checksum: an intact record accepted, any flipped bit in the body or header refused, a v1 record accepted
+# the checksum: an intact record accepted, any flipped bit in the body or header refused, a v1 record accepted;
+# and of the record layout (struct PsRecord at the documented offsets)
+    if ps_layout_ok() == 0:
+        panic("process-state: PsRecord layout does not match the format")
+    if kxd_layout_ok() == 0:
+        panic("kexec: KxdRecord layout does not match the format")
     if ps_hdr_ok(ps_hdr_word()) == 0 or ps_hdr_ok(ps_hdr_word() ^ (u64(1) << 40)) != 0:
         panic("process-state: header check")
     if ps_hdr_ok(PS_MAGIC << 32) != 0 or ps_hdr_ok(ps_hdr_word() + 1) != 0:

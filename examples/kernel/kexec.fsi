@@ -35,55 +35,105 @@ KXD_MAGIC = 0x5652444B58  # "XKDRV"
 kxd_sent: u64  # entries carried by the sender (set in the receiver once adopted)
 kxd_adopted: u64
 
+KXD_OFF = 1016  # the driver-state record's offset in the header page
+
+# Stage 3f: the driver-state record as a typed struct at exactly the documented offsets (from +1016; checked at
+# boot by kxd_layout_ok). The sender owns it once, fills it through field stores and kxd_seal consumes it; the
+# receiver owns it once and kxd_done gives it back on every path.
+struct KxdRecord:
+    sum: u64  # +1016: hash of +1024..+2048
+    magic: u64
+    nrec: u64
+    kind: u64
+    ver: u64
+    state: u64
+    n: u64
+    commits: u64
+    committed: u64
+    swaps: u64
+    restarts: u64
+    pad: u64[54]
+    ent: u16[256]  # +1536
+
+def kxd_layout_ok() -> u64:
+    if offsetof(KxdRecord, magic) != 1024 - KXD_OFF or offsetof(KxdRecord, nrec) != 1032 - KXD_OFF:
+        return 0
+    if offsetof(KxdRecord, kind) != 1040 - KXD_OFF or offsetof(KxdRecord, ver) != 1048 - KXD_OFF:
+        return 0
+    if offsetof(KxdRecord, state) != 1056 - KXD_OFF or offsetof(KxdRecord, n) != 1064 - KXD_OFF:
+        return 0
+    if offsetof(KxdRecord, commits) != 1072 - KXD_OFF or offsetof(KxdRecord, committed) != 1080 - KXD_OFF:
+        return 0
+    if offsetof(KxdRecord, swaps) != 1088 - KXD_OFF or offsetof(KxdRecord, restarts) != 1096 - KXD_OFF:
+        return 0
+    if offsetof(KxdRecord, ent) != 1536 - KXD_OFF or sizeof(KxdRecord) != 2048 - KXD_OFF:
+        return 0
+    return 1
+
+def kxd_addr(d: ref[KxdRecord]) -> u64:
+    return u64(d)
+
+def kxd_seal(d: own[KxdRecord]):
+    d.sum = kx_hash(kxd_addr(borrow(d)) + 8, 1024)
+
+def kxd_done(d: own[KxdRecord]):
+    return
+
 @unsafe
 def kxd_save(h: u64):
 # called with every other CPU halted and input interrupts off: the journal can no longer change
-    memset(h + 1016, 0, 1032)
-    vstore64(h + 1024, KXD_MAGIC)
+    memset(h + KXD_OFF, 0, 2048 - KXD_OFF)
+    d = own[KxdRecord](ptr[KxdRecord](h + KXD_OFF))
+    d.magic = KXD_MAGIC
     if kb_svc != 0:
         n = kb_head - kb_ack
         if n > KB_JN:
             n = KB_JN
-        vstore64(h + 1032, 1)
-        vstore64(h + 1040, DRV_KBD)
-        vstore64(h + 1048, kb_ver)
-        vstore64(h + 1056, kb_state)
-        vstore64(h + 1064, n)
-        vstore64(h + 1072, kb_commits)
-        vstore64(h + 1080, kb_committed)
-        vstore64(h + 1088, kb_swaps)
-        vstore64(h + 1096, kb_restarts)
+        d.nrec = 1
+        d.kind = DRV_KBD
+        d.ver = kb_ver
+        d.state = kb_state
+        d.n = n
+        d.commits = kb_commits
+        d.committed = kb_committed
+        d.swaps = kb_swaps
+        d.restarts = kb_restarts
         i: u64 = 0
         while i < n:
-            vstore16(h + 1536 + i * 2, kb_j[(kb_ack + i) & (KB_JN - 1)])
+            d.ent[i] = kb_j[(kb_ack + i) & (KB_JN - 1)]
             i += 1
-    vstore64(h + 1016, kx_hash(h + 1024, 1024))
+    kxd_seal(d)
 
 @unsafe
 def kxd_adopt(h: u64) -> u64:
 # 1 if an input service record was adopted into the (not yet running) service
-    if vload64(h + 1024) != KXD_MAGIC or vload64(h + 1016) != kx_hash(h + 1024, 1024):
+    d = own[KxdRecord](ptr[KxdRecord](h + KXD_OFF))
+    if d.magic != KXD_MAGIC or d.sum != kx_hash(kxd_addr(borrow(d)) + 8, 1024):
+        kxd_done(d)
         return 0
-    if vload64(h + 1032) != 1 or vload64(h + 1040) != DRV_KBD:
+    if d.nrec != 1 or d.kind != DRV_KBD:
+        kxd_done(d)
         return 0
-    v = vload64(h + 1048)
-    st = vload64(h + 1056)
-    n = vload64(h + 1064)
+    v = d.ver
+    st = d.state
+    n = d.n
     if (v != 1 and v != 2) or (st >> 8) != KB_STATE_MAGIC or n > KB_JN:
+        kxd_done(d)
         return 0
     i: u64 = 0
     while i < n:
-        kb_j[i] = vload16(h + 1536 + i * 2)
+        kb_j[i] = d.ent[i]
         i += 1
     kb_ack = 0
     kb_take = 0
     kb_head = n
     kb_state = st
     kb_ver = v
-    kb_commits = vload64(h + 1072)
-    kb_committed = vload64(h + 1080)
-    kb_swaps = vload64(h + 1088)
-    kb_restarts = vload64(h + 1096)
+    kb_commits = d.commits
+    kb_committed = d.committed
+    kb_swaps = d.swaps
+    kb_restarts = d.restarts
+    kxd_done(d)
     kxd_sent = n
     kxd_adopted = 1
     return 1
@@ -377,48 +427,51 @@ def sys_kexec(frame: u64, which: u64) -> u64:
         if kx_kept(q, p):
             qt = ptr[Thread](q.thread)
             r = h + (pproc + PS_PAGES * k) * PAGE
-            # one process-state record (pstate.fsi): pid .. flags are the words at PS_PID .. PS_FLAGS
-            pw: u64[8]
-            pw[0] = q.pid
-            pw[1] = q.ppid
-            pw[2] = q.state
-            pw[3] = q.exit_code
-            pw[4] = q.brk_base
-            pw[5] = q.brk
-            pw[6] = q.mmap_next
-            pw[7] = u64(u64(q) == u64(p)) | (q.caps << 8) | (q.abi << 40)
-            j = 0
-            while j < 8:
-                vstore64(r + PS_PID + j * 8, pw[j])
-                j += 1
+            # one process-state record (pstate.fsi): the zeroed record page becomes its owner once, is filled
+            # through field stores and sealed (header word and checksum last) by ps_seal, which consumes it
+            rec = own[PsRecord](ptr[PsRecord](r))
+            rec.pid = q.pid
+            rec.ppid = q.ppid
+            rec.state = q.state
+            rec.exit_code = q.exit_code
+            rec.brk_base = q.brk_base
+            rec.brk = q.brk
+            rec.mmap_next = q.mmap_next
+            rec.flags = u64(u64(q) == u64(p)) | (q.caps << 8) | (q.abi << 40)
             n = 0
             if q.state == P_ALIVE:
                 n = kx_walk(q.pml4, h + pidx * PAGE + pg * 16, h + (pdata + pg) * PAGE)
-            vstore64(r + PS_NPG, n)
-            vstore64(r + PS_FIRST_PG, pg)
+            rec.npg = n
+            rec.first_pg = pg
             pg += n
             j = 0
             while j < 5:
-                vstore64(r + PS_SYSCALL + j * 8, qt.sc[j])
+                rec.sc[j] = qt.sc[j]
                 j += 1
-            vstore64(r + PS_FSBASE, qt.fsbase)
+            rec.fsbase = qt.fsbase
             j = 0
             while j < NFD:
                 if q.fds[j] != 0:
-                    vstore64(r + PS_FDS + j * 8, (kx_file_index(q.fds[j]) + 1) | (q.fdr[j] << 32))
+                    rec.fds[j] = (kx_file_index(q.fds[j]) + 1) | (q.fdr[j] << 32)
                 j += 1
-            memcpy(r + PS_ARGS, u64(addr(q.args[0])), 128)
+            j = 0
+            while j < 128:
+                rec.args[j] = q.args[j]
+                j += 1
+            # the syscall frame: the caller's live one, or the one saved at the top of a parked thread's kernel stack
+            fsrc: u64 = 0
             if u64(q) == u64(p):
-                memcpy(r + PS_FRAME, frame, SF_SIZE)
+                fsrc = frame
                 fpu_save(r + PAGE)
             elif q.state == P_ALIVE:
-                memcpy(r + PS_FRAME, qt.kstack_top - SF_SIZE, SF_SIZE)
+                fsrc = qt.kstack_top - SF_SIZE
                 memcpy(r + PAGE, qt.fpu, fpu_size)
-            # header word and checksum last, once every word at +0..+504 is final (pstate.fsi, v2)
-            hs: u64[2]
-            hs[0] = ps_hdr_word()
-            hs[1] = ps_sum_fold(kx_hash(r, PS_HDR), hs[0])
-            memcpy(r + PS_HDR, u64(addr(hs[0])), 16)
+            if fsrc != 0:
+                j = 0
+                while j < SF_SIZE / 8:
+                    rec.frame[j] = vload64(fsrc + j * 8)
+                    j += 1
+            ps_seal(rec)
             k += 1
         i += 1
     # open files (console, regular files, directories)
@@ -628,6 +681,7 @@ def kx_restore() -> nptr[Thread]:
     if next_tid < maxpid:
         next_tid = maxpid
     newp: u64[64]
+    oldp: u64[64]  # the handed-over pids, so nothing reads a record after ps_done
     caller: u64 = 0
     kept: u64 = 0
     pg_total: u64 = 0
@@ -636,14 +690,11 @@ def kx_restore() -> nptr[Thread]:
         r = h + (pproc + PS_PAGES * i) * PAGE
         c = proc_new(0)
         c.pml4 = as_new()
-        hs: u64[2]
-        memcpy(u64(addr(hs[0])), r + PS_HDR, 16)
-        if ps_hdr_ok(hs[0]) == 0:
-            panic("kexec: process record is not a supported process-state version")
-        if ps_sum_ok(hs[0], hs[1], kx_hash(r, PS_HDR)) == 0:
-            panic("kexec: process record checksum mismatch")
-        n = vload64(r + PS_NPG)
-        first = vload64(r + PS_FIRST_PG)
+        # one owner per record (pstate.fsi): checked, read through field loads, then given back by ps_done
+        rec = own[PsRecord](ptr[PsRecord](r))
+        ps_check(borrow(rec))
+        n = rec.npg
+        first = rec.first_pg
         j = 0
         while j < n:
             e = h + pidx * PAGE + (first + j) * 16
@@ -654,20 +705,23 @@ def kx_restore() -> nptr[Thread]:
         if kx_walk(c.pml4, 0, 0) != n:
             panic("kexec: page count mismatch")
         pg_total += n
-        c.state = vload64(r + PS_STATE)
-        c.exit_code = vload64(r + PS_EXIT)
-        c.brk_base = vload64(r + PS_BRK_BASE)
-        c.brk = vload64(r + PS_BRK)
-        c.mmap_next = vload64(r + PS_MMAP_NEXT)
-        memcpy(u64(addr(c.args[0])), r + PS_ARGS, 128)
+        c.state = rec.state
+        c.exit_code = rec.exit_code
+        c.brk_base = rec.brk_base
+        c.brk = rec.brk
+        c.mmap_next = rec.mmap_next
+        j = 0
+        while j < 128:
+            c.args[j] = rec.args[j]
+            j += 1
         j = 0
         while j < NFD:
-            fi = vload64(r + PS_FDS + j * 8)
+            fi = rec.fds[j]
             if fi != 0:
                 c.fds[j] = file_get(kx_files[(fi & 0xFFFFFFFF) - 1])
                 c.fdr[j] = fi >> 32
             j += 1
-        isc = vload64(r + PS_FLAGS)
+        isc = rec.flags
         c.caps = (isc >> 8) & CAPB_ALL
         c.abi = (isc >> 40) & 1
         if isc & 1:
@@ -681,21 +735,24 @@ def kx_restore() -> nptr[Thread]:
         while j < 9:
             vstore64(sp + j * 8, vload64(ct.kstack_top - 72 + j * 8))
             j += 1
-        memcpy(cf, r + PS_FRAME, SF_SIZE)
+        # the frame words are read through a view of the (borrowed) record
+        memcpy(cf, ps_addr(borrow(rec)) + PS_FRAME, SF_SIZE)
         j = 0
         while j < 5:
-            vstore64(cf - 40 + j * 8, vload64(r + PS_SYSCALL + j * 8))
+            vstore64(cf - 40 + j * 8, rec.sc[j])
             j += 1
         vstore64(sp + 16, cf)
         ct.rsp = sp
         ct.cr3 = c.pml4
-        ct.fsbase = vload64(r + PS_FSBASE)
+        ct.fsbase = rec.fsbase
         ct.user = 1
         ct.proc = u64(c)
         if vload64(h + 64) == fpu_size:
             memcpy(ct.fpu, r + PAGE, fpu_size)
-        c.pid = vload64(r + PS_PID)
-        c.ppid = vload64(r + PS_PPID)
+        c.pid = rec.pid
+        c.ppid = rec.ppid
+        oldp[i] = rec.pid
+        ps_done(rec)
         if kx_pid_taken(c.pid):
             c.pid = ct.id
         c.thread = u64(ct)
@@ -711,7 +768,7 @@ def kx_restore() -> nptr[Thread]:
     i = 0
     while i < nproc:
         c = ptr[Proc](newp[i])
-        oldpid = vload64(h + (pproc + PS_PAGES * i) * PAGE)
+        oldpid = oldp[i]
         if c.pid != oldpid:
             j = 0
             while j < nproc:
@@ -727,7 +784,7 @@ def kx_restore() -> nptr[Thread]:
     i = 0
     while i < nproc:
         putc(32)
-        put_u64(vload64(h + (pproc + PS_PAGES * i) * PAGE))
+        put_u64(oldp[i])
         puts("->")
         put_u64(ptr[Proc](newp[i]).pid)
         i += 1
