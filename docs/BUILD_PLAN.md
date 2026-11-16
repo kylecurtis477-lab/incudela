@@ -1,6 +1,6 @@
 # Forge build plan
 
-Release notes per version (0.17.2 on) are in CHANGELOG.md, every commit named (each batch's lines land in the batch after it; complete through 0bf232a); versions are commit groupings, not tags. This is the plan to execute, in phase order. It merges the open items from docs/SYSTEMS.md (roadmap items 1–9), the compiler performance list, and six pillars:
+Release notes per version (0.17.2 on) are in CHANGELOG.md, every commit named (each batch's lines land in the batch after it; complete through 0cd8e2c); versions are commit groupings, not tags. This is the plan to execute, in phase order. It merges the open items from docs/SYSTEMS.md (roadmap items 1–9), the compiler performance list, and six pillars:
 
 - **A. Provable safety.** Forge is memory-safe by default:
   - ownership/borrow or region checking;
@@ -484,7 +484,7 @@ least.
 | Nov 15 | 2: `nown` globals and arrays | 1 batch | done: 7632ffe (inv160; inv159 was cut by a box restart at 20:40) |
 | Nov 15 | 2 / 3e: run-queue conversion (`rq_head`, `current`, `idle_thr` to `nown` owners) | 1 batch | done: 5d743d2 (inv161), kernel unsafe 708 -> 701 |
 | Nov 15-16 | 2 / 3f: handoff-record conversion (typed `PsRecord`, `KxdRecord`) | 1 batch | done: 0bf232a (inv162), kernel unsafe 701 -> 659; item 2 finished |
-| Nov 16 | assessment fixes (README unsafe ceiling, unsafe result names, run_tests OS fail-closed, kernel-core Appendix A count, this schedule) | 1 batch | in g185 on 7c0bbc4 |
+| Nov 16 | assessment fixes (README unsafe ceiling, unsafe result names, run_tests OS fail-closed, kernel-core Appendix A count, this schedule) | 1 batch | done: 630410a, bd07324, 94824c4, 0cd8e2c (inv163) |
 | Nov 16 | rename and licences: the OS becomes Incudela (Apache-2.0), the language becomes Cuditor (MIT); repo (`kylecurtis477-lab/incudela`), binaries, file extensions, docs; the ESP folder moves from `\EFI\Forge\` to `\EFI\Incudela\` with a one-time boot migration that keeps the old folder until the new one boots | 3 batches | *Kyle* approved 2026-11-15; names screened on the web, GitHub, package registries and domains, not a legal clearance |
 | Nov 16 | kexec from an older kernel build to the new one (the gate only swaps same-source kernels) | 1 item | tests/os/kexec-compat.sh, results `os/kexec-compat-build`, `os/kexec-old-to-new` (inv164) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |

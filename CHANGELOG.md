@@ -83,6 +83,10 @@
 ### Test infrastructure
 - `7e4cf93` fix(tests): bounds-bench-overhead takes the median of 21 pair ratios, each pair the best of 3
   interleaved rounds per variant; the 5% limit is unchanged (inv156 failed at 6.95% with identical code).
+- `bd07324` fix(tests): the unsafe baseline and provenance result names carry the directory, so two results
+  no longer share a name (2026-11-15 assessment).
+- `94824c4` fix(tests): run_tests.sh fails closed when the OS-test toolchain (QEMU, GRUB, xorriso, mtools,
+  OVMF) is missing instead of silently skipping tests/os; `SKIP_OS` is the only opt-out and is never a gate pass.
 
 ### Plan and docs
 - `ce37b64` CHANGELOG.md for 0.17.2 through 0.18.0 and the start of 0.18.1.
@@ -90,6 +94,8 @@
 - `e287417` working screen first, then the reviewed core order and three never-reboot tiers.
 - docs for the gate's whole-repo `build/fmt --check` preflight (the commit after 9c31307; the harness lives
   outside the repo).
+- `630410a` fix(docs): README states the kernel unsafe ceiling as 168 / 659 (it said 170 / 709).
+- `0cd8e2c` docs(kernel-core): Appendix A names all 39 OS results (it said 35).
 
 ## 0.19.0 (unreleased)
 
