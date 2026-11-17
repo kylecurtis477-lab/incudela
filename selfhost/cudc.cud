@@ -21805,7 +21805,13 @@ def fs_ssa_run(s0):
         nf = fs_ssa_copy(n, ln, df, vi)
     nd = fs_ssa_dead(n, ln, vi, cnt)
     if nf == 0:
-        nf = fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt)
+        mk = list(n)
+        j = 0
+        while j < n:
+            mk[j] = 0
+            j += 1
+        nf = fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt, mk)
+        nf += fs_ssa_pushpop(n, ln, s1, s2, us, df, vi, cnt, mk)
     return nf + nd
 
 def fs_ssa_phis(n, s1, s2, df, vi, cnt):
@@ -22070,7 +22076,7 @@ def fs_ssa_cpsrc(x, q, n, ln, df, vi):
         return x
     return s
 
-def fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt):
+def fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt, mk):
 # Steps 4i to 4k, SSA-based allocation of a temporary: a reached `mov %rA,%rB` copy (two tracked 64-bit
 # registers) at position c whose %rA value is written in the straight-line range before it has that range
 # compute the value in %rB (fs_ssa_rng with e = c - 1, then fs_ssa_rngdo), and the copy is deleted. Step 4i is
@@ -22078,13 +22084,8 @@ def fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt):
 # the range's start on (the copy overwrote it), %rA keeps the value it had before the range, which nothing reads
 # any more, and the flags do not change. Runs after fs_ssa_dead and only in a round without folds or copy
 # rewrites, so the lines are as the round's tables describe them; a position rewritten this round is never part
-# of another range.
+# of another range. mk marks the positions rewritten this round.
     nr = 0
-    mk = list(n)
-    j = 0
-    while j < n:
-        mk[j] = 0
-        j += 1
     c = 0
     while c < n:
         m = out[ln[c]]
@@ -22178,6 +22179,94 @@ def fs_ssa_rngdo(w, e, a, b, ln, us, df, mk):
         mk[q] = 1
         q += 1
 
+def fs_ssa_pushpop(n, ln, s1, s2, us, df, vi, cnt, mk):
+# Step 4l: a stack round-trip `push %rA ... pop %rB` (tracked 64-bit registers) over a straight-line range keeps
+# the value in a register instead. fs_ssa_ppa finds the push matching a reached pop, fs_ssa_ppt the register T
+# that holds the value meanwhile: %rB, then %rA, then a caller-saved register whose value at the push nothing
+# reads; T is read or written by no line strictly between the two. The push becomes `mov %rA,%rT` and the pop
+# `mov %rT,%rB`, each deleted when it would copy a register to itself. A move changes no flags, nothing in the
+# range addresses the stack, so dropping the slot moves no other access, and T keeps the value across the
+# range. Runs right after fs_ssa_retarget, in the same round and on the same marks (mk): a position either
+# rewrote is in no pair. A retargeted range writes its register before reading it, so it adds no read of a value
+# live at a push, and the use counts stay valid for the pairs.
+    nr = 0
+    e = 0
+    while e < n:
+        m = out[ln[e]]
+        b = -1
+        if vi[e * 16] >= 0 and not mk[e] and starts(m, "    pop %r") and find_char(m, 10) == len(m) - 1:
+            b = find(FS_SSR, 14, substr(m, 8, len(m) - 1))
+        if b >= 0:
+            w = fs_ssa_ppa(e, ln, s1, s2, us, vi, mk)
+            if w >= 0:
+                l = out[ln[w]]
+                a = find(FS_SSR, 14, substr(l, 9, len(l) - 1))
+                r = fs_ssa_ppt(w, e, a, b, us, df, vi, cnt)
+                if r >= 0:
+                    out[ln[w]] = ""
+                    if r != a:
+                        out[ln[w]] = c4("    mov ", FS_SSR[a], ",", concat(FS_SSR[r], "\n"))
+                    out[ln[e]] = ""
+                    if r != b:
+                        out[ln[e]] = c4("    mov ", FS_SSR[r], ",", concat(FS_SSR[b], "\n"))
+                    q = w
+                    while q <= e:
+                        mk[q] = 1
+                        q += 1
+                    nr += 1
+        e += 1
+    return nr
+
+def fs_ssa_ppa(e, ln, s1, s2, us, vi, mk):
+# the position of the `push %rA` (a tracked register) that the pop at e takes back, over a straight-line range
+# of at most FS_SSPP one-line, reached, unrewritten lines that fall through, touch no stack address and have no
+# implicit stack use (no call, return, leave or line fs_ssa_line does not understand, so pushfq and the like
+# never get here: us slot 14 is set only by fs_ssa_all); balanced push/pop pairs inside are kept as they are. -1
+# when there is none.
+    d = 0
+    q = e - 1
+    while q >= 0 and q > e - FS_SSPP:
+        l = out[ln[q]]
+        if mk[q] or not starts(l, "    ") or starts(l, "     ") or find_char(l, 10) != len(l) - 1 or s2[q] >= 0 or s1[q] != q + 1 or vi[q * 16] < 0 or us[q * 16 + 14]:
+            return -1
+        if contains(l, "%rsp") or contains(l, "%esp") or contains(l, "%sp") or starts(l, "    call") or starts(l, "    ret") or starts(l, "    leave") or starts(l, "    enter"):
+            return -1
+        if starts(l, "    push "):
+            if d == 0:
+                if starts(l, "    push %r") and find(FS_SSR, 14, substr(l, 9, len(l) - 1)) >= 0:
+                    return q
+                return -1
+            d -= 1
+        elif starts(l, "    pop "):
+            d += 1
+        q -= 1
+    return -1
+
+def fs_ssa_ppt(w, e, a, b, us, df, vi, cnt):
+# the register that holds the pushed value from the push at w to the pop at e, or -1: one that no line strictly
+# between reads or writes, tried in the order %rB (the pop overwrites its old value), %rA (it keeps the value
+# itself), then the caller-saved registers whose value at the push has no use at all
+    k = 0
+    while k < 11:
+        r = b
+        if k == 1:
+            r = a
+        elif k > 1:
+            r = k - 2
+        ok = 1
+        q = w + 1
+        while q < e and ok:
+            if us[q * 16 + r] or df[q * 16 + r]:
+                ok = 0
+            q += 1
+        if ok and k > 1 and (r == a or r == b or cnt[vi[w * 16 + r]] > 0):
+            ok = 0
+        if ok:
+            return r
+        k += 1
+    return -1
+
+FS_SSPP = 32
 FS_SSCH = 24
 FS_SSCHM = ["mov", "movq", "movl", "movabs", "movzbl", "movzwl", "movzbq", "movzwq", "movsbq", "movswq", "movslq", "movsbl", "movswl", "lea", "add", "sub", "and", "or", "xor", "cmp", "test", "imul", "neg", "not", "shl", "shr", "sar"]
 

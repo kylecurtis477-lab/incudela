@@ -426,7 +426,9 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    a straight-line range: a value computed in %rax over several lines and then copied out is computed in the
    copy's register throughout. Step 4k (2026-11-16, under `--fs-ssa`): temporaries whose range crosses a label
    do not occur in this code generator (measured: none on the kernel or 63 other sources), so the step instead
-   lets a range start with `xor %eA,%eA`. Next: stack round-trips (`push`/`pop`) of nested-call arguments.
+   lets a range start with `xor %eA,%eA`. Step 4l (2026-11-17, under `--fs-ssa`): a straight-line `push`/`pop`
+   round-trip of a nested operand keeps the value in a free register instead (kernel pops 3,365 to 1,349). Next:
+   cheaper rounds, so the four-round cap can be raised (see the step 4l entry).
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -507,6 +509,7 @@ least.
 | Nov 16 | SSA step 4h: the callee-saved registers tracked under `--fs-ssa`; step 4i: single-use moves write their copy's register; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv178) |
 | Nov 16 | `--fs-ssa` compile time back down (live phis on a worklist); SSA step 4j: temporaries over straight-line ranges; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv179) |
 | Nov 16 | SSA step 4k: phi-crossing temporaries measured (none occur), ranges starting at `xor %eA,%eA` instead; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv180) |
+| Nov 17 | SSA step 4l: `push`/`pop` round-trips kept in registers; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv181) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -1088,6 +1091,33 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      fs_ssa_rng, one carried over; a defensive one in fs_ssa_ren; and its 32-bit rename of %rA inside a range,
      which no compiled program produces); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80:
      0 differ. Next: stack round-trips (`push`/`pop`) of nested-call arguments.
+   - *Step 4l (2026-11-17): `push`/`pop` round-trips kept in registers, under `--fs-ssa`.* The stack machine saves
+     the left operand of a nested expression (call arguments included) with `push %rax` and takes it back with
+     `pop %rB` once the right one is computed. fs_ssa_pushpop takes each reached `pop %rB` and fs_ssa_ppa walks
+     back over at most FS_SSPP (32) one-line, reached lines that fall through (no label, jump, call, return,
+     `leave`, line naming %rsp/%esp/%sp, or line fs_ssa_line does not understand) to the `push %rA` that matches
+     it, keeping balanced inner pairs as they are. fs_ssa_ppt picks the register T that holds the value
+     meanwhile: one no line strictly between reads or writes, tried as %rB (the pop overwrites its old value),
+     then %rA (it keeps the value itself), then a caller-saved register whose value at the push has no use at all
+     (its SSA use count, live phis included, is 0). The push becomes `mov %rA,%rT` and the pop `mov %rT,%rB`,
+     each dropped when it would copy a register to itself (`push %rax ... pop %rax` with %rax untouched
+     disappears). Moves change no flags; nothing in the range addresses the stack, so no other access moves; no
+     call is inside, so the alignment at every call is unchanged. It runs in fs_ssa_retarget's round on the same
+     marks, so a position either pass rewrote is in no other range (a retargeted range writes its register
+     before reading it and so adds no read of a value live at a push). Code built without `--fs-ssa` is
+     byte-identical. On the kernel: instructions 112,268 to 109,854 (-2.2%), `push %rax` 4,170 to 2,154, pops
+     3,365 to 1,349 (`pop %rax` 2,673 to 1,101). .text of kernel.cud grows 433,131 to 433,951 bytes (+0.2%):
+     `push`/`pop` are one byte each and a register move is three, so this trades size for the store/load
+     round-trip through the stack. Compile time 2.7 to 2.9 s (median of five runs; more functions now use all four rounds);
+     unsafe report unchanged (659 ops). The four-round cap limits it: at eight rounds the kernel is 108,520
+     instructions but compiles in about 4.0 s. A timed build (not committed) splits fs_ssa's 3.1 s at eight
+     rounds into table build 25%, reaching definitions 19%, the verifier 13%, use counts 7%, live phis 16% and the
+     rewrites 21%, so no single phase dominates. Tests: ssa_push in tests/fs/ssa.cud (nested operands and two
+     indexed loads) and `fs-ssa-pushpop-shape` (fewer pops under `--fs-ssa` than under `--fs-temps`, at O2 and
+     O0); every tests/fs program under `--fs-ssa`, `-O0 --fs-ssa`, `-g --fs-ssa`, `--no-bounds --fs-ssa` and
+     `--fs-ssa --fs-opt`: 23/23; the step 4d-4k shape checks still pass. Landing rule: `optcov --check` OK (every
+     new block hit, no new allow-list entry); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x
+     80: 0 differ. Next: cheaper rounds (fewer table rebuilds), then a higher round cap.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

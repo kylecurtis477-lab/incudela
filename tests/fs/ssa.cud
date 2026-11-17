@@ -112,6 +112,14 @@ def ssa_range(n: i64) -> i64:
         i = i + 1
     return s
 
+def ssa_push(a: i64, b: i64) -> i64:
+    w: i64[4]
+    w[0] = a
+    w[1] = b
+    w[2] = a - b
+    w[3] = 7
+    return (a + 3) * (w[b & 3] - a) + (w[(a + b) & 3] ^ (b * 5)) - (a << 2) * w[1]
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -147,4 +155,6 @@ def main() -> i64:
     show(ssa_move(3, 1))
     show(ssa_move(6, 1))
     show(ssa_range(9))
+    show(ssa_push(4, 1))
+    show(ssa_push(-3, 6))
     return 0

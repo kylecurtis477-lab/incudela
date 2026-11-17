@@ -278,7 +278,7 @@ The full phased plan is in docs/BUILD_PLAN.md; the items below are the kernel su
 |---|---|
 | (default) | bounds-check elision (constant indices, `range` loop facts) |
 | `-O0` | nothing: every bounds check is kept (the out-of-range constant-index compile error stays) |
-| `--fs-opt` / `--fs-live` / `--fs-temps` / `--fs-ssa` | the default plus the opt-in passes: register allocation, its peepholes, magic-number constant division; liveness; register temporaries; SSA folds of constants, compares and branches (step 4d) , removal of register writes nothing reads (step 4e) and copy propagation (step 4f), with the callee-saved registers tracked since step 4h (a call preserves them, `ret` reads them), and single-use moves (step 4i) and straight-line ranges (step 4j, zeroing starts since step 4k) computed straight in their copy's register |
+| `--fs-opt` / `--fs-live` / `--fs-temps` / `--fs-ssa` | the default plus the opt-in passes: register allocation, its peepholes, magic-number constant division; liveness; register temporaries; SSA folds of constants, compares and branches (step 4d) , removal of register writes nothing reads (step 4e) and copy propagation (step 4f), with the callee-saved registers tracked since step 4h (a call preserves them, `ret` reads them), and single-use moves (step 4i) and straight-line ranges (step 4j, zeroing starts since step 4k) computed straight in their copy's register, and straight-line `push`/`pop` round-trips kept in a free register (step 4l) |
 | `-O0 --fs-…` | the named opt-in passes, with every bounds check kept |
 | `--no-bounds` | no bounds checks at all (nothing to elide) |
 

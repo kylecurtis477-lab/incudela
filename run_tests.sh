@@ -159,6 +159,9 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^
 # copies' registers (`xor %ebx,%ebx`), so no zero-then-copy pair is left
 zpair='/^ssa_range:/ {f=1} f && prev == "    xor %eax,%eax" && $0 ~ /^    mov %rax,%r/ {c++} f {prev=$0} f && /ret$/ {f=0} END {print c+0}'
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk "$zpair" build/t_ssa.s)" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk "$zpair" build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-zero-shape" || { echo "FAIL fs-ssa-zero-shape"; fail=1; }
+# step 4l: ssa_push's nested operands go through push/pop under --fs-temps; under --fs-ssa fewer pops are left (the
+# straight-line round-trips keep the value in a free register)
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && npop=$(awk '/^ssa_push:/,/ret$/' build/t_ssa.s | grep -c '^    pop %r') && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_push:/,/ret$/' build/t_ssa.s | grep -c '^    pop %r')" -lt "$npop" ] && echo "PASS fs-ssa-pushpop-shape" || { echo "FAIL fs-ssa-pushpop-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs
