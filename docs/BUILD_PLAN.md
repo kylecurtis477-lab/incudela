@@ -424,7 +424,9 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    `--fs-ssa`) starts the SSA-based allocation of the temporaries: a move into %rA whose only reader is the
    `mov %rA,%rB` right after it writes %rB itself. Step 4j (2026-11-16, under `--fs-ssa`) extends that to
    a straight-line range: a value computed in %rax over several lines and then copied out is computed in the
-   copy's register throughout. Next: temporaries whose range crosses a label (a value that meets in a phi).
+   copy's register throughout. Step 4k (2026-11-16, under `--fs-ssa`): temporaries whose range crosses a label
+   do not occur in this code generator (measured: none on the kernel or 63 other sources), so the step instead
+   lets a range start with `xor %eA,%eA`. Next: stack round-trips (`push`/`pop`) of nested-call arguments.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -504,6 +506,7 @@ least.
 | Nov 16 | SSA step 4f: copy propagation under `--fs-ssa`; step 4g: loader, modules and user programs built with `--fs-ssa`; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv177) |
 | Nov 16 | SSA step 4h: the callee-saved registers tracked under `--fs-ssa`; step 4i: single-use moves write their copy's register; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv178) |
 | Nov 16 | `--fs-ssa` compile time back down (live phis on a worklist); SSA step 4j: temporaries over straight-line ranges; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv179) |
+| Nov 16 | SSA step 4k: phi-crossing temporaries measured (none occur), ranges starting at `xor %eA,%eA` instead; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv180) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -1062,6 +1065,29 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      still pass. Landing rule: `optcov --check` OK, two new allow-list entries (defensive: a read of %rA after
      w outside the range, and a one-operand FS_SSMOV line, neither of which the straight-line range or the code
      generator produces); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
+   - *Step 4k (2026-11-16): phi-crossing temporaries measured; ranges may start at `xor %eA,%eA`, under
+     `--fs-ssa`.* The planned step was temporaries whose range crosses a label (values that meet in a phi). It
+     was implemented as a range whose start lies before a label with every predecessor's value moved into %rB,
+     and it never fired: 0 rewrites on the kernel and no output difference on 63 sources (tests/fs,
+     tests/optgate, examples/user, examples/efi, examples/modules). In this code generator a value that lives
+     across a label is a local, which fs_ra already keeps in a register; the only temporary that crosses a
+     label is the flags of an `and`/`or` condition. That code was removed rather than landed untested. What the
+     ranges did miss is a zeroing start: a constant 0 is loaded with `xor %eax,%eax` and then copied out, which
+     FS_SSMOV does not match. fs_ssa_rng (factored out of fs_ssa_retarget, with fs_ssa_rngdo doing the rewrite)
+     now also accepts `xor %eA,%eA` as the start when nothing reads the flags it sets (no df on the copy's
+     register) and rewrites it to `xor %eB,%eB`; a mark per position replaces the old last-write bound, so a
+     range never includes a line rewritten earlier in the same round. Code built without `--fs-ssa` is
+     byte-identical. On the kernel: instructions 112,737 to 112,268 (-0.4%), `xor %eax,%eax` followed by
+     `mov %rax,%rN` 749 to 274, `xor %ebx,%ebx` 76 to 258, .text of kernel.cud alone 434,491 to 433,131 bytes;
+     compile time unchanged (2.3 s); unsafe report 168 functions / 0 blocks / 659 ops / 7 asm blocks. Tests:
+     ssa_range in tests/fs/ssa.cud (its s and i start at 0, now zeroed in their own registers) and
+     `fs-ssa-zero-shape` (the zero-then-copy pair under `--fs-temps`, none under `--fs-ssa`, at O2 and O0);
+     every tests/fs program under `--fs-ssa`, `-O0 --fs-ssa`, `-g --fs-ssa`, `--no-bounds --fs-ssa` and
+     `--fs-ssa --fs-opt`: 23/23; the step 4f, 4h, 4i and 4j shape checks still pass. Landing rule: `optcov
+     --check` OK, four allow-list entries replacing step 4j's one in fs_ssa_retarget (two defensive ones in
+     fs_ssa_rng, one carried over; a defensive one in fs_ssa_ren; and its 32-bit rename of %rA inside a range,
+     which no compiled program produces); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80:
+     0 differ. Next: stack round-trips (`push`/`pop`) of nested-call arguments.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

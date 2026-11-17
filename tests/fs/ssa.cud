@@ -6,6 +6,7 @@
 # two calls (read there directly, not through copies). Step 4i: ssa_move loads w[1] and the constant 7
 # straight into %rdi/%rsi (a move whose only reader is the next line's copy writes the copy's register). Step 4j:
 # ssa_range adds to its loop values in callee-saved registers in place instead of through %rax and a copy back.
+# Step 4k: ssa_range also zeroes s and i straight in their registers (`xor %ebx,%ebx`).
 # The output must be the same under every fs optimizer level.
 include "linux.cudi"
 

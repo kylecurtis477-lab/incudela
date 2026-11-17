@@ -22071,20 +22071,20 @@ def fs_ssa_cpsrc(x, q, n, ln, df, vi):
     return s
 
 def fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt):
-# Steps 4i and 4j, SSA-based allocation of a temporary: a reached `mov %rA,%rB` copy (two tracked 64-bit
-# registers) at position c ends a straight-line range [w, c) (no label, jump or multi-line entry; at most
-# FS_SSCH lines) that starts with a move `MN S,%rA` (MN in FS_SSMOV, a full 64- or 32-bit destination). If every
-# %rA value written in the range is read only inside (w, c] (its use count equals the reads counted there, so no
-# later line or phi reads it), no line after w reads or writes %rB, w does not write %rB, and every line after w
-# that touches %rA names it explicitly (FS_SSCHM mnemonics, 64- or 32-bit names only), the range computes its
-# value in %rB instead: w's destination and every %rA/%eA after w become %rB/%eB and the copy is deleted (a
-# move that becomes `mov %rB,%rB` too). %rB's old value is read by nothing from w on (the copy overwrote it),
-# %rA keeps the value it had before w, which nothing in the range read, and the flags do not change. Step 4i
-# is the range of one line. Runs after fs_ssa_dead and only in a round without folds or copy rewrites, so the
-# lines are as the round's tables describe them; a range never reaches back over an earlier rewrite.
+# Steps 4i to 4k, SSA-based allocation of a temporary: a reached `mov %rA,%rB` copy (two tracked 64-bit
+# registers) at position c whose %rA value is written in the straight-line range before it has that range
+# compute the value in %rB (fs_ssa_rng with e = c - 1, then fs_ssa_rngdo), and the copy is deleted. Step 4i is
+# the range of one line; step 4k lets a range start with `xor %eA,%eA`. %rB's old value is read by nothing from
+# the range's start on (the copy overwrote it), %rA keeps the value it had before the range, which nothing reads
+# any more, and the flags do not change. Runs after fs_ssa_dead and only in a round without folds or copy
+# rewrites, so the lines are as the round's tables describe them; a position rewritten this round is never part
+# of another range.
     nr = 0
-    lw = -1
-    loc = list(FS_SSCH + 1)
+    mk = list(n)
+    j = 0
+    while j < n:
+        mk[j] = 0
+        j += 1
     c = 0
     while c < n:
         m = out[ln[c]]
@@ -22096,64 +22096,87 @@ def fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt):
             if cc > 0:
                 a = find(FS_SSR, 14, substr(cs, 0, cc))
                 b = find(FS_SSR, 14, substr(cs, cc + 1, len(cs)))
-        w = -1
         if a >= 0 and b >= 0 and a != b:
-            q = c - 1
-            while q > lw and q >= c - FS_SSCH and w < 0:
-                l = out[ln[q]]
-                if not starts(l, "    ") or starts(l, "     ") or find_char(l, 10) != len(l) - 1 or s1[q] != q + 1 or s2[q] >= 0 or vi[q * 16] < 0:
-                    q = lw
-                elif fs_ssa_mvdst(l, a) and not df[q * 16 + b]:
-                    w = q
-                elif us[q * 16 + b] or df[q * 16 + b]:
-                    q = lw
-                elif (us[q * 16 + a] or df[q * 16 + a]) and len(fs_ssa_ren(l, a, b)) == 0:
-                    q = lw
-                else:
-                    q -= 1
-        if w >= 0:
-            j = 0
-            while j <= c - w:
-                loc[j] = 0
-                j += 1
-            q = w + 1
-            while q <= c:
-                if us[q * 16 + a]:
-                    v = vi[q * 16 + a]
-                    if v >= w * 16 and v < c * 16 and v % 16 == a:
-                        loc[(v - a) // 16 - w] += 1
-                    else:
-                        w = -1
-                q += 1
-        if w >= 0:
-            q = w
-            while q < c:
-                if df[q * 16 + a] and cnt[q * 16 + a] != loc[q - w]:
-                    w = -1
-                q += 1
-        if w >= 0:
-            l = out[ln[w]]
-            cm = len(l) - 2
-            while char_at(l, cm) != 44:
-                cm -= 1
-            nd = FS_SSR[b]
-            if str_eq(substr(l, cm + 1, len(l) - 1), FS_SSR32[a]):
-                nd = FS_SSR32[b]
-            x = substr(l, 4, cm)
-            if str_eq(x, concat("mov ", FS_SSR[b])) or str_eq(x, concat("movq ", FS_SSR[b])):
-                out[ln[w]] = ""
-            else:
-                out[ln[w]] = c4("    ", x, ",", concat(nd, "\n"))
-            q = w + 1
-            while q < c:
-                if us[q * 16 + a] or df[q * 16 + a]:
-                    out[ln[q]] = fs_ssa_ren(out[ln[q]], a, b)
-                q += 1
-            out[ln[c]] = ""
-            nr += 1
-            lw = c
+            w = fs_ssa_rng(c - 1, a, b, ln, s1, s2, us, df, vi, cnt, mk)
+            if w >= 0:
+                fs_ssa_rngdo(w, c - 1, a, b, ln, us, df, mk)
+                out[ln[c]] = ""
+                mk[c] = 1
+                nr += 1
         c += 1
     return nr
+
+def fs_ssa_rng(e, a, b, ln, s1, s2, us, df, vi, cnt, mk):
+# The start w of a straight-line range [w, e] (one-line entries, no label, each line but e falling through to the
+# next) that ends with %rA holding a value whose one further read is the copy right after e, or -1. w is the nearest move `MN S,%rA` (MN in FS_SSMOV, a full 64- or
+# 32-bit destination) or `xor %eA,%eA` not writing %rB, at most FS_SSCH lines back; every %rA value written in
+# the range is read only inside it (its use count equals the reads counted there, plus that one further read for
+# the last), no line after w reads or writes %rB, and every line after w that touches %rA names it explicitly
+# (fs_ssa_ren). No position of the range was rewritten in this round.
+    w = -1
+    q = e
+    while q >= 0 and q > e - FS_SSCH and w < 0:
+        l = out[ln[q]]
+        if mk[q] or not starts(l, "    ") or starts(l, "     ") or find_char(l, 10) != len(l) - 1 or s2[q] >= 0 or vi[q * 16] < 0 or q < e and s1[q] != q + 1:
+            return -1
+        if (fs_ssa_mvdst(l, a) or str_eq(l, c3("    xor ", FS_SSR32[a], c3(",", FS_SSR32[a], "\n")))) and not df[q * 16 + b]:
+            w = q
+        elif us[q * 16 + b] or df[q * 16 + b]:
+            return -1
+        elif (us[q * 16 + a] or df[q * 16 + a]) and len(fs_ssa_ren(l, a, b)) == 0:
+            return -1
+        q -= 1
+    if w < 0:
+        return -1
+    loc = list(e - w + 1)
+    j = 0
+    while j <= e - w:
+        loc[j] = 0
+        j += 1
+    q = w + 1
+    while q <= e:
+        if us[q * 16 + a]:
+            v = vi[q * 16 + a]
+            if v >= w * 16 and v < q * 16 and v % 16 == a:
+                loc[(v - a) // 16 - w] += 1
+            else:
+                return -1
+        q += 1
+    v = fs_ssa_vo(e, a, df, vi)
+    if v < w * 16 or v >= (e + 1) * 16 or v % 16 != a:
+        return -1
+    loc[(v - a) // 16 - w] += 1
+    q = w
+    while q <= e:
+        if df[q * 16 + a] and cnt[q * 16 + a] != loc[q - w]:
+            return -1
+        q += 1
+    return w
+
+def fs_ssa_rngdo(w, e, a, b, ln, us, df, mk):
+# rewrite the range [w, e] that fs_ssa_rng accepted to compute its value in %rB, marking its positions
+    l = out[ln[w]]
+    if str_eq(l, c3("    xor ", FS_SSR32[a], c3(",", FS_SSR32[a], "\n"))):
+        out[ln[w]] = c3("    xor ", FS_SSR32[b], c3(",", FS_SSR32[b], "\n"))
+    else:
+        cm = len(l) - 2
+        while char_at(l, cm) != 44:
+            cm -= 1
+        nd = FS_SSR[b]
+        if str_eq(substr(l, cm + 1, len(l) - 1), FS_SSR32[a]):
+            nd = FS_SSR32[b]
+        x = substr(l, 4, cm)
+        if str_eq(x, concat("mov ", FS_SSR[b])) or str_eq(x, concat("movq ", FS_SSR[b])):
+            out[ln[w]] = ""
+        else:
+            out[ln[w]] = c4("    ", x, ",", concat(nd, "\n"))
+    mk[w] = 1
+    q = w + 1
+    while q <= e:
+        if us[q * 16 + a] or df[q * 16 + a]:
+            out[ln[q]] = fs_ssa_ren(out[ln[q]], a, b)
+        mk[q] = 1
+        q += 1
 
 FS_SSCH = 24
 FS_SSCHM = ["mov", "movq", "movl", "movabs", "movzbl", "movzwl", "movzbq", "movzwq", "movsbq", "movswq", "movslq", "movsbl", "movswl", "lea", "add", "sub", "and", "or", "xor", "cmp", "test", "imul", "neg", "not", "shl", "shr", "sar"]

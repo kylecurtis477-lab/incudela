@@ -57,5 +57,8 @@ fs_ssa_check | if x % 16 != r or not df[x]: | verifier: a write id is only creat
 fs_ssa_check | if x % 16 != r or vi[x - 16 * n - 16] != x: | verifier: a phi id is only created at the position that holds it
 fs_ssa_check | elif x != 16 * n + r: | verifier: incoming-value ids are only set at the entry, per register
 fs_ssa_check | if y != fs_ssa_vo(p, r, df, vi) and y != 16 * n + 16 + s * 16 + r: | verifier: the merge loop runs until every edge carries the predecessor's value or the successor's phi
-fs_ssa_retarget | else: #2 | defensive: the range after w is straight-line and w writes %rA in full, so every read of %rA there reads a value written in the range
 fs_ssa_mvdst | if cm <= sp: | defensive: the code generator emits every FS_SSMOV move with two operands
+fs_ssa_rng | else: | defensive: the range after w is straight-line and w writes %rA in full, so every read of %rA there reads a value written in the range
+fs_ssa_rng | if v < w * 16 or v >= (e + 1) * 16 or v % 16 != a: | defensive: e reads %rA as a copy source and the range writes %rA at w with no later unrenameable write, so the value e reads was written in the range
+fs_ssa_ren | elif str_eq(g, FS_SSR32[a]): | no compiled program reads the 32-bit name of %rA inside a range (the xor start is rewritten by fs_ssa_rngdo itself)
+fs_ssa_ren | elif fs_ssa_rn(g) >= 0 and fs_ssa_rn(g) // 2 == a: | defensive: fs_ssa_rng already refuses a range with an %rA touch that fs_ssa_ren cannot rename

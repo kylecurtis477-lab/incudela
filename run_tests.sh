@@ -155,6 +155,10 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk "$m
 # step 4j: ssa_range's loop counter lives in %rbx; --fs-temps increments it through %rax and copies it back, under
 # --fs-ssa the whole range is computed in %rbx (`add $1,%rbx`)
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_range:/,/ret$/' build/t_ssa.s | grep -c 'mov %rax,%rbx$')" -gt 0 ] && [ "$(awk '/^ssa_range:/,/ret$/' build/t_ssa.s | grep -c 'add \$1,%rbx$')" = 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_range:/,/ret$/' build/t_ssa.s | grep -c 'add \$1,%rbx$')" = 1 ] && echo "PASS fs-ssa-range-shape" || { echo "FAIL fs-ssa-range-shape"; fail=1; }
+# step 4k: ssa_range zeroes s and i; under --fs-temps through `xor %eax,%eax` and a copy, under --fs-ssa in the
+# copies' registers (`xor %ebx,%ebx`), so no zero-then-copy pair is left
+zpair='/^ssa_range:/ {f=1} f && prev == "    xor %eax,%eax" && $0 ~ /^    mov %rax,%r/ {c++} f {prev=$0} f && /ret$/ {f=0} END {print c+0}'
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk "$zpair" build/t_ssa.s)" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk "$zpair" build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-zero-shape" || { echo "FAIL fs-ssa-zero-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs
