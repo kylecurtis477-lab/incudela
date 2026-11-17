@@ -7,7 +7,7 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4l
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4n
 
 - `f944491` tests: tools/fsfuzz.cud negates one generated condition in eight (`not (...)`) and joins two
   compares with `and`/`or` in another one in eight.
@@ -47,6 +47,13 @@
   2.31 s, with byte-identical output.
 - `2388c61` `--fs-ssa` gives a function eight rounds instead of four: kernel instructions 109,854 to 108,520,
   pops 1,349 to 1,049, .text of kernel.cud 431,167 bytes; compile 2.36 s.
+- `684e865` `--fs-ssa` computes call arguments straight in their registers (step 4m): a call reads %rax only
+  as the vector count of a variadic callee (an argument in %xmm), so `lea s(%rip),%rax; mov %rax,%rdi` becomes
+  `lea s(%rip),%rdi`. The measurement before it: 5,138 of the kernel's 17,583 register moves set up a call
+  argument through %rax. Kernel instructions 108,520 to 103,596, moves to 12,656, .text 416,495 bytes.
+- `a8c4c9f` `--fs-ssa` propagates copies into memory operands (step 4n): the base and index registers and the
+  stored register read the copy's source, so an array store `mov %rax,%rcx; mov %rdx,%rax; mov %rax,(%rcx)`
+  becomes `mov %rdx,(%rax)`. Kernel instructions 103,596 to 102,244, moves to 11,296, .text 412,527 bytes.
 
 ## 0.21.1 (unreleased): rename cleanup
 
