@@ -21803,7 +21803,10 @@ def fs_ssa_run(s0):
     nf = fs_ssa_fold(n, ln, vi, cnt)
     if nf == 0:
         nf = fs_ssa_copy(n, ln, df, vi)
-    return nf + fs_ssa_dead(n, ln, vi, cnt)
+    nd = fs_ssa_dead(n, ln, vi, cnt)
+    if nf == 0:
+        nf = fs_ssa_retarget(n, ln, s1, vi, cnt)
+    return nf + nd
 
 def fs_ssa_phis(n, s1, s2, df, vi, cnt):
 # A phi is live if a line reads it or a live phi takes it as an operand (fixpoint); each operand of a live phi
@@ -22033,6 +22036,55 @@ def fs_ssa_cpsrc(x, q, n, ln, df, vi):
     if r < 0 or r == b or vi[q * 16 + r] != fs_ssa_vo(p, r, df, vi):
         return x
     return s
+
+def fs_ssa_retarget(n, ln, s1, vi, cnt):
+# Step 4i, the first SSA-based allocation of a temporary: a reached one-line move `MN S,%rA` (MN in FS_SSMOV,
+# a full 64- or 32-bit destination) directly followed by `mov %rA,%rB`, where the copy is the only read of the
+# %rA value the move writes (its use count is 1), writes %rB itself (`MN S,%rB`, or %eB for a 32-bit
+# destination, which zero-extends like the copy) and the copy is deleted; a move that becomes `mov %rB,%rB` is
+# deleted too. S is read before the write as before, %rA is no longer written (nothing read that value but the
+# copy), %rB gets the same value at the same place (nothing sits between the two lines) and no flags change.
+# Runs after fs_ssa_dead and only in a round without folds or copy rewrites, so the two lines are as the round's
+# tables describe them (fs_ssa_dead only empties lines, which the patterns then do not match).
+    nr = 0
+    p = 0
+    while p + 1 < n:
+        a = out[ln[p]]
+        c = out[ln[p + 1]]
+        if vi[p * 16] >= 0 and s1[p] == p + 1 and starts(a, "    ") and find_char(a, 10) == len(a) - 1 and starts(c, "    mov %r") and find_char(c, 10) == len(c) - 1:
+            t = substr(a, 4, len(a) - 1)
+            sp = find_char(t, 32)
+            cm = -1
+            k = 0
+            while k < len(t):
+                if char_at(t, k) == 44:
+                    cm = k
+                k += 1
+            d = substr(t, cm + 1, len(t))
+            r = fs_ssa_rn(d)
+            if r >= 0 and r % 2 == 0:
+                r = r // 2
+            else:
+                r = -1
+            if r >= 0 and sp > 0 and cm > sp and find(FS_SSMOV, 14, substr(t, 0, sp)) >= 0 and cnt[p * 16 + r] == 1:
+                cs = substr(c, 8, len(c) - 1)
+                cc = find_char(cs, 44)
+                if cc > 0 and str_eq(substr(cs, 0, cc), FS_SSR[r]):
+                    b = find(FS_SSR, 14, substr(cs, cc + 1, len(cs)))
+                    if b >= 0 and b != r and (str_eq(d, FS_SSR[r]) or str_eq(d, FS_SSR32[r])):
+                        nd = FS_SSR[b]
+                        if str_eq(d, FS_SSR32[r]):
+                            nd = FS_SSR32[b]
+                        x = substr(t, 0, cm)
+                        if str_eq(x, concat("mov ", FS_SSR[b])) or str_eq(x, concat("movq ", FS_SSR[b])):
+                            out[ln[p]] = ""
+                        else:
+                            out[ln[p]] = c4("    ", x, ",", concat(nd, "\n"))
+                        out[ln[p + 1]] = ""
+                        nr += 1
+                        p += 1
+        p += 1
+    return nr
 
 def fs_ssa_dead(n, ln, vi, cnt):
 # Step 4e: a write no instruction reads is removed. A reached line that fs_ssa_dreg accepts, whose register value

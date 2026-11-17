@@ -148,6 +148,10 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^
 # step 4h: ssa_keep holds x, y and z in %r12/%r13/%rbx across its calls; --fs-temps copies them into %rcx for the
 # adds, and with the callee-saved registers tracked (a call leaves them alone) --fs-ssa reads them directly
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_keep:/,/ret$/' build/t_ssa.s | grep -c 'mov %\(rbx\|r12\|r13\),%rcx')" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_keep:/,/ret$/' build/t_ssa.s | grep -c 'mov %\(rbx\|r12\|r13\),%rcx')" = 0 ] && echo "PASS fs-ssa-callee-shape" || { echo "FAIL fs-ssa-callee-shape"; fail=1; }
+# step 4i: in ssa_move, a move into %rax directly followed by `mov %rax,%rN` (its only reader) under --fs-temps;
+# under --fs-ssa the move writes %rN itself, so no such pair is left
+mvpair='/^ssa_move:/ {f=1} f && prev ~ /^    (mov|movq|movl|lea|movzbl) [^,]*,%[re]ax$/ && $0 ~ /^    mov %rax,%r/ {c++} f {prev=$0} f && /ret$/ {f=0} END {print c+0}'
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk "$mvpair" build/t_ssa.s)" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk "$mvpair" build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-retarget-shape" || { echo "FAIL fs-ssa-retarget-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs
