@@ -42,6 +42,11 @@
 - `9f35795` `--fs-ssa` keeps a straight-line `push`/`pop` round-trip of a nested operand in a free register
   (step 4l): kernel instructions 112,268 to 109,854, pops 3,365 to 1,349; .text of kernel.cud 433,951 bytes
   (+0.2%, a register move is longer than `push`/`pop`).
+- `aa27d7b` `--fs-ssa` rounds are cheaper (scratch tables kept between rounds, a per-line cache of what each
+  line reads and writes, merge sweeps that skip unchanged positions): the kernel compiles in 1.74 s instead of
+  2.31 s, with byte-identical output.
+- `2388c61` `--fs-ssa` gives a function eight rounds instead of four: kernel instructions 109,854 to 108,520,
+  pops 1,349 to 1,049, .text of kernel.cud 431,167 bytes; compile 2.36 s.
 
 ## 0.21.1 (unreleased): rename cleanup
 
