@@ -7,7 +7,7 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4n
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4o
 
 - `f944491` tests: tools/fsfuzz.cud negates one generated condition in eight (`not (...)`) and joins two
   compares with `and`/`or` in another one in eight.
@@ -54,6 +54,13 @@
 - `a8c4c9f` `--fs-ssa` propagates copies into memory operands (step 4n): the base and index registers and the
   stored register read the copy's source, so an array store `mov %rax,%rcx; mov %rdx,%rax; mov %rax,(%rcx)`
   becomes `mov %rdx,(%rax)`. Kernel instructions 103,596 to 102,244, moves to 11,296, .text 412,527 bytes.
+- `51b964b` fix: the `--fs-ssa` SSA form gave every position after a loop header a phi of its own, so
+  copies inside loops were never propagated (`mov %r8,%rax; cmp %rdi,%rax` stayed). A position with one
+  predecessor now takes that predecessor's values. Kernel instructions 102,244 to 101,399, register moves
+  11,296 to 10,447.
+- `f0df4f8` `--fs-ssa` keeps step 4l's push/pop round-trips in a register across a bounds check's failure
+  path, which never comes back (step 4o); the failure call's alignment pad goes with the push. Kernel
+  instructions 101,399 to 99,001, pops 1,058 to 459, .text 410,143 to 404,031 bytes.
 
 ## 0.21.1 (unreleased): rename cleanup
 
