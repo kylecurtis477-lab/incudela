@@ -2,7 +2,9 @@
 # --fs-ssa (Phase 12.1 step 4d): every comparison kind as a branch and as a value, constants folded into add,
 # sub, and, or, xor and cmp (imm32 edges included, 2**31 must stay in %rcx), compares with 0, and loops whose
 # values meet in phis. Step 4e: ssa_dead returns 0 from inside a loop and at its end (a register write that is
-# overwritten before any read is removed). The output must be the same under every fs optimizer level.
+# overwritten before any read is removed). Step 4h: ssa_keep keeps three values in callee-saved registers across
+# two calls (read there directly, not through copies). The output must be the same under every fs
+# optimizer level.
 include "linux.cudi"
 
 def ssa_cmp(a: i64, b: i64, u: u64, v: u64) -> i64:
@@ -87,6 +89,12 @@ def ssa_copy(a: i64, b: i64, c: i64) -> i64:
         return a - b
     return c
 
+def ssa_keep(a: i64, b: i64) -> i64:
+    x: i64 = a * 3
+    y: i64 = ssa_copy(x, b, b)
+    z: i64 = ssa_copy(y, x, b)
+    return x + y + z
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -117,4 +125,6 @@ def main() -> i64:
     show(ssa_copy(9, 2, 3))
     show(ssa_copy(1, 4, 4))
     show(ssa_copy(1, 4, 6))
+    show(ssa_keep(4, 1))
+    show(ssa_keep(1, 2))
     return 0

@@ -21412,11 +21412,11 @@ def fs_tmp_isld(k, xs, n):
 # line. Any line it does not understand reads and writes every tracked register (so no value is dead across it),
 # and a jump out of the function or to an unknown label leaves the function untouched. Without the flag nothing
 # changes.
-FS_SSR = ["%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11"]
-FS_SSR32 = ["%eax", "%ecx", "%edx", "%esi", "%edi", "%r8d", "%r9d", "%r10d", "%r11d"]
-FS_SSRP = ["%ax", "%al", "%ah", "%cx", "%cl", "%ch", "%dx", "%dl", "%dh", "%si", "%sil", "%di", "%dil", "%r8w", "%r8b", "%r9w", "%r9b", "%r10w", "%r10b", "%r11w", "%r11b"]
-FS_SSRPI = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8]
-FS_SSU = ["%rbx", "%ebx", "%bx", "%bl", "%bh", "%rbp", "%ebp", "%bp", "%bpl", "%rsp", "%esp", "%sp", "%spl", "%rip", "%r12", "%r13", "%r14", "%r15", "%r12d", "%r13d", "%r14d", "%r15d"]
+FS_SSR = ["%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11", "%rbx", "%r12", "%r13", "%r14", "%r15"]
+FS_SSR32 = ["%eax", "%ecx", "%edx", "%esi", "%edi", "%r8d", "%r9d", "%r10d", "%r11d", "%ebx", "%r12d", "%r13d", "%r14d", "%r15d"]
+FS_SSRP = ["%ax", "%al", "%ah", "%cx", "%cl", "%ch", "%dx", "%dl", "%dh", "%si", "%sil", "%di", "%dil", "%r8w", "%r8b", "%r9w", "%r9b", "%r10w", "%r10b", "%r11w", "%r11b", "%bx", "%bl", "%bh", "%r12w", "%r12b", "%r13w", "%r13b", "%r14w", "%r14b", "%r15w", "%r15b"]
+FS_SSRPI = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+FS_SSU = ["%rbp", "%ebp", "%bp", "%bpl", "%rsp", "%esp", "%sp", "%spl", "%rip"]
 FS_SSMOV = ["mov", "movq", "movl", "movabs", "movzbl", "movzwl", "movzbq", "movzwq", "movsbq", "movswq", "movslq", "movsbl", "movswl", "lea"]
 FS_SSALU = ["add", "sub", "and", "or", "xor"]
 FS_SSNONE = ["leave", "ud2", "nop", "pause", "lfence", "mfence", "sfence", "cli", "sti", "hlt"]
@@ -21427,15 +21427,15 @@ fs_sso = ["", "", ""]
 def fs_ssa_rn(x):
 # a register operand: 2 * index + 1 for a partial (8/16-bit) name of a tracked register, 2 * index for a full
 # (64/32-bit, which zero-extends) one; -2 for a register that is not tracked; -1 for anything else
-    r = find(FS_SSR, 9, x)
+    r = find(FS_SSR, 14, x)
     if r < 0:
-        r = find(FS_SSR32, 9, x)
+        r = find(FS_SSR32, 14, x)
     if r >= 0:
         return 2 * r
-    r = find(FS_SSRP, 21, x)
+    r = find(FS_SSRP, 32, x)
     if r >= 0:
         return 2 * FS_SSRPI[r] + 1
-    if find(FS_SSU, 22, x) >= 0:
+    if find(FS_SSU, 9, x) >= 0:
         return -2
     if starts(x, "%xmm") and fs_lv_num(substr(x, 4, len(x))) >= 0 and fs_lv_num(substr(x, 4, len(x))) < 16:
         return -2
@@ -21476,9 +21476,9 @@ def fs_ssa_op(o, p, us, df, how):
             return 0
         if r >= 0:
             if how != 1 or r % 2 == 1:
-                us[p * 10 + r // 2] = 1
+                us[p * 16 + r // 2] = 1
             if how != 0:
-                df[p * 10 + r // 2] = 1
+                df[p * 16 + r // 2] = 1
         return 1
     if starts(o, "$"):
         return not contains(o, "%")
@@ -21498,7 +21498,7 @@ def fs_ssa_op(o, p, us, df, how):
                 if r == -1 or r >= 0 and r % 2 == 1:
                     return 0
                 if r >= 0:
-                    us[p * 10 + r // 2] = 1
+                    us[p * 16 + r // 2] = 1
             elif len(t) > 0 and fs_lv_num(t) < 0:
                 return 0
             a = k + 1
@@ -21519,15 +21519,15 @@ def fs_ssa_line(mn, ops, p, us, df):
     if find(FS_SSALU, 5, mn) >= 0:
         if n != 2:
             return 0
-        df[p * 10 + 9] = 1
+        df[p * 16 + 15] = 1
         if (str_eq(mn, "xor") or str_eq(mn, "sub")) and str_eq(fs_sso[0], fs_sso[1]) and fs_ssa_rn(fs_sso[0]) >= 0 and fs_ssa_rn(fs_sso[0]) % 2 == 0:
             return fs_ssa_op(fs_sso[1], p, us, df, 1)
         return fs_ssa_op(fs_sso[0], p, us, df, 0) and fs_ssa_op(fs_sso[1], p, us, df, 2)
     if str_eq(mn, "cmp") or str_eq(mn, "test"):
-        df[p * 10 + 9] = 1
+        df[p * 16 + 15] = 1
         return n == 2 and fs_ssa_op(fs_sso[0], p, us, df, 0) and fs_ssa_op(fs_sso[1], p, us, df, 0)
     if str_eq(mn, "imul"):
-        df[p * 10 + 9] = 1
+        df[p * 16 + 15] = 1
         if n == 2:
             return fs_ssa_op(fs_sso[0], p, us, df, 0) and fs_ssa_op(fs_sso[1], p, us, df, 2)
         if n == 3:
@@ -21535,8 +21535,8 @@ def fs_ssa_line(mn, ops, p, us, df):
         return 0
     if str_eq(mn, "shl") or str_eq(mn, "shr") or str_eq(mn, "sar"):
     # a shift by 0 leaves the flags alone, so the flags are read as well as written
-        us[p * 10 + 9] = 1
-        df[p * 10 + 9] = 1
+        us[p * 16 + 15] = 1
+        df[p * 16 + 15] = 1
         if n == 1:
             return fs_ssa_op(fs_sso[0], p, us, df, 2)
         if n == 2 and (starts(fs_sso[0], "$") or str_eq(fs_sso[0], "%cl")):
@@ -21544,25 +21544,25 @@ def fs_ssa_line(mn, ops, p, us, df):
         return 0
     if str_eq(mn, "neg") or str_eq(mn, "not"):
         if str_eq(mn, "neg"):
-            df[p * 10 + 9] = 1
+            df[p * 16 + 15] = 1
         return n == 1 and fs_ssa_op(fs_sso[0], p, us, df, 2)
     if starts(mn, "set"):
-        us[p * 10 + 9] = 1
+        us[p * 16 + 15] = 1
         return n == 1 and fs_ssa_op(fs_sso[0], p, us, df, 2)
     if str_eq(mn, "push"):
         return n == 1 and fs_ssa_op(fs_sso[0], p, us, df, 0)
     if str_eq(mn, "pop"):
         return n == 1 and fs_ssa_op(fs_sso[0], p, us, df, 1)
     if str_eq(mn, "cqo"):
-        us[p * 10] = 1
-        df[p * 10 + 2] = 1
+        us[p * 16] = 1
+        df[p * 16 + 2] = 1
         return n == 0
     if str_eq(mn, "mul") or str_eq(mn, "div") or str_eq(mn, "idiv"):
-        us[p * 10] = 1
-        us[p * 10 + 2] = 1
-        df[p * 10] = 1
-        df[p * 10 + 2] = 1
-        df[p * 10 + 9] = 1
+        us[p * 16] = 1
+        us[p * 16 + 2] = 1
+        df[p * 16] = 1
+        df[p * 16 + 2] = 1
+        df[p * 16 + 15] = 1
         return n == 1 and not starts(fs_sso[0], "$") and fs_ssa_op(fs_sso[0], p, us, df, 0)
     if str_eq(mn, "in"):
         return n == 2 and fs_ssa_op(fs_sso[0], p, us, df, 0) and fs_ssa_op(fs_sso[1], p, us, df, 1)
@@ -21572,13 +21572,13 @@ def fs_ssa_line(mn, ops, p, us, df):
         return n == 1 and not starts(fs_sso[0], "%") and fs_ssa_op(fs_sso[0], p, us, df, 0)
     if str_eq(mn, "rdtsc") or str_eq(mn, "rdmsr") or str_eq(mn, "wrmsr"):
         if str_eq(mn, "wrmsr"):
-            us[p * 10] = 1
-            us[p * 10 + 2] = 1
+            us[p * 16] = 1
+            us[p * 16 + 2] = 1
         else:
-            df[p * 10] = 1
-            df[p * 10 + 2] = 1
+            df[p * 16] = 1
+            df[p * 16 + 2] = 1
         if not str_eq(mn, "rdtsc"):
-            us[p * 10 + 1] = 1
+            us[p * 16 + 1] = 1
         return n == 0
     if find(FS_SSNONE, 10, mn) >= 0:
         return n == 0
@@ -21615,21 +21615,22 @@ def fs_ssa_multi(l, p, us, df):
 def fs_ssa_all(p, us, df):
 # a line that reads and writes every tracked register and the flags (a call, a return, anything unknown)
     r = 0
-    while r < 10:
-        us[p * 10 + r] = 1
-        df[p * 10 + r] = 1
+    while r < 16:
+        us[p * 16 + r] = 1
+        df[p * 16 + r] = 1
         r += 1
 
 def fs_ssa_call(p, ops, ln, us, df):
-# A call clobbers every tracked register and the flags. It reads the registers its argument set-up wrote: the
-# argument registers and %rax (the vector count of a variadic callee) written by the straight-line run of
-# instructions just before it (back to a label, jump, call or return). The code generator writes every argument
+# A call clobbers the nine caller-saved registers and the flags (the callee preserves %rbx and %r12-%r15). It
+# reads the registers its argument set-up wrote: the argument registers and %rax (the vector count of a variadic
+# callee) written by the straight-line run of instructions just before it (back to a label, jump, call or return). The code generator writes every argument
 # there (reloads from the pushed arguments, or the step 4c moves, which never cross a label), so a register
 # outside that run is not an argument of this call. A line not understood counts as writing every register.
     r = 0
-    while r < 10:
-        df[p * 10 + r] = 1
+    while r < 9:
+        df[p * 16 + r] = 1
         r += 1
+    df[p * 16 + 15] = 1
     if not fs_ssa_op(ops, p, us, df, 0):
         fs_ssa_all(p, us, df)
         return 0
@@ -21640,23 +21641,23 @@ def fs_ssa_call(p, ops, ln, us, df):
             return 0
         r = 0
         while r < 7:
-            if df[q * 10 + r]:
-                us[p * 10 + r] = 1
+            if df[q * 16 + r]:
+                us[p * 16 + r] = 1
             r += 1
         q -= 1
     return 0
 
 def fs_ssa_vo(p, r, df, vi):
 # the value of register r after the line at position p
-    if df[p * 10 + r]:
-        return p * 10 + r
-    return vi[p * 10 + r]
+    if df[p * 16 + r]:
+        return p * 16 + r
+    return vi[p * 16 + r]
 
 def fs_ssa_run(s0):
 # Builds the SSA form of out[s0:nout] and applies the rewrites. Positions number the non-empty entries; the
-# successors are those of fs_lv_build. Value ids: p * 10 + r is the write of register r (r = 9: the flags) at
-# position p, 10n + r the function's incoming value of r, 10n + 10 + p * 10 + r the phi of r at position p;
-# -1 is "not reached yet". Returns the number of rewrites.
+# successors are those of fs_lv_build. Value ids: p * 16 + r is the write of register r (r = 0-13: the registers
+# of FS_SSR, 14 unused, 15: the flags) at position p, 16n + r the function's incoming value of r,
+# 16n + 16 + p * 16 + r the phi of r at position p; -1 is "not reached yet". Returns the number of rewrites.
     n = 0
     lmin = -1
     lmax = -1
@@ -21694,11 +21695,11 @@ def fs_ssa_run(s0):
         i += 1
     s1 = list(n)
     s2 = list(n)
-    us = list(n * 10)
-    df = list(n * 10)
-    vi = list(n * 10)
+    us = list(n * 16)
+    df = list(n * 16)
+    vi = list(n * 16)
     j = 0
-    while j < n * 10:
+    while j < n * 16:
         us[j] = 0
         df[j] = 0
         vi[j] = -1
@@ -21722,8 +21723,12 @@ def fs_ssa_run(s0):
                 ops = substr(b, sp + 1, len(b))
             if str_eq(mn, "ret"):
                 s1[p] = -1
-                us[p * 10] = 1
-                us[p * 10 + 2] = 1
+                us[p * 16] = 1
+                us[p * 16 + 2] = 1
+                r = 9
+                while r < 14:
+                    us[p * 16 + r] = 1
+                    r += 1
             elif starts(mn, "j"):
                 if not starts(ops, ".LF") or lmin < 0:
                     return 0
@@ -21734,7 +21739,7 @@ def fs_ssa_run(s0):
                     s1[p] = lpos[v - lmin]
                 else:
                     s2[p] = lpos[v - lmin]
-                    us[p * 10 + 9] = 1
+                    us[p * 16 + 15] = 1
             elif str_eq(mn, "call"):
                 fs_ssa_call(p, ops, ln, us, df)
             elif not fs_ssa_line(mn, ops, p, us, df):
@@ -21742,22 +21747,22 @@ def fs_ssa_run(s0):
             elif starts(mn, "set") and str_eq(ops, "%al") and p + 1 < n and str_eq(out[ln[p + 1]], "    movzbl %al,%eax\n"):
             # the movzbl reads only the byte the setCC writes and replaces the rest, so the setCC's merge with the
             # old %rax is not a read
-                us[p * 10] = 0
+                us[p * 16] = 0
         elif fs_lv_lab(l) < 0 and not (starts(l, ".L") and ends(l, ":\n") and not contains(l, " ")):
         # a .LFn label joins paths and touches nothing; so does another local label (the -g line markers .Lfsd*,
         # never a jump target: every jump names a .LFn label or the function is skipped)
             fs_ssa_all(p, us, df)
         p += 1
     r = 0
-    while r < 10:
-        vi[r] = 10 * n + r
+    while r < 16:
+        vi[r] = 16 * n + r
         r += 1
     ch = 1
     while ch:
         ch = 0
         p = 0
         while p < n:
-            if vi[p * 10] >= 0:
+            if vi[p * 16] >= 0:
                 k = 0
                 while k < 2:
                     s = s1[p]
@@ -21765,33 +21770,33 @@ def fs_ssa_run(s0):
                         s = s2[p]
                     if s >= 0:
                         r = 0
-                        while r < 10:
+                        while r < 16:
                             x = fs_ssa_vo(p, r, df, vi)
-                            c = vi[s * 10 + r]
-                            ph = 10 * n + 10 + s * 10 + r
+                            c = vi[s * 16 + r]
+                            ph = 16 * n + 16 + s * 16 + r
                             if c < 0:
-                                vi[s * 10 + r] = x
+                                vi[s * 16 + r] = x
                                 ch = 1
                             elif c != x and c != ph:
-                                vi[s * 10 + r] = ph
+                                vi[s * 16 + r] = ph
                                 ch = 1
                             r += 1
                     k += 1
             p += 1
     if not fs_ssa_check(n, s1, s2, df, vi):
         return 0
-    cnt = list(20 * n + 10)
+    cnt = list(32 * n + 16)
     j = 0
-    while j < 20 * n + 10:
+    while j < 32 * n + 16:
         cnt[j] = 0
         j += 1
     p = 0
     while p < n:
-        if vi[p * 10] >= 0:
+        if vi[p * 16] >= 0:
             r = 0
-            while r < 10:
-                if us[p * 10 + r]:
-                    cnt[vi[p * 10 + r]] += 1
+            while r < 16:
+                if us[p * 16 + r]:
+                    cnt[vi[p * 16 + r]] += 1
                 r += 1
         p += 1
     fs_ssa_phis(n, s1, s2, df, vi, cnt)
@@ -21804,9 +21809,9 @@ def fs_ssa_phis(n, s1, s2, df, vi, cnt):
 # A phi is live if a line reads it or a live phi takes it as an operand (fixpoint); each operand of a live phi
 # then counts as one more read of the value that flows in along that edge. A dead phi reads nothing, so a value
 # that only reaches a join where the register is overwritten before it is read stays at its real use count.
-    pl = list(20 * n + 10)
+    pl = list(32 * n + 16)
     j = 0
-    while j < 20 * n + 10:
+    while j < 32 * n + 16:
         pl[j] = 0
         if cnt[j] > 0:
             pl[j] = 1
@@ -21816,17 +21821,17 @@ def fs_ssa_phis(n, s1, s2, df, vi, cnt):
         ch = 0
         p = 0
         while p < n:
-            if vi[p * 10] >= 0:
+            if vi[p * 16] >= 0:
                 k = 0
                 while k < 2:
                     s = s1[p]
                     if k == 1:
                         s = s2[p]
                     r = 0
-                    while s >= 0 and r < 10:
-                        ph = 10 * n + 10 + s * 10 + r
+                    while s >= 0 and r < 16:
+                        ph = 16 * n + 16 + s * 16 + r
                         x = fs_ssa_vo(p, r, df, vi)
-                        if vi[s * 10 + r] == ph and pl[ph] and x >= 10 * n + 10 and not pl[x]:
+                        if vi[s * 16 + r] == ph and pl[ph] and x >= 16 * n + 16 and not pl[x]:
                             pl[x] = 1
                             ch = 1
                         r += 1
@@ -21834,16 +21839,16 @@ def fs_ssa_phis(n, s1, s2, df, vi, cnt):
             p += 1
     p = 0
     while p < n:
-        if vi[p * 10] >= 0:
+        if vi[p * 16] >= 0:
             k = 0
             while k < 2:
                 s = s1[p]
                 if k == 1:
                     s = s2[p]
                 r = 0
-                while s >= 0 and r < 10:
-                    ph = 10 * n + 10 + s * 10 + r
-                    if vi[s * 10 + r] == ph and pl[ph]:
+                while s >= 0 and r < 16:
+                    ph = 16 * n + 16 + s * 16 + r
+                    if vi[s * 16 + r] == ph and pl[ph]:
                         cnt[fs_ssa_vo(p, r, df, vi)] += 1
                     r += 1
                 k += 1
@@ -21856,19 +21861,19 @@ def fs_ssa_check(n, s1, s2, df, vi):
 # function is then left as it is).
     p = 0
     while p < n:
-        if vi[p * 10] >= 0:
+        if vi[p * 16] >= 0:
             r = 0
-            while r < 10:
-                x = vi[p * 10 + r]
+            while r < 16:
+                x = vi[p * 16 + r]
                 if x < 0:
                     return 0
-                if x < 10 * n:
-                    if x % 10 != r or not df[x]:
+                if x < 16 * n:
+                    if x % 16 != r or not df[x]:
                         return 0
-                elif x >= 10 * n + 10:
-                    if x % 10 != r or vi[x - 10 * n - 10] != x:
+                elif x >= 16 * n + 16:
+                    if x % 16 != r or vi[x - 16 * n - 16] != x:
                         return 0
-                elif x != 10 * n + r:
+                elif x != 16 * n + r:
                     return 0
                 k = 0
                 while k < 2:
@@ -21876,8 +21881,8 @@ def fs_ssa_check(n, s1, s2, df, vi):
                     if k == 1:
                         s = s2[p]
                     if s >= 0:
-                        y = vi[s * 10 + r]
-                        if y != fs_ssa_vo(p, r, df, vi) and y != 10 * n + 10 + s * 10 + r:
+                        y = vi[s * 16 + r]
+                        if y != fs_ssa_vo(p, r, df, vi) and y != 16 * n + 16 + s * 16 + r:
                             return 0
                     k += 1
                 r += 1
@@ -21907,8 +21912,8 @@ def fs_ssa_fold(n, ln, vi, cnt):
     while p + 1 < n:
         a = out[ln[p]]
         b = out[ln[p + 1]]
-        if vi[p * 10] >= 0 and starts(b, "    ") and starts(a, "    "):
-            if starts(a, "    mov $") and ends(a, ",%rcx\n") and cnt[p * 10 + 1] == 1 and fs_ssa_imm(substr(a, 8, len(a) - 6)):
+        if vi[p * 16] >= 0 and starts(b, "    ") and starts(a, "    "):
+            if starts(a, "    mov $") and ends(a, ",%rcx\n") and cnt[p * 16 + 1] == 1 and fs_ssa_imm(substr(a, 8, len(a) - 6)):
                 sp = find_char(substr(b, 4, len(b)), 32)
                 if sp >= 0 and str_eq(substr(b, 4 + sp, len(b)), " %rcx,%rax\n"):
                     mn = substr(b, 4, 4 + sp)
@@ -21916,11 +21921,11 @@ def fs_ssa_fold(n, ln, vi, cnt):
                         out[ln[p]] = ""
                         out[ln[p + 1]] = c4("    ", mn, " ", concat(substr(a, 8, len(a) - 6), ",%rax\n"))
                         nf += 1
-            elif str_eq(a, "    xor %ecx,%ecx\n") and str_eq(b, "    cmp %rcx,%rax\n") and cnt[p * 10 + 1] == 1:
+            elif str_eq(a, "    xor %ecx,%ecx\n") and str_eq(b, "    cmp %rcx,%rax\n") and cnt[p * 16 + 1] == 1:
                 out[ln[p]] = ""
                 out[ln[p + 1]] = "    test %rax,%rax\n"
                 nf += 1
-            elif starts(a, "    set") and ends(a, " %al\n") and p + 3 < n and cnt[p * 10] == 1 and cnt[(p + 1) * 10] == 1 and cnt[(p + 2) * 10 + 9] == 1:
+            elif starts(a, "    set") and ends(a, " %al\n") and p + 3 < n and cnt[p * 16] == 1 and cnt[(p + 1) * 16] == 1 and cnt[(p + 2) * 16 + 15] == 1:
                 cc = find(FS_SSCC, 10, substr(a, 7, len(a) - 5))
                 c = out[ln[p + 2]]
                 d = out[ln[p + 3]]
@@ -21957,18 +21962,18 @@ def fs_ssa_dreg(a):
     if find_char(d, 44) >= 0:
         return -1
     if str_eq(mn, "mov") or str_eq(mn, "movq") or str_eq(mn, "movabs"):
-        r = find(FS_SSR, 9, d)
-        if r >= 0 and (starts(s, "$") or find(FS_SSR, 9, s) >= 0):
+        r = find(FS_SSR, 14, d)
+        if r >= 0 and (starts(s, "$") or find(FS_SSR, 14, s) >= 0):
             return r
     elif str_eq(mn, "movl"):
-        r = find(FS_SSR32, 9, d)
-        if r >= 0 and (starts(s, "$") or find(FS_SSR32, 9, s) >= 0):
+        r = find(FS_SSR32, 14, d)
+        if r >= 0 and (starts(s, "$") or find(FS_SSR32, 14, s) >= 0):
             return r
     elif str_eq(mn, "movzbl"):
         if str_eq(s, "%al") and str_eq(d, "%eax"):
             return 0
     elif str_eq(mn, "xor"):
-        r = find(FS_SSR32, 9, d)
+        r = find(FS_SSR32, 14, d)
         if r >= 0 and str_eq(s, d):
             return r
     return -1
@@ -21986,7 +21991,7 @@ def fs_ssa_copy(n, ln, df, vi):
     q = 0
     while q < n:
         a = out[ln[q]]
-        if vi[q * 10] >= 0 and starts(a, "    ") and find_char(a, 10) == len(a) - 1 and find_char(a, 40) < 0:
+        if vi[q * 16] >= 0 and starts(a, "    ") and find_char(a, 10) == len(a) - 1 and find_char(a, 40) < 0:
             t = substr(a, 4, len(a) - 1)
             sp = find_char(t, 32)
             if sp > 0 and find(FS_SSCP, 9, substr(t, 0, sp)) >= 0:
@@ -22013,19 +22018,19 @@ def fs_ssa_cpsrc(x, q, n, ln, df, vi):
 # x read at position q: if it is a tracked 64-bit register %rB whose value there is the write of
 # `mov %rA,%rB` (A another tracked register) and %rA at q still holds the value it had after that line,
 # returns "%rA"; otherwise x
-    b = find(FS_SSR, 9, x)
+    b = find(FS_SSR, 14, x)
     if b < 0:
         return x
-    v = vi[q * 10 + b]
-    if v < 0 or v >= 10 * n or v % 10 != b:
+    v = vi[q * 16 + b]
+    if v < 0 or v >= 16 * n or v % 16 != b:
         return x
-    p = (v - b) // 10
+    p = (v - b) // 16
     m = out[ln[p]]
     if not starts(m, "    mov %r") or not ends(m, c3(",", x, "\n")):
         return x
     s = substr(m, 8, len(m) - len(x) - 2)
-    r = find(FS_SSR, 9, s)
-    if r < 0 or r == b or vi[q * 10 + r] != fs_ssa_vo(p, r, df, vi):
+    r = find(FS_SSR, 14, s)
+    if r < 0 or r == b or vi[q * 16 + r] != fs_ssa_vo(p, r, df, vi):
         return x
     return s
 
@@ -22037,10 +22042,10 @@ def fs_ssa_dead(n, ln, vi, cnt):
     p = 0
     while p < n:
         a = out[ln[p]]
-        if vi[p * 10] >= 0 and starts(a, "    "):
+        if vi[p * 16] >= 0 and starts(a, "    "):
             r = fs_ssa_dreg(a)
-            if r >= 0 and cnt[p * 10 + r] == 0:
-                if not starts(a, "    xor ") or cnt[p * 10 + 9] == 0:
+            if r >= 0 and cnt[p * 16 + r] == 0:
+                if not starts(a, "    xor ") or cnt[p * 16 + 15] == 0:
                     out[ln[p]] = ""
                     nd += 1
         p += 1

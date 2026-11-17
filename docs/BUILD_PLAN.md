@@ -417,10 +417,11 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    flags, with a verifier, and three use-count folds; the first pass landed under item 3's rule. The kernel is
    built with it since the step 4d kernel switch (2026-11-16). Step 4e (2026-11-16, under `--fs-ssa`) starts
    the SSA-based clean-up of the remaining temporaries: register writes no instruction reads are removed. Step 4f (2026-11-16, under
-   `--fs-ssa`): copy propagation through the `mov %rA,%rB` chains between tracked registers. Next: track the
-   callee-saved registers (%rbx, %r12-%r15) in the SSA form so their copies (`mov %rbx,%rax`, 2,415 in the
-   kernel) propagate too, then SSA-based allocation of the remaining %rax/%rcx temporaries. Since step 4g
-   (2026-11-16) the loader, modules and user programs are built with `--fs-ssa` too.
+   `--fs-ssa`): copy propagation through the `mov %rA,%rB` chains between tracked registers. Since step 4g
+   (2026-11-16) the loader, modules and user programs are built with `--fs-ssa` too. Step 4h (2026-11-16,
+   under `--fs-ssa`): the callee-saved registers (%rbx, %r12-%r15) are tracked in the SSA form, so their
+   copies propagate too (`mov %rbx,%rax` in the kernel 2,415 to 1,957). Next: SSA-based allocation of the
+   remaining %rax/%rcx temporaries.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -498,6 +499,7 @@ least.
 | Nov 16 | SSA step 4d: `--fs-ssa` (opt-in), fsfuzz conditions with `not`/`and`/`or`, CHANGELOG for 0.20.1-0.21.1 | 1 batch | first optimizer pass under the item 3 landing rule (inv175) |
 | Nov 16 | SSA: the kernel built with `--fs-ssa` (step 4d kernel switch), dead register writes (step 4e), CHANGELOG 0.22.0 (open) | 1 batch | QEMU boot suite at O2 and O0 (inv176) |
 | Nov 16 | SSA step 4f: copy propagation under `--fs-ssa`; step 4g: loader, modules and user programs built with `--fs-ssa`; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv177) |
+| Nov 16 | SSA step 4h: the callee-saved registers tracked under `--fs-ssa`; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv178) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -1000,6 +1002,25 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      4c. tests/modules-build, user-build, efi-build and kernel-build pass (build.cud and build.sh agree,
      reproducible images, O0). Before the gate, `tests/os/run.sh` at O2 with these
      images: 45 PASS, 0 FAIL (UEFI loader boots, modules, user programs, Linux ABI, desktop, kexec).
+   - *Step 4h (2026-11-16): the callee-saved registers in the SSA form, under `--fs-ssa`.* %rbx and %r12-%r15
+     (with their 32-, 16- and 8-bit names) are tracked registers like the nine scratch and argument ones; a
+     position now has 16 slots (registers 0-13, slot 14 unused, the flags in slot 15; value ids p * 16 + r,
+     16n + r, 16n + 16 + p * 16 + r). A call writes only the nine caller-saved registers and the flags (SysV:
+     the callee preserves the others) and reads only its argument set-up as before; a `ret` reads %rax, %rdx and
+     the five callee-saved registers, so the restores fs_ra_save puts before `leave` are never dead; a barrier
+     still reads and writes every slot. Copy propagation (step 4f) and dead-write removal (step 4e) then apply to
+     them unchanged: a value kept in %rbx across a call is read from %rbx instead of through a `mov %rbx,%rax` or
+     `mov %rbx,%rcx` copy. %rbp, %rsp and %rip stay untracked. Code built without `--fs-ssa` is byte-identical
+     (the kernel default, `--fs-opt`, `--fs-live`, `--fs-temps` compared against the previous compiler). On the
+     kernel: instructions 118,980 to 117,427 (-1.3%); `mov %rbx,%rax` 2,415 to 1,957, `mov %r12,%rax` 1,202 to
+     911, `mov %r13,%rax` 703 to 501, `mov %rax,%rdi` 5,013 to 4,474; .text of kernel.cud alone 453,291 to
+     448,587 bytes. Compile time of the kernel under `--fs-ssa` 2.7 to 4.7 s (wider tables and more phis; the
+     merge fixpoint is still a plain repeat-until-stable sweep). Tests: ssa_keep in tests/fs/ssa.cud (three
+     values kept across two calls) and `fs-ssa-callee-shape` (`mov %rbx/%r12/%r13,%rcx` under `--fs-temps`,
+     none under `--fs-ssa`); every tests/fs program under `--fs-ssa`, `-O0 --fs-ssa`, `--fs-ssa --fs-opt` and
+     `--fs-ssa --fs-temps`: 23/23. Landing rule: `optcov --check` OK (the five verifier allow-list entries
+     renamed to the 16-slot ids, no new entry); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds
+     1-6 x 80: 0 differ.
    - *fsfuzz conditions (2026-11-16).* tools/fsfuzz.cud's generator now negates one condition in eight
      (`not (a < b)`) and joins two compares with `and`/`or` in another one in eight, so the 0/1 comparison values
      and short-circuit jumps that step 4d works on are in every fuzz run (the programs of every seed change). On

@@ -52,8 +52,8 @@ fs_ssa_run | if not starts(ops, ".LF") or lmin < 0: | defensive: every fs jump t
 fs_ssa_run | if v < lmin or v > lmax or lpos[v - lmin] < 0: | defensive: jumps target labels of the same function (as in fs_lv_build)
 fs_ssa_run | elif fs_lv_lab(l) < 0 and not (starts(l, ".L") and ends(l, ":\n") and not contains(l, " ")): | defensive: column-0 lines inside a function body are its .LFn labels and the -g markers .Lfsd*
 fs_ssa_run | if not fs_ssa_check(n, s1, s2, df, vi): | verifier: the construction always gives a well-formed SSA form; this return is only taken on a construction bug
-fs_ssa_check | if x < 0: | verifier: every reached position gets a value for every register (merges set all ten at once)
-fs_ssa_check | if x % 10 != r or not df[x]: | verifier: a write id is only created for a line that writes that register
-fs_ssa_check | if x % 10 != r or vi[x - 10 * n - 10] != x: | verifier: a phi id is only created at the position that holds it
-fs_ssa_check | elif x != 10 * n + r: | verifier: incoming-value ids are only set at the entry, per register
-fs_ssa_check | if y != fs_ssa_vo(p, r, df, vi) and y != 10 * n + 10 + s * 10 + r: | verifier: the merge loop runs until every edge carries the predecessor's value or the successor's phi
+fs_ssa_check | if x < 0: | verifier: every reached position gets a value for every register (merges set all sixteen slots at once)
+fs_ssa_check | if x % 16 != r or not df[x]: | verifier: a write id is only created for a line that writes that register
+fs_ssa_check | if x % 16 != r or vi[x - 16 * n - 16] != x: | verifier: a phi id is only created at the position that holds it
+fs_ssa_check | elif x != 16 * n + r: | verifier: incoming-value ids are only set at the entry, per register
+fs_ssa_check | if y != fs_ssa_vo(p, r, df, vi) and y != 16 * n + 16 + s * 16 + r: | verifier: the merge loop runs until every edge carries the predecessor's value or the successor's phi
