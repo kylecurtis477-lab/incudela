@@ -15779,6 +15779,8 @@ fs_ra = 0  # --fs-opt: opt-in fs optimizer (Phase 12.1); step 1 keeps scalar loc
 FS_RAR = ["%r8", "%r9", "%r10", "%r11", "%rsi", "%rdi", "%rbx", "%r12", "%r13", "%r14", "%r15"]
 # text that means register FS_RAR[i // 4] is named somewhere in a line (all widths)
 FS_RAM = ["%r8", "%r8", "%r8", "%r8", "%r9", "%r9", "%r9", "%r9", "%r10", "%r10", "%r10", "%r10", "%r11", "%r11", "%r11", "%r11", "%rsi", "%esi", "%si", "%si", "%rdi", "%edi", "%di", "%di", "%rbx", "%ebx", "%bx", "%bl", "%r12", "%r12", "%r12", "%r12", "%r13", "%r13", "%r13", "%r13", "%r14", "%r14", "%r14", "%r14", "%r15", "%r15", "%r15", "%r15"]
+# the entries of FS_RAM that are not a repeat of the one before (a repeat names the same register again)
+FS_RAX = [0, 4, 8, 12, 16, 17, 18, 20, 21, 22, 24, 25, 26, 27, 28, 32, 36, 40]
 # instructions with no implicit use of any FS_RAR register (j* and set* are checked by prefix)
 FS_RAOK = ["mov", "movl", "movzbl", "movzwl", "movsbq", "movswq", "movslq", "movabs", "add", "sub", "imul", "mul", "and", "or", "xor", "cmp", "test", "neg", "not", "shl", "shr", "sar", "cqo", "idiv", "div", "push", "pop", "lea", "leave", "ret", "ud2", "call", "addq", "subq", "movq", "lock", "xchgq", "pause", "mfence", "rdtsc", "cld"]
 fs_hasasm = 0  # the function being compiled has an asm() statement: --fs-opt leaves its text alone
@@ -20663,13 +20665,8 @@ def fs_regalloc(s0):
         l = out[i]
         n = len(l)
         if n > 0:
-            j = 0
-            nl = 0
-            while j < n:
-                if char_at(l, j) == 10:
-                    nl += 1
-                j += 1
-            if nl != 1 or char_at(l, n - 1) != 10:
+            if find_char(l, 10) != n - 1:
+            # one line: its only newline is the last character
                 ok = 0
             elif not starts(l, "    "):
                 if not ends(l, ":\n") or contains(l, " "):
@@ -20701,11 +20698,12 @@ def fs_regalloc(s0):
                 if starts(mn, "j") and not starts(ops, ".L"):
                 # a jump out of the function would skip the callee-saved restores
                     nret += 1000
-                r = 0
-                while r < 44:
-                    if contains(l, FS_RAM[r]):
+                k = 0
+                while k < 18:
+                    r = FS_RAX[k]
+                    if free[r // 4] and contains(l, FS_RAM[r]):
                         free[r // 4] = 0
-                    r += 1
+                    k += 1
                 if ok and contains(l, "%rbp"):
                     if str_eq(b, "push %rbp") or str_eq(b, "mov %rsp,%rbp"):
                         ok = 1
@@ -21711,8 +21709,8 @@ def fs_ssa_vo(p, r, df, vi):
 # rounds got cheaper, eight since. On the kernel eight reach 108,520 instructions (four: 109,854; sixteen: 108,430).
 FS_SSRND = 8
 
-FS_SSB = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-FS_SSBN = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+FS_SSB = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+FS_SSBN = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 def fs_ssa_buf(k, m, v):
 # Scratch table k of fs_ssa_run and its helpers, at least m entries, the first m set to v (-2: left as they are,
@@ -21777,54 +21775,57 @@ def fs_ssa_run(s0):
     us = fs_ssa_buf(3, n * 16, 0)
     df = fs_ssa_buf(4, n * 16, 0)
     vi = fs_ssa_buf(5, n * 16, -1)
+    if FS_SSBN[15] < nout:
+        k = 15
+        while k < 20:
+            fs_ssa_buf(k, 2 * nout + 1024, -2)
+            k += 1
+    rk = FS_SSB[15]
+    rt = FS_SSB[16]
+    ru = FS_SSB[17]
+    rd = FS_SSB[18]
+    rv = FS_SSB[19]
     p = 0
     while p < n:
-        l = out[ln[p]]
+        i = ln[p]
+        l = out[i]
         s1[p] = p + 1
         if p + 1 >= n:
             s1[p] = -1
         s2[p] = -1
-        if find_char(l, 10) != len(l) - 1:
-            fs_ssa_multi(l, p, us, df)
-        elif starts(l, "    ") and not starts(l, "     "):
-            b = substr(l, 4, len(l) - 1)
-            sp = find_char(b, 32)
-            mn = b
-            ops = ""
-            if sp >= 0:
-                mn = substr(b, 0, sp)
-                ops = substr(b, sp + 1, len(b))
-            if str_eq(mn, "ret"):
+        if not (rk[i] is l):
+            fs_ssa_row(i, l, p, us, df)
+        k = rt[i]
+        if k == 4:
+            fs_ssa_call(p, rv[i], ln, us, df)
+        elif k == 2 or k == 3:
+            v = rv[i]
+            if lmin < 0 or v < lmin or v > lmax or lpos[v - lmin] < 0:
+                return 0
+            if k == 2:
+                s1[p] = lpos[v - lmin]
+            else:
+                s2[p] = lpos[v - lmin]
+                us[p * 16 + 15] = 1
+        else:
+            if k == 1:
                 s1[p] = -1
-                us[p * 16] = 1
-                us[p * 16 + 2] = 1
-                r = 9
-                while r < 14:
-                    us[p * 16 + r] = 1
+            m = ru[i]
+            w = rd[i]
+            if m or w:
+                b = p * 16
+                r = 0
+                while r < 16:
+                    if m >> r & 1:
+                        us[b] = 1
+                    if w >> r & 1:
+                        df[b] = 1
+                    b += 1
                     r += 1
-            elif starts(mn, "j"):
-                if not starts(ops, ".LF") or lmin < 0:
-                    return 0
-                v = fs_lv_num(substr(ops, 3, len(ops)))
-                if v < lmin or v > lmax or lpos[v - lmin] < 0:
-                    return 0
-                if str_eq(mn, "jmp"):
-                    s1[p] = lpos[v - lmin]
-                else:
-                    s2[p] = lpos[v - lmin]
-                    us[p * 16 + 15] = 1
-            elif str_eq(mn, "call"):
-                fs_ssa_call(p, ops, ln, us, df)
-            elif not fs_ssa_linec(l, mn, ops, p, us, df):
-                fs_ssa_all(p, us, df)
-            elif starts(mn, "set") and str_eq(ops, "%al") and p + 1 < n and str_eq(out[ln[p + 1]], "    movzbl %al,%eax\n"):
+            if k == 6 and p + 1 < n and str_eq(out[ln[p + 1]], "    movzbl %al,%eax\n"):
             # the movzbl reads only the byte the setCC writes and replaces the rest, so the setCC's merge with the
             # old %rax is not a read
                 us[p * 16] = 0
-        elif fs_lv_lab(l) < 0 and not (starts(l, ".L") and ends(l, ":\n") and not contains(l, " ")):
-        # a .LFn label joins paths and touches nothing; so does another local label (the -g line markers .Lfsd*,
-        # never a jump target: every jump names a .LFn label or the function is skipped)
-            fs_ssa_all(p, us, df)
         p += 1
     # pc: the number of predecessors of each position (the function's entry counts as one for position 0). A
     # position with one predecessor holds that predecessor's outgoing values and never gets a phi of its own (it
@@ -21864,7 +21865,23 @@ def fs_ssa_run(s0):
                     s = s1[p]
                     if k == 1:
                         s = s2[p]
-                    if s >= 0:
+                    if s >= 0 and pc[s] == 1:
+                    # one predecessor: the entry takes the value (it is never a phi)
+                        b = s * 16
+                        x = p * 16
+                        r = 0
+                        while r < 16:
+                            v = x
+                            if not df[x]:
+                                v = vi[x]
+                            if vi[b] != v:
+                                vi[b] = v
+                                dq[s] = 1
+                                ch = 1
+                            x += 1
+                            b += 1
+                            r += 1
+                    elif s >= 0:
                         b = s * 16
                         ph = 16 * n + 16 + b
                         x = p * 16
@@ -21880,8 +21897,6 @@ def fs_ssa_run(s0):
                                 ch = 1
                             elif c != v and c != ph:
                                 vi[b] = ph
-                                if pc[s] == 1:
-                                    vi[b] = v
                                 dq[s] = 1
                                 ch = 1
                             x += 1
@@ -21913,22 +21928,92 @@ def fs_ssa_run(s0):
         nf += fs_ssa_pushpop(n, ln, s1, s2, us, df, vi, cnt, mk)
     return nf + nd
 
+# The row cache of fs_ssa_run (scratch tables 15-19, indexed by out index): table 15 holds the entry a row was
+# computed for, compared by identity, so an entry a pass rewrote is parsed again (the cache keeps the old entry
+# alive, so its address is never reused); table 16 its kind (0 reads and writes only, 1 return, 2 jmp, 3
+# conditional jump, 4 call, 6 `setCC %al`); tables 17 and 18 the read and write masks (bit r for register slot
+# r); table 19 the jump's label number or the call's operand. What a line reads and writes depends only on its
+# text, except for a call (fs_ssa_call looks at the lines before it) and the `setCC %al` / `movzbl %al,%eax`
+# pair (the next line), which are worked out in every round.
+
+def fs_ssa_row(i, l, p, us, df):
+# fills the row cache for entry l at out index i, using row p of us and df (all zero) as scratch; leaves the row
+# zero again
+    rk = FS_SSB[15]
+    rt = FS_SSB[16]
+    ru = FS_SSB[17]
+    rd = FS_SSB[18]
+    rv = FS_SSB[19]
+    rk[i] = l
+    rt[i] = 0
+    rv[i] = 0
+    if find_char(l, 10) != len(l) - 1:
+        fs_ssa_multi(l, p, us, df)
+    elif starts(l, "    ") and not starts(l, "     "):
+        b = substr(l, 4, len(l) - 1)
+        sp = find_char(b, 32)
+        mn = b
+        ops = ""
+        if sp >= 0:
+            mn = substr(b, 0, sp)
+            ops = substr(b, sp + 1, len(b))
+        if str_eq(mn, "ret"):
+            rt[i] = 1
+            us[p * 16] = 1
+            us[p * 16 + 2] = 1
+            r = 9
+            while r < 14:
+                us[p * 16 + r] = 1
+                r += 1
+        elif starts(mn, "j"):
+            rt[i] = 3
+            if str_eq(mn, "jmp"):
+                rt[i] = 2
+            rv[i] = -1
+            if starts(ops, ".LF"):
+                rv[i] = fs_lv_num(substr(ops, 3, len(ops)))
+        elif str_eq(mn, "call"):
+            rt[i] = 4
+            rv[i] = ops
+        elif not fs_ssa_linec(l, mn, ops, p, us, df):
+            fs_ssa_all(p, us, df)
+        elif starts(mn, "set") and str_eq(ops, "%al"):
+            rt[i] = 6
+    elif fs_lv_lab(l) < 0 and not (starts(l, ".L") and ends(l, ":\n") and not contains(l, " ")):
+    # a .LFn label joins paths and touches nothing; so does another local label (the -g line markers .Lfsd*,
+    # never a jump target: every jump names a .LFn label or the function is skipped)
+        fs_ssa_all(p, us, df)
+    m = 0
+    w = 0
+    r = 0
+    while r < 16:
+        if us[p * 16 + r]:
+            m = m | 1 << r
+            us[p * 16 + r] = 0
+        if df[p * 16 + r]:
+            w = w | 1 << r
+            df[p * 16 + r] = 0
+        r += 1
+    ru[i] = m
+    rd[i] = w
+
 def fs_ssa_phis(n, s1, s2, df, vi, cnt):
 # A phi is live if a line reads it or a live phi takes it as an operand (fixpoint); each operand of a live phi
 # then counts as one more read of the value that flows in along that edge. A dead phi reads nothing, so a value
 # that only reaches a join where the register is overwritten before it is read stays at its real use count.
 # The fixpoint runs on a worklist over the reached predecessors of each position (a list built here), so a chain
 # of phis is walked once instead of one sweep per link; it is the same least fixpoint as a sweep until stable.
-    pl = fs_ssa_buf(9, 32 * n + 16, 0)
+# pl is read only at phis (values 16n+16 and up), so only that half is set
+    pl = fs_ssa_buf(9, 32 * n + 16, -2)
     wl = fs_ssa_buf(10, 16 * n + 16, -2)
     nw = 0
-    j = 0
+    j = 16 * n + 16
     while j < 32 * n + 16:
+        pl[j] = 0
         if cnt[j] > 0:
             pl[j] = 1
-            if j >= 16 * n + 16:
-                wl[nw] = j
-                nw += 1
+            wl[nw] = j
+            nw += 1
         j += 1
     pa = fs_ssa_buf(11, n + 1, 0)
     p = 0
@@ -22009,10 +22094,10 @@ def fs_ssa_check(n, s1, s2, df, vi):
                 if x < 0:
                     return 0
                 if x < nw:
-                    if x % 16 != r or not df[x]:
+                    if (x & 15) != r or not df[x]:
                         return 0
                 elif x >= np:
-                    if x % 16 != r or vi[x - np] != x:
+                    if (x & 15) != r or vi[x - np] != x:
                         return 0
                 elif x != nw + r:
                     return 0

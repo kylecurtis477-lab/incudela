@@ -440,7 +440,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    copies into %rax, many of them loop counters copied for a compare that copy propagation should already have
    taken. The cause of the second was a bug in the SSA form (fix below: 101,399 instructions, moves 10,447).
    Step 4o (2026-11-17, under `--fs-ssa`): the step 4l round-trips cross a failure path (to 99,001, pops 459).
-   Next: the 2,276 copies into %rax left, measured again.
+   Since 2026-11-17 the rounds are cheaper again (the kernel compiles in 2.3 s instead of 3.1 s, identical
+   output). Next: the 2,276 copies into %rax left, measured again.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1133,6 +1134,23 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      `--fs-ssa --fs-opt`: 23/23; the step 4d-4k shape checks still pass. Landing rule: `optcov --check` OK (every
      new block hit, no new allow-list entry); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x
      80: 0 differ. Next: cheaper rounds (fewer table rebuilds), then a higher round cap.
+   - *`--fs-ssa` rounds cheaper again (2026-11-17, after step 4o).* Steps 4m-4o brought the kernel's `--fs-ssa`
+     compile back to 3.1 s. Sampled (a ptrace profiler on the box, not committed): the line parse of every
+     round, the merge sweeps and the verifier inside fs_ssa_run, and outside it fs_regalloc's own line checks,
+     which counted the newlines of every line one character at a time and ran 44 substring searches per line
+     for 18 distinct register names. Now: fs_ssa_run keeps a row cache per out[] entry (scratch tables 15-19:
+     the entry it was computed for, compared by identity, so an entry a pass rewrote is parsed again; its kind;
+     read and write masks; the jump's label number or the call's operand), so an unchanged line is not parsed
+     again in the next round (a call and a `setCC %al` / `movzbl %al,%eax` pair, which depend on their
+     neighbours, are still worked out every round); a merge into a position with one predecessor takes the
+     value without the phi tests (it never gets a phi since 51b964b); fs_ssa_phis sets its live marks only for
+     the phi half of the value space, the only half it reads; fs_ssa_check masks instead of dividing;
+     fs_regalloc finds the newline with find_char and searches each register name once (FS_RAX), skipping
+     those already ruled out. The kernel's `--fs-ssa` compile: 3.14 to 2.30 s (median user time of seven
+     interleaved runs; 3.02 to 2.23 s best). The output is byte-identical: the kernel, and 64 sources under
+     `--fs-ssa` and `-O0 --fs-ssa`, and under no flag, `-O0`, `--fs-opt`, `--fs-live` and `--fs-temps`.
+     Landing rule: `optcov --check` OK (allow-list entries moved to the cached jump check and fs_ssa_row; the
+     merge's one-predecessor branch, now never taken, removed); fsfuzz as for every optimizer commit.
    - *`--fs-ssa` rounds cheaper (2026-11-17).* Timed by phase (a `__clock` build, not committed): of the
      kernel's SSA time, building the tables took about a third, half of it allocating the per-line tables (16
      or 32 entries a line, fresh every round of every function) and the rest parsing each line again; the merge

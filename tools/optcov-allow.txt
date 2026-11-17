@@ -48,13 +48,12 @@ fs_ssa_multi | if starts(mn, "j") or str_eq(mn, "call") or str_eq(mn, "ret") or 
 fs_ssa_multi | if a != len(l): | defensive: every out[] entry ends with a newline
 fs_ssa_call | if not fs_ssa_op(ops, p, us, df, 0): | defensive: a generated call names a symbol or *%reg
 fs_ssa_run | if n == 0: | defensive: a function body always has its prologue lines when the pass runs
-fs_ssa_run | if not starts(ops, ".LF") or lmin < 0: | defensive: every fs jump target is an fs_newlab ".LFn" label inside the function (as in fs_lv_build)
-fs_ssa_run | if v < lmin or v > lmax or lpos[v - lmin] < 0: | defensive: jumps target labels of the same function (as in fs_lv_build)
-fs_ssa_run | elif fs_lv_lab(l) < 0 and not (starts(l, ".L") and ends(l, ":\n") and not contains(l, " ")): | defensive: column-0 lines inside a function body are its .LFn labels and the -g markers .Lfsd*
+fs_ssa_run | if lmin < 0 or v < lmin or v > lmax or lpos[v - lmin] < 0: | defensive: every fs jump target is an fs_newlab ".LFn" label of the same function (as in fs_lv_build; a jump to another label is cached as -1)
+fs_ssa_row | elif fs_lv_lab(l) < 0 and not (starts(l, ".L") and ends(l, ":\n") and not contains(l, " ")): | defensive: column-0 lines inside a function body are its .LFn labels and the -g markers .Lfsd*
 fs_ssa_run | if not fs_ssa_check(n, s1, s2, df, vi): | verifier: the construction always gives a well-formed SSA form; this return is only taken on a construction bug
 fs_ssa_check | if x < 0: | verifier: every reached position gets a value for every register (merges set all sixteen slots at once)
-fs_ssa_check | if x % 16 != r or not df[x]: | verifier: a write id is only created for a line that writes that register
-fs_ssa_check | if x % 16 != r or vi[x - np] != x: | verifier: a phi id is only created at the position that holds it
+fs_ssa_check | if (x & 15) != r or not df[x]: | verifier: a write id is only created for a line that writes that register
+fs_ssa_check | if (x & 15) != r or vi[x - np] != x: | verifier: a phi id is only created at the position that holds it
 fs_ssa_check | elif x != nw + r: | verifier: incoming-value ids are only set at the entry, per register
 fs_ssa_check | if y != x and y != np + sa * 16 + r: | verifier: the merge loop runs until every edge carries the predecessor's value or the successor's phi (fall-through or jump successor)
 fs_ssa_check | if y != x and y != np + sb * 16 + r: | verifier: the merge loop runs until every edge carries the predecessor's value or the successor's phi (conditional jump successor)
