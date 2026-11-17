@@ -419,7 +419,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    the SSA-based clean-up of the remaining temporaries: register writes no instruction reads are removed. Step 4f (2026-11-16, under
    `--fs-ssa`): copy propagation through the `mov %rA,%rB` chains between tracked registers. Next: track the
    callee-saved registers (%rbx, %r12-%r15) in the SSA form so their copies (`mov %rbx,%rax`, 2,415 in the
-   kernel) propagate too, then SSA-based allocation of the remaining %rax/%rcx temporaries.
+   kernel) propagate too, then SSA-based allocation of the remaining %rax/%rcx temporaries. Since step 4g
+   (2026-11-16) the loader, modules and user programs are built with `--fs-ssa` too.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -496,7 +497,7 @@ least.
 | Nov 16 | kexec from an older kernel build to the new one (the gate only swaps same-source kernels) | 1 item | tests/os/kexec-compat.sh, results `os/kexec-compat-build`, `os/kexec-old-to-new` (inv164) |
 | Nov 16 | SSA step 4d: `--fs-ssa` (opt-in), fsfuzz conditions with `not`/`and`/`or`, CHANGELOG for 0.20.1-0.21.1 | 1 batch | first optimizer pass under the item 3 landing rule (inv175) |
 | Nov 16 | SSA: the kernel built with `--fs-ssa` (step 4d kernel switch), dead register writes (step 4e), CHANGELOG 0.22.0 (open) | 1 batch | QEMU boot suite at O2 and O0 (inv176) |
-| Nov 16 | SSA step 4f: copy propagation under `--fs-ssa`, CHANGELOG | 1 batch | inv177 |
+| Nov 16 | SSA step 4f: copy propagation under `--fs-ssa`; step 4g: loader, modules and user programs built with `--fs-ssa`; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv177) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -989,6 +990,16 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      --fs-ssa`: 23/23. Landing rule: `optcov --check` OK (fs-ssa 177/199 blocks, every new block hit, no new
      allow-list entry); `fsfuzz --combos` seeds 1-3 x
      25 (10,800 builds, 4,236 distinct assemblies) and the ten-way form seeds 1-6 x 80: 0 differ.
+   - *Step 4g (2026-11-16): the loader, modules and user programs built with `--fs-ssa`.* examples/efi,
+     examples/modules and examples/user (build.cud and the reference build.sh, which tests/*-build compare)
+     name `--fs-ssa` instead of `--fs-opt`, so everything Incudela boots is built like the kernel. They have no
+     hand-written asm outside the audited user routines, and no `--fs-*` pass runs on a function with an `asm()`
+     statement. Instructions: loader 2,974 to 2,205 (-25.9%), user programs 54,504 to 41,100 (-24.6%), modules
+     1,259 to 995 (-21.0%); incudelax64.efi 13,312 to 10,752 bytes, user ELFs 757,008 to 736,528 bytes. Those
+     are the gains of `--fs-live`, `--fs-temps` and `--fs-ssa` together, since these images skipped steps 4b and
+     4c. tests/modules-build, user-build, efi-build and kernel-build pass (build.cud and build.sh agree,
+     reproducible images, O0). Before the gate, `tests/os/run.sh` at O2 with these
+     images: 45 PASS, 0 FAIL (UEFI loader boots, modules, user programs, Linux ABI, desktop, kexec).
    - *fsfuzz conditions (2026-11-16).* tools/fsfuzz.cud's generator now negates one condition in eight
      (`not (a < b)`) and joins two compares with `and`/`or` in another one in eight, so the 0/1 comparison values
      and short-circuit jumps that step 4d works on are in every fuzz run (the programs of every seed change). On

@@ -9,8 +9,8 @@
 # are done here in Forge.
 # usage: build/user-build [OUTDIR]  (default build/user). The binary lives in build/, so the repo is the
 # parent of its directory; it runs from examples/user like the shell script. Stops at the first failing
-# step with that step's exit code (sh -e). The programs are built with --fs-opt (Phase 12.1 step 3c: register
-# allocation in fs mode; safe since rt_sigreturn restores rcx and r11), then $CUDC_FLAGS.
+# step with that step's exit code (sh -e). The programs are built with --fs-ssa (Phase 12.1 step 3c: register
+# allocation in fs mode, safe since rt_sigreturn restores rcx and r11; step 4g: the SSA folds), then $CUDC_FLAGS.
 import os
 import sys
 
@@ -86,7 +86,8 @@ def main():
         out = "../../build/user"
     if not os.path.isdir(out):
         os.mkdir(out)
-    flags = ["--fs-opt"]  # step 3c: user programs get fs-mode register allocation too
+    # step 3c: user programs get fs-mode register allocation too; step 4g: --fs-ssa (implies --fs-opt)
+    flags = ["--fs-ssa"]
     for f in cudc_flags().split():
         flags.append(f)
     s = "../../build/cudseal"

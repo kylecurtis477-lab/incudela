@@ -58,7 +58,8 @@ def main():
         os.mkdir(out)
     # 12.1 step 3b: the modules are built with --fs-opt (no hand-written asm; they call and are called by
     # the kernel through the SysV ABI, which the kernel's --fs-opt code keeps too)
-    flags = ["--fs-opt"]
+    # step 4g: --fs-ssa, like the kernel since the step 4d kernel switch (it implies --fs-opt)
+    flags = ["--fs-ssa"]
     for f in cudc_flags().split():
         flags.append(f)
     s = "../../build/cudseal"

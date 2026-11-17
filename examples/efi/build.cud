@@ -45,7 +45,8 @@ def main():
         os.mkdir(b)
     # 12.1 step 3b: the loader is built with --fs-opt (it has no hand-written asm; the UEFI entry wrapper
     # saves rdi/rsi and firmware calls preserve rbx/rsi/rdi/r12-r15, a superset of what SysV needs)
-    flags = ["--fs-opt"]
+    # step 4g: --fs-ssa, like the kernel since the step 4d kernel switch (it implies --fs-opt)
+    flags = ["--fs-ssa"]
     for f in cudc_flags().split():
         flags.append(f)
     step(["../../build/cudc", "loader.cud", b + "/loader.s"] + flags)

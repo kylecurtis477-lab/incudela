@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build the Incudela user programs as static ELF64 executables (ring 3, loaded by the kernel's ELF loader),
-# with --fs-opt (fs-mode register allocation; Phase 12.1 step 3c) and then $CUDC_FLAGS.
+# with --fs-ssa (fs-mode register allocation, Phase 12.1 step 3c; SSA, step 4g) and then $CUDC_FLAGS.
 set -e
 cd "$(dirname "$0")"
 B=../../build/user; mkdir -p $B
@@ -15,7 +15,7 @@ K=$B/seal.key
 [ -s $B/seal2.key ] || head -c 32 /dev/urandom > $B/seal2.key
 $S --pub $K > $B/seal.pub
 for p in hello fault sh cat forktest blkd crash sum bg captest chantest sbtest grtest wxtest capdeny badptr kbdd kbdd2 nvmed nvmed2 gfxapp gfxdeny; do
-  ../../build/cudc $p.cud $B/$p.s --fs-opt $CUDC_FLAGS
+  ../../build/cudc $p.cud $B/$p.s --fs-ssa $CUDC_FLAGS
   ../../build/fas -o $B/$p.o $B/$p.s
   ../../build/fld -o $B/$p.elf $B/$p.o
   cp $B/$p.elf $B/$p.raw
@@ -37,31 +37,31 @@ python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); d[7]=3; open
 $S hello.cud $B/linuxabi.elf $K ../../tests/unsafe/baseline.txt >/dev/null
 # 11.1: lxtest, a raw-syscall Linux x86-64 program: tagged EI_OSABI = 3 *before* sealing, so its seal
 # covers the tag; the kernel runs it only through a sandboxed launch (sh `run lxtest`, docs/linux-compat.md)
-../../build/cudc lxtest.cud $B/lxtest.s --fs-opt $CUDC_FLAGS
+../../build/cudc lxtest.cud $B/lxtest.s --fs-ssa $CUDC_FLAGS
 ../../build/fas -o $B/lxtest.o $B/lxtest.s
 ../../build/fld -o $B/lxtest.raw $B/lxtest.o
 python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); d[7]=3; open(sys.argv[2],'wb').write(d)" $B/lxtest.raw $B/lxtest.elf
 $S lxtest.cud $B/lxtest.elf $K ../../tests/unsafe/baseline.txt >/dev/null
 # 11.1b: lxthreads (clone threads, futex, TLS), built and tagged the same way
-../../build/cudc lxthreads.cud $B/lxthreads.s --fs-opt $CUDC_FLAGS
+../../build/cudc lxthreads.cud $B/lxthreads.s --fs-ssa $CUDC_FLAGS
 ../../build/fas -o $B/lxthreads.o $B/lxthreads.s
 ../../build/fld -o $B/lxthreads.raw $B/lxthreads.o
 python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); d[7]=3; open(sys.argv[2],'wb').write(d)" $B/lxthreads.raw $B/lxthreads.elf
 $S lxthreads.cud $B/lxthreads.elf $K ../../tests/unsafe/baseline.txt >/dev/null
 # 11.1c: lxfs (openat, fstat, getdents64), built and tagged the same way
-../../build/cudc lxfs.cud $B/lxfs.s --fs-opt $CUDC_FLAGS
+../../build/cudc lxfs.cud $B/lxfs.s --fs-ssa $CUDC_FLAGS
 ../../build/fas -o $B/lxfs.o $B/lxfs.s
 ../../build/fld -o $B/lxfs.raw $B/lxfs.o
 python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); d[7]=3; open(sys.argv[2],'wb').write(d)" $B/lxfs.raw $B/lxfs.elf
 $S lxfs.cud $B/lxfs.elf $K ../../tests/unsafe/baseline.txt >/dev/null
 # 11.1d: lxexec (execve, execveat), built and tagged the same way
-../../build/cudc lxexec.cud $B/lxexec.s --fs-opt $CUDC_FLAGS
+../../build/cudc lxexec.cud $B/lxexec.s --fs-ssa $CUDC_FLAGS
 ../../build/fas -o $B/lxexec.o $B/lxexec.s
 ../../build/fld -o $B/lxexec.raw $B/lxexec.o
 python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); d[7]=3; open(sys.argv[2],'wb').write(d)" $B/lxexec.raw $B/lxexec.elf
 $S lxexec.cud $B/lxexec.elf $K ../../tests/unsafe/baseline.txt >/dev/null
 # 11.1d: lxsig part 2 (signals), built and tagged the same way
-../../build/cudc lxsig.cud $B/lxsig.s --fs-opt $CUDC_FLAGS
+../../build/cudc lxsig.cud $B/lxsig.s --fs-ssa $CUDC_FLAGS
 ../../build/fas -o $B/lxsig.o $B/lxsig.s
 ../../build/fld -o $B/lxsig.raw $B/lxsig.o
 python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); d[7]=3; open(sys.argv[2],'wb').write(d)" $B/lxsig.raw $B/lxsig.elf

@@ -7,7 +7,7 @@ B=../../build/modules; mkdir -p $B
 S=../../build/cudseal
 ../../build/cudc ../../tools/cudseal.cud $S.s && ../../build/fas -o $S.o $S.s && ../../build/fld --base 0x100000000000 -o $S $S.o
 for m in hello badabi unresolved newer tty1 tty2 getpid2; do
-  ../../build/cudc $m.cud $B/$m.s --fs-opt $CUDC_FLAGS
+  ../../build/cudc $m.cud $B/$m.s --fs-ssa $CUDC_FLAGS
   ../../build/fas -o $B/$m.ko $B/$m.s
   cp $B/$m.ko $B/$m.raw
   $S --module $m.cud $B/$m.ko ../../build/user/seal.key ../../tests/unsafe/baseline.txt >/dev/null
