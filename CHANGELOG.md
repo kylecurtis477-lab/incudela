@@ -7,7 +7,7 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4k
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4l
 
 - `f944491` tests: tools/fsfuzz.cud negates one generated condition in eight (`not (...)`) and joins two
   compares with `and`/`or` in another one in eight.
@@ -39,6 +39,9 @@
 - `8b021f5` `--fs-ssa` lets such a range start with `xor %eA,%eA`, zeroing the copy's register instead (step
   4k): kernel instructions 112,737 to 112,268, .text of kernel.cud 433,131 bytes. Temporaries whose range
   crosses a label, the planned step 4k, were measured not to occur in this code generator and are not handled.
+- `9f35795` `--fs-ssa` keeps a straight-line `push`/`pop` round-trip of a nested operand in a free register
+  (step 4l): kernel instructions 112,268 to 109,854, pops 3,365 to 1,349; .text of kernel.cud 433,951 bytes
+  (+0.2%, a register move is longer than `push`/`pop`).
 
 ## 0.21.1 (unreleased): rename cleanup
 
