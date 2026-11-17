@@ -21556,8 +21556,10 @@ def fs_ssa_line(mn, ops, p, us, df):
         df[p * 16 + 2] = 1
         return n == 0
     if str_eq(mn, "mul") or str_eq(mn, "div") or str_eq(mn, "idiv"):
+    # mul is rax * r/m -> rdx:rax (reads only rax); div/idiv are rdx:rax / r/m (read both)
         us[p * 16] = 1
-        us[p * 16 + 2] = 1
+        if not str_eq(mn, "mul"):
+            us[p * 16 + 2] = 1
         df[p * 16] = 1
         df[p * 16 + 2] = 1
         df[p * 16 + 15] = 1
