@@ -21796,6 +21796,8 @@ def fs_ssa_run(s0):
         p += 1
     fs_ssa_phis(n, s1, s2, df, vi, cnt)
     nf = fs_ssa_fold(n, ln, vi, cnt)
+    if nf == 0:
+        nf = fs_ssa_copy(n, ln, df, vi)
     return nf + fs_ssa_dead(n, ln, vi, cnt)
 
 def fs_ssa_phis(n, s1, s2, df, vi, cnt):
@@ -21970,6 +21972,62 @@ def fs_ssa_dreg(a):
         if r >= 0 and str_eq(s, d):
             return r
     return -1
+
+FS_SSCP = ["mov", "cmp", "test", "add", "sub", "and", "or", "xor", "imul"]
+
+def fs_ssa_copy(n, ln, df, vi):
+# Step 4f, copy propagation: a reached register-only line `MN %rB,Y` or (cmp/test) `MN X,%rB` (MN in FS_SSCP,
+# no memory operand) whose %rB value is the copy written by `mov %rA,%rB` at position p, while %rA still holds
+# the value it had after p, reads %rA instead. A `mov %rA,%rA` that results is deleted. The copy itself is then
+# a write nothing reads, removed by fs_ssa_dead in the next round. Runs only in a round without folds, so a
+# line is never rewritten twice in one round; it only adds reads of values a copy already reads, so the counts
+# stay a safe upper bound for fs_ssa_dead.
+    nc = 0
+    q = 0
+    while q < n:
+        a = out[ln[q]]
+        if vi[q * 10] >= 0 and starts(a, "    ") and find_char(a, 10) == len(a) - 1 and find_char(a, 40) < 0:
+            t = substr(a, 4, len(a) - 1)
+            sp = find_char(t, 32)
+            if sp > 0 and find(FS_SSCP, 9, substr(t, 0, sp)) >= 0:
+                mn = substr(t, 0, sp)
+                ops = substr(t, sp + 1, len(t))
+                cm = find_char(ops, 44)
+                if cm > 0 and find_char(substr(ops, cm + 1, len(ops)), 44) < 0:
+                    x = substr(ops, 0, cm)
+                    y = substr(ops, cm + 1, len(ops))
+                    x2 = fs_ssa_cpsrc(x, q, n, ln, df, vi)
+                    y2 = y
+                    if str_eq(mn, "cmp") or str_eq(mn, "test"):
+                        y2 = fs_ssa_cpsrc(y, q, n, ln, df, vi)
+                    if not str_eq(x2, x) or not str_eq(y2, y):
+                        if str_eq(mn, "mov") and str_eq(x2, y2):
+                            out[ln[q]] = ""
+                        else:
+                            out[ln[q]] = c4("    ", mn, " ", c3(x2, ",", concat(y2, "\n")))
+                        nc += 1
+        q += 1
+    return nc
+
+def fs_ssa_cpsrc(x, q, n, ln, df, vi):
+# x read at position q: if it is a tracked 64-bit register %rB whose value there is the write of
+# `mov %rA,%rB` (A another tracked register) and %rA at q still holds the value it had after that line,
+# returns "%rA"; otherwise x
+    b = find(FS_SSR, 9, x)
+    if b < 0:
+        return x
+    v = vi[q * 10 + b]
+    if v < 0 or v >= 10 * n or v % 10 != b:
+        return x
+    p = (v - b) // 10
+    m = out[ln[p]]
+    if not starts(m, "    mov %r") or not ends(m, c3(",", x, "\n")):
+        return x
+    s = substr(m, 8, len(m) - len(x) - 2)
+    r = find(FS_SSR, 9, s)
+    if r < 0 or r == b or vi[q * 10 + r] != fs_ssa_vo(p, r, df, vi):
+        return x
+    return s
 
 def fs_ssa_dead(n, ln, vi, cnt):
 # Step 4e: a write no instruction reads is removed. A reached line that fs_ssa_dreg accepts, whose register value

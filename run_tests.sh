@@ -142,6 +142,9 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^
 # step 4e: ssa_drop's dropped call result (xor %eax,%eax) is overwritten by the implicit return before any read:
 # two xor lines under --fs-temps, one under --fs-ssa
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_drop:/,/ret$/' build/t_ssa.s | grep -c 'xor %eax,%eax')" = 2 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_drop:/,/ret$/' build/t_ssa.s | grep -c 'xor %eax,%eax')" = 1 ] && echo "PASS fs-ssa-dead-shape" || { echo "FAIL fs-ssa-dead-shape"; fail=1; }
+# step 4f: ssa_copy keeps its parameters in %r8-%r10 copies under --fs-temps; copy propagation reads %rdi/%rsi/%rdx
+# directly and the copies die, so no %r8/%r9/%r10 is left under --fs-ssa
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_copy:/,/ret$/' build/t_ssa.s | grep -c '%r8\|%r9\|%r10')" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_copy:/,/ret$/' build/t_ssa.s | grep -c '%r8\|%r9\|%r10')" = 0 ] && echo "PASS fs-ssa-copy-shape" || { echo "FAIL fs-ssa-copy-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs

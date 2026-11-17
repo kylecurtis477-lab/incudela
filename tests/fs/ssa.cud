@@ -80,6 +80,13 @@ def ssa_dead(a: i64, n: i64) -> i64:
         return 0
     return a * 3
 
+def ssa_copy(a: i64, b: i64, c: i64) -> i64:
+    if a > 5:
+        return b + c
+    if b == c:
+        return a - b
+    return c
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -107,4 +114,7 @@ def main() -> i64:
     show(ssa_dead(-4, 5))
     show(ssa_dead(9, 5))
     ssa_drop(4)
+    show(ssa_copy(9, 2, 3))
+    show(ssa_copy(1, 4, 4))
+    show(ssa_copy(1, 4, 6))
     return 0

@@ -278,7 +278,7 @@ The full phased plan is in docs/BUILD_PLAN.md; the items below are the kernel su
 |---|---|
 | (default) | bounds-check elision (constant indices, `range` loop facts) |
 | `-O0` | nothing: every bounds check is kept (the out-of-range constant-index compile error stays) |
-| `--fs-opt` / `--fs-live` / `--fs-temps` / `--fs-ssa` | the default plus the opt-in passes: register allocation, its peepholes, magic-number constant division; liveness; register temporaries; SSA folds of constants, compares and branches (step 4d) and removal of register writes nothing reads (step 4e) |
+| `--fs-opt` / `--fs-live` / `--fs-temps` / `--fs-ssa` | the default plus the opt-in passes: register allocation, its peepholes, magic-number constant division; liveness; register temporaries; SSA folds of constants, compares and branches (step 4d) , removal of register writes nothing reads (step 4e) and copy propagation (step 4f) |
 | `-O0 --fs-…` | the named opt-in passes, with every bounds check kept |
 | `--no-bounds` | no bounds checks at all (nothing to elide) |
 
