@@ -7,7 +7,7 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4p
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4q
 
 - `f944491` tests: tools/fsfuzz.cud negates one generated condition in eight (`not (...)`) and joins two
   compares with `and`/`or` in another one in eight.
@@ -68,6 +68,11 @@
   4p): `lea N(%rS)`, `lea (%rS,%rT)`, `imul $N,%rS,%rax`, `push %rS`; twelve rounds per function instead of
   eight. Kernel instructions 99,001 to 97,286, copies into %rax 2,276 to 1,360, .text 404,031 to 399,599
   bytes; compile 2.46 s.
+- `8d9befc` fix: `--fs-ssa` no longer treats `mul` as reading %rdx (only `div`/`idiv` read the rdx:rax
+  dividend). Kernel instructions 97,286 to 97,267, pops 437 to 426.
+- `51f53b3` `--fs-ssa` keeps push/pop round-trips that cross a call in a callee-saved register when the call
+  needs only an alignment pad, and folds unread-high-half `mul` by a constant into three-operand `imul`
+  (step 4q). Kernel instructions 97,267 to 96,843, pops 426 to 410, copies into %rax 1,185, .text 397,855 bytes.
 
 ## 0.21.1 (unreleased): rename cleanup
 
