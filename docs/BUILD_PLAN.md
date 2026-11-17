@@ -422,8 +422,9 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    under `--fs-ssa`): the callee-saved registers (%rbx, %r12-%r15) are tracked in the SSA form, so their
    copies propagate too (`mov %rbx,%rax` in the kernel 2,415 to 1,957). Step 4i (2026-11-16, under
    `--fs-ssa`) starts the SSA-based allocation of the temporaries: a move into %rA whose only reader is the
-   `mov %rA,%rB` right after it writes %rB itself. Next: allocate the remaining %rax/%rcx temporaries across
-   longer ranges (an expression value computed in %rax and only then copied out).
+   `mov %rA,%rB` right after it writes %rB itself. Step 4j (2026-11-16, under `--fs-ssa`) extends that to
+   a straight-line range: a value computed in %rax over several lines and then copied out is computed in the
+   copy's register throughout. Next: temporaries whose range crosses a label (a value that meets in a phi).
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -502,6 +503,7 @@ least.
 | Nov 16 | SSA: the kernel built with `--fs-ssa` (step 4d kernel switch), dead register writes (step 4e), CHANGELOG 0.22.0 (open) | 1 batch | QEMU boot suite at O2 and O0 (inv176) |
 | Nov 16 | SSA step 4f: copy propagation under `--fs-ssa`; step 4g: loader, modules and user programs built with `--fs-ssa`; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv177) |
 | Nov 16 | SSA step 4h: the callee-saved registers tracked under `--fs-ssa`; step 4i: single-use moves write their copy's register; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv178) |
+| Nov 16 | `--fs-ssa` compile time back down (live phis on a worklist); SSA step 4j: temporaries over straight-line ranges; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv179) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -1040,6 +1042,26 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      every tests/fs program under `--fs-ssa`, `-O0 --fs-ssa`, `-g --fs-ssa`, `--no-bounds --fs-ssa` and
      `--fs-ssa --fs-opt`: 23/23. Landing rule: `optcov --check` OK (every new block hit, no new allow-list
      entry); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
+   - *Step 4j (2026-11-16): temporaries allocated over straight-line ranges, under `--fs-ssa`.* fs_ssa_retarget
+     now takes a range instead of one line: for a reached copy `mov %rA,%rB` at position c it walks back over
+     at most FS_SSCH (24) one-line entries (no label, jump or multi-line entry) to the nearest move `MN S,%rA`
+     (FS_SSMOV, a full 64- or 32-bit destination) at w. The range is computed in %rB when every %rA value written
+     in [w, c) is read only inside (w, c] (its use count, phis included, equals the reads counted there), w does
+     not write %rB, no line after w reads or writes %rB, and every line after w that touches %rA is an
+     FS_SSCHM instruction (moves, add/sub/and/or/xor, cmp/test, imul, neg/not, shifts by an immediate) naming
+     it only as %rA or %eA: w's destination and those names become %rB/%eB and the copy is deleted (step 4i is
+     the range of one line). %rB's old value is read by nothing from w on, %rA keeps the value it had before
+     w (nothing in the range read it and nothing after reads the range's values), no instruction has an implicit
+     %rA operand, and the flags are computed by the same instructions. A range never reaches back over an earlier
+     rewrite of the same round. Code built without `--fs-ssa` is byte-identical. On the kernel: instructions
+     115,086 to 112,737 (-2.0%), `mov %rax,%rdi` 3,535 to 3,119, `mov %rax,%rbx` 805 to 394 (a counter in
+     %rbx is now incremented with `add $1,%rbx` instead of `mov %rbx,%rax; add $1,%rax; mov %rax,%rbx`), .text
+     of kernel.cud alone 441,355 to 434,491 bytes; compile time unchanged (2.4 s). Tests: ssa_range in
+     tests/fs/ssa.cud and `fs-ssa-range-shape`; every tests/fs program under `--fs-ssa`, `-O0 --fs-ssa`, `-g
+     --fs-ssa`, `--no-bounds --fs-ssa` and `--fs-ssa --fs-opt`: 23/23; the step 4f, 4h and 4i shape checks
+     still pass. Landing rule: `optcov --check` OK, two new allow-list entries (defensive: a read of %rA after
+     w outside the range, and a one-operand FS_SSMOV line, neither of which the straight-line range or the code
+     generator produces); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

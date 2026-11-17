@@ -4,8 +4,9 @@
 # values meet in phis. Step 4e: ssa_dead returns 0 from inside a loop and at its end (a register write that is
 # overwritten before any read is removed). Step 4h: ssa_keep keeps three values in callee-saved registers across
 # two calls (read there directly, not through copies). Step 4i: ssa_move loads w[1] and the constant 7
-# straight into %rdi/%rsi (a move whose only reader is the next line's copy writes the copy's register). The
-# output must be the same under every fs optimizer level.
+# straight into %rdi/%rsi (a move whose only reader is the next line's copy writes the copy's register). Step 4j:
+# ssa_range adds to its loop values in callee-saved registers in place instead of through %rax and a copy back.
+# The output must be the same under every fs optimizer level.
 include "linux.cudi"
 
 def ssa_cmp(a: i64, b: i64, u: u64, v: u64) -> i64:
@@ -102,6 +103,14 @@ def ssa_move(a: i64, b: i64) -> i64:
     w[2] = b
     return ssa_copy(w[1], 7, w[1] + w[2])
 
+def ssa_range(n: i64) -> i64:
+    s: i64 = 0
+    i: i64 = 0
+    while i < n:
+        s = s + ssa_copy(i, 1, 2) * 3
+        i = i + 1
+    return s
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -136,4 +145,5 @@ def main() -> i64:
     show(ssa_keep(1, 2))
     show(ssa_move(3, 1))
     show(ssa_move(6, 1))
+    show(ssa_range(9))
     return 0

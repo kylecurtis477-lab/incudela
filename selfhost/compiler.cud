@@ -21805,7 +21805,7 @@ def fs_ssa_run(s0):
         nf = fs_ssa_copy(n, ln, df, vi)
     nd = fs_ssa_dead(n, ln, vi, cnt)
     if nf == 0:
-        nf = fs_ssa_retarget(n, ln, s1, vi, cnt)
+        nf = fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt)
     return nf + nd
 
 def fs_ssa_phis(n, s1, s2, df, vi, cnt):
@@ -22070,54 +22070,135 @@ def fs_ssa_cpsrc(x, q, n, ln, df, vi):
         return x
     return s
 
-def fs_ssa_retarget(n, ln, s1, vi, cnt):
-# Step 4i, the first SSA-based allocation of a temporary: a reached one-line move `MN S,%rA` (MN in FS_SSMOV,
-# a full 64- or 32-bit destination) directly followed by `mov %rA,%rB`, where the copy is the only read of the
-# %rA value the move writes (its use count is 1), writes %rB itself (`MN S,%rB`, or %eB for a 32-bit
-# destination, which zero-extends like the copy) and the copy is deleted; a move that becomes `mov %rB,%rB` is
-# deleted too. S is read before the write as before, %rA is no longer written (nothing read that value but the
-# copy), %rB gets the same value at the same place (nothing sits between the two lines) and no flags change.
-# Runs after fs_ssa_dead and only in a round without folds or copy rewrites, so the two lines are as the round's
-# tables describe them (fs_ssa_dead only empties lines, which the patterns then do not match).
+def fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt):
+# Steps 4i and 4j, SSA-based allocation of a temporary: a reached `mov %rA,%rB` copy (two tracked 64-bit
+# registers) at position c ends a straight-line range [w, c) (no label, jump or multi-line entry; at most
+# FS_SSCH lines) that starts with a move `MN S,%rA` (MN in FS_SSMOV, a full 64- or 32-bit destination). If every
+# %rA value written in the range is read only inside (w, c] (its use count equals the reads counted there, so no
+# later line or phi reads it), no line after w reads or writes %rB, w does not write %rB, and every line after w
+# that touches %rA names it explicitly (FS_SSCHM mnemonics, 64- or 32-bit names only), the range computes its
+# value in %rB instead: w's destination and every %rA/%eA after w become %rB/%eB and the copy is deleted (a
+# move that becomes `mov %rB,%rB` too). %rB's old value is read by nothing from w on (the copy overwrote it),
+# %rA keeps the value it had before w, which nothing in the range read, and the flags do not change. Step 4i
+# is the range of one line. Runs after fs_ssa_dead and only in a round without folds or copy rewrites, so the
+# lines are as the round's tables describe them; a range never reaches back over an earlier rewrite.
     nr = 0
-    p = 0
-    while p + 1 < n:
-        a = out[ln[p]]
-        c = out[ln[p + 1]]
-        if vi[p * 16] >= 0 and s1[p] == p + 1 and starts(a, "    ") and find_char(a, 10) == len(a) - 1 and starts(c, "    mov %r") and find_char(c, 10) == len(c) - 1:
-            t = substr(a, 4, len(a) - 1)
-            sp = find_char(t, 32)
-            cm = -1
-            k = 0
-            while k < len(t):
-                if char_at(t, k) == 44:
-                    cm = k
-                k += 1
-            d = substr(t, cm + 1, len(t))
-            r = fs_ssa_rn(d)
-            if r >= 0 and r % 2 == 0:
-                r = r // 2
+    lw = -1
+    loc = list(FS_SSCH + 1)
+    c = 0
+    while c < n:
+        m = out[ln[c]]
+        a = -1
+        b = -1
+        if vi[c * 16] >= 0 and starts(m, "    mov %r") and find_char(m, 10) == len(m) - 1:
+            cs = substr(m, 8, len(m) - 1)
+            cc = find_char(cs, 44)
+            if cc > 0:
+                a = find(FS_SSR, 14, substr(cs, 0, cc))
+                b = find(FS_SSR, 14, substr(cs, cc + 1, len(cs)))
+        w = -1
+        if a >= 0 and b >= 0 and a != b:
+            q = c - 1
+            while q > lw and q >= c - FS_SSCH and w < 0:
+                l = out[ln[q]]
+                if not starts(l, "    ") or starts(l, "     ") or find_char(l, 10) != len(l) - 1 or s1[q] != q + 1 or s2[q] >= 0 or vi[q * 16] < 0:
+                    q = lw
+                elif fs_ssa_mvdst(l, a) and not df[q * 16 + b]:
+                    w = q
+                elif us[q * 16 + b] or df[q * 16 + b]:
+                    q = lw
+                elif (us[q * 16 + a] or df[q * 16 + a]) and len(fs_ssa_ren(l, a, b)) == 0:
+                    q = lw
+                else:
+                    q -= 1
+        if w >= 0:
+            j = 0
+            while j <= c - w:
+                loc[j] = 0
+                j += 1
+            q = w + 1
+            while q <= c:
+                if us[q * 16 + a]:
+                    v = vi[q * 16 + a]
+                    if v >= w * 16 and v < c * 16 and v % 16 == a:
+                        loc[(v - a) // 16 - w] += 1
+                    else:
+                        w = -1
+                q += 1
+        if w >= 0:
+            q = w
+            while q < c:
+                if df[q * 16 + a] and cnt[q * 16 + a] != loc[q - w]:
+                    w = -1
+                q += 1
+        if w >= 0:
+            l = out[ln[w]]
+            cm = len(l) - 2
+            while char_at(l, cm) != 44:
+                cm -= 1
+            nd = FS_SSR[b]
+            if str_eq(substr(l, cm + 1, len(l) - 1), FS_SSR32[a]):
+                nd = FS_SSR32[b]
+            x = substr(l, 4, cm)
+            if str_eq(x, concat("mov ", FS_SSR[b])) or str_eq(x, concat("movq ", FS_SSR[b])):
+                out[ln[w]] = ""
             else:
-                r = -1
-            if r >= 0 and sp > 0 and cm > sp and find(FS_SSMOV, 14, substr(t, 0, sp)) >= 0 and cnt[p * 16 + r] == 1:
-                cs = substr(c, 8, len(c) - 1)
-                cc = find_char(cs, 44)
-                if cc > 0 and str_eq(substr(cs, 0, cc), FS_SSR[r]):
-                    b = find(FS_SSR, 14, substr(cs, cc + 1, len(cs)))
-                    if b >= 0 and b != r and (str_eq(d, FS_SSR[r]) or str_eq(d, FS_SSR32[r])):
-                        nd = FS_SSR[b]
-                        if str_eq(d, FS_SSR32[r]):
-                            nd = FS_SSR32[b]
-                        x = substr(t, 0, cm)
-                        if str_eq(x, concat("mov ", FS_SSR[b])) or str_eq(x, concat("movq ", FS_SSR[b])):
-                            out[ln[p]] = ""
-                        else:
-                            out[ln[p]] = c4("    ", x, ",", concat(nd, "\n"))
-                        out[ln[p + 1]] = ""
-                        nr += 1
-                        p += 1
-        p += 1
+                out[ln[w]] = c4("    ", x, ",", concat(nd, "\n"))
+            q = w + 1
+            while q < c:
+                if us[q * 16 + a] or df[q * 16 + a]:
+                    out[ln[q]] = fs_ssa_ren(out[ln[q]], a, b)
+                q += 1
+            out[ln[c]] = ""
+            nr += 1
+            lw = c
+        c += 1
     return nr
+
+FS_SSCH = 24
+FS_SSCHM = ["mov", "movq", "movl", "movabs", "movzbl", "movzwl", "movzbq", "movzwq", "movsbq", "movswq", "movslq", "movsbl", "movswl", "lea", "add", "sub", "and", "or", "xor", "cmp", "test", "imul", "neg", "not", "shl", "shr", "sar"]
+
+def fs_ssa_mvdst(l, a):
+# l (one instruction line) is a move in FS_SSMOV whose destination is %rA or %eA
+    t = substr(l, 4, len(l) - 1)
+    sp = find_char(t, 32)
+    if sp <= 0 or find(FS_SSMOV, 14, substr(t, 0, sp)) < 0:
+        return 0
+    cm = len(t) - 1
+    while cm > sp and char_at(t, cm) != 44:
+        cm -= 1
+    if cm <= sp:
+        return 0
+    d = substr(t, cm + 1, len(t))
+    return str_eq(d, FS_SSR[a]) or str_eq(d, FS_SSR32[a])
+
+def fs_ssa_ren(l, a, b):
+# l (one instruction line, mnemonic in FS_SSCHM, shifts only by an immediate) with every %rA and %eA renamed
+# %rB and %eB; "" when it names %rA in any other way (a partial name) or is another instruction
+    t = substr(l, 4, len(l) - 1)
+    sp = find_char(t, 32)
+    if sp <= 0 or find(FS_SSCHM, 27, substr(t, 0, sp)) < 0 or contains(t, "%cl"):
+        return ""
+    r = "    "
+    k = 0
+    while k < len(t):
+        if char_at(t, k) == 37:
+            e = k + 1
+            while e < len(t) and (char_at(t, e) >= 97 and char_at(t, e) <= 122 or char_at(t, e) >= 48 and char_at(t, e) <= 57):
+                e += 1
+            g = substr(t, k, e)
+            if str_eq(g, FS_SSR[a]):
+                g = FS_SSR[b]
+            elif str_eq(g, FS_SSR32[a]):
+                g = FS_SSR32[b]
+            elif fs_ssa_rn(g) >= 0 and fs_ssa_rn(g) // 2 == a:
+                return ""
+            r = concat(r, g)
+            k = e
+        else:
+            r = concat(r, substr(t, k, k + 1))
+            k += 1
+    return concat(r, "\n")
 
 def fs_ssa_dead(n, ln, vi, cnt):
 # Step 4e: a write no instruction reads is removed. A reached line that fs_ssa_dreg accepts, whose register value

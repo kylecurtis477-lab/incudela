@@ -57,3 +57,5 @@ fs_ssa_check | if x % 16 != r or not df[x]: | verifier: a write id is only creat
 fs_ssa_check | if x % 16 != r or vi[x - 16 * n - 16] != x: | verifier: a phi id is only created at the position that holds it
 fs_ssa_check | elif x != 16 * n + r: | verifier: incoming-value ids are only set at the entry, per register
 fs_ssa_check | if y != fs_ssa_vo(p, r, df, vi) and y != 16 * n + 16 + s * 16 + r: | verifier: the merge loop runs until every edge carries the predecessor's value or the successor's phi
+fs_ssa_retarget | else: #2 | defensive: the range after w is straight-line and w writes %rA in full, so every read of %rA there reads a value written in the range
+fs_ssa_mvdst | if cm <= sp: | defensive: the code generator emits every FS_SSMOV move with two operands
