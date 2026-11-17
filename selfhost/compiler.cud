@@ -21584,6 +21584,41 @@ def fs_ssa_line(mn, ops, p, us, df):
         return n == 0
     return 0
 
+FS_SSLC = {}
+
+def fs_ssa_linec(l, mn, ops, p, us, df):
+# fs_ssa_line for the one-line entry l at position p, through a cache keyed by the line's text: what a line reads
+# and writes depends only on its text, and most lines come back unchanged in every round of every function. The
+# cache holds [understood, read mask, write mask] (bit r for register slot r).
+    c = FS_SSLC
+    if l in c:
+        e = c[l]
+        if not e[0]:
+            return 0
+        m = e[1]
+        w = e[2]
+        r = 0
+        while r < 16:
+            if m >> r & 1:
+                us[p * 16 + r] = 1
+            if w >> r & 1:
+                df[p * 16 + r] = 1
+            r += 1
+        return 1
+    ok = fs_ssa_line(mn, ops, p, us, df)
+    m = 0
+    w = 0
+    if ok:
+        r = 0
+        while r < 16:
+            if us[p * 16 + r]:
+                m = m | 1 << r
+            if df[p * 16 + r]:
+                w = w | 1 << r
+            r += 1
+    c[l] = [ok, m, w]
+    return ok
+
 def fs_ssa_multi(l, p, us, df):
 # an entry of several lines (the callee-saved restores fs_ra_save puts before `leave`, the canary set-up after
 # the frame's `sub`): the union of what its lines read and write, which is safe in either order. A label, jump,
@@ -21653,6 +21688,27 @@ def fs_ssa_vo(p, r, df, vi):
         return p * 16 + r
     return vi[p * 16 + r]
 
+FS_SSB = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+FS_SSBN = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+def fs_ssa_buf(k, m, v):
+# Scratch table k of fs_ssa_run and its helpers, at least m entries, the first m set to v (-2: left as they are,
+# for a table the caller writes in full before reading). The tables are kept from one round and function to the
+# next and grow when a larger one is needed: allocating them fresh each round (16 or 32 entries a line) cost more
+# than the rest of building them.
+    if FS_SSBN[k] < m:
+        FS_SSB[k] = list(m)
+        FS_SSBN[k] = m
+        if v == 0 or v == -2:
+            return FS_SSB[k]
+    b = FS_SSB[k]
+    if v != -2:
+        j = 0
+        while j < m:
+            b[j] = v
+            j += 1
+    return b
+
 def fs_ssa_run(s0):
 # Builds the SSA form of out[s0:nout] and applies the rewrites. Positions number the non-empty entries; the
 # successors are those of fs_lv_build. Value ids: p * 16 + r is the write of register r (r = 0-13: the registers
@@ -21682,7 +21738,7 @@ def fs_ssa_run(s0):
     while j < nl:
         lpos[j] = -1
         j += 1
-    ln = list(n)
+    ln = fs_ssa_buf(0, n, -2)
     p = 0
     i = s0
     while i < nout:
@@ -21693,17 +21749,11 @@ def fs_ssa_run(s0):
                 lpos[v - lmin] = p
             p += 1
         i += 1
-    s1 = list(n)
-    s2 = list(n)
-    us = list(n * 16)
-    df = list(n * 16)
-    vi = list(n * 16)
-    j = 0
-    while j < n * 16:
-        us[j] = 0
-        df[j] = 0
-        vi[j] = -1
-        j += 1
+    s1 = fs_ssa_buf(1, n, -2)
+    s2 = fs_ssa_buf(2, n, -2)
+    us = fs_ssa_buf(3, n * 16, 0)
+    df = fs_ssa_buf(4, n * 16, 0)
+    vi = fs_ssa_buf(5, n * 16, -1)
     p = 0
     while p < n:
         l = out[ln[p]]
@@ -21742,7 +21792,7 @@ def fs_ssa_run(s0):
                     us[p * 16 + 15] = 1
             elif str_eq(mn, "call"):
                 fs_ssa_call(p, ops, ln, us, df)
-            elif not fs_ssa_line(mn, ops, p, us, df):
+            elif not fs_ssa_linec(l, mn, ops, p, us, df):
                 fs_ssa_all(p, us, df)
             elif starts(mn, "set") and str_eq(ops, "%al") and p + 1 < n and str_eq(out[ln[p + 1]], "    movzbl %al,%eax\n"):
             # the movzbl reads only the byte the setCC writes and replaces the rest, so the setCC's merge with the
@@ -21757,39 +21807,53 @@ def fs_ssa_run(s0):
     while r < 16:
         vi[r] = 16 * n + r
         r += 1
+    # The incoming values flow along the edges in sweeps over the positions until nothing changes. A position's
+    # outgoing values depend only on its own entries, and after it is processed each successor holds either that
+    # value or its own phi (an entry only moves from -1 to a value and from a value to its phi), so processing it
+    # again changes nothing until one of its entries changes: dq marks those positions, and a sweep skips the
+    # others. The sweeps make the same updates in the same order as sweeping every position, so the phis are
+    # the same.
+    dq = fs_ssa_buf(6, n, 0)
+    dq[0] = 1
     ch = 1
     while ch:
         ch = 0
         p = 0
         while p < n:
-            if vi[p * 16] >= 0:
+            if dq[p]:
+                dq[p] = 0
                 k = 0
                 while k < 2:
                     s = s1[p]
                     if k == 1:
                         s = s2[p]
                     if s >= 0:
+                        b = s * 16
+                        ph = 16 * n + 16 + b
+                        x = p * 16
                         r = 0
                         while r < 16:
-                            x = fs_ssa_vo(p, r, df, vi)
-                            c = vi[s * 16 + r]
-                            ph = 16 * n + 16 + s * 16 + r
+                            v = x
+                            if not df[x]:
+                                v = vi[x]
+                            c = vi[b]
                             if c < 0:
-                                vi[s * 16 + r] = x
+                                vi[b] = v
+                                dq[s] = 1
                                 ch = 1
-                            elif c != x and c != ph:
-                                vi[s * 16 + r] = ph
+                            elif c != v and c != ph:
+                                vi[b] = ph
+                                dq[s] = 1
                                 ch = 1
+                            x += 1
+                            b += 1
+                            ph += 1
                             r += 1
                     k += 1
             p += 1
     if not fs_ssa_check(n, s1, s2, df, vi):
         return 0
-    cnt = list(32 * n + 16)
-    j = 0
-    while j < 32 * n + 16:
-        cnt[j] = 0
-        j += 1
+    cnt = fs_ssa_buf(7, 32 * n + 16, 0)
     p = 0
     while p < n:
         if vi[p * 16] >= 0:
@@ -21805,11 +21869,7 @@ def fs_ssa_run(s0):
         nf = fs_ssa_copy(n, ln, df, vi)
     nd = fs_ssa_dead(n, ln, vi, cnt)
     if nf == 0:
-        mk = list(n)
-        j = 0
-        while j < n:
-            mk[j] = 0
-            j += 1
+        mk = fs_ssa_buf(8, n, 0)
         nf = fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt, mk)
         nf += fs_ssa_pushpop(n, ln, s1, s2, us, df, vi, cnt, mk)
     return nf + nd
@@ -21820,23 +21880,18 @@ def fs_ssa_phis(n, s1, s2, df, vi, cnt):
 # that only reaches a join where the register is overwritten before it is read stays at its real use count.
 # The fixpoint runs on a worklist over the reached predecessors of each position (a list built here), so a chain
 # of phis is walked once instead of one sweep per link; it is the same least fixpoint as a sweep until stable.
-    pl = list(32 * n + 16)
-    wl = list(16 * n + 16)
+    pl = fs_ssa_buf(9, 32 * n + 16, 0)
+    wl = fs_ssa_buf(10, 16 * n + 16, -2)
     nw = 0
     j = 0
     while j < 32 * n + 16:
-        pl[j] = 0
         if cnt[j] > 0:
             pl[j] = 1
             if j >= 16 * n + 16:
                 wl[nw] = j
                 nw += 1
         j += 1
-    pa = list(n + 1)
-    j = 0
-    while j <= n:
-        pa[j] = 0
-        j += 1
+    pa = fs_ssa_buf(11, n + 1, 0)
     p = 0
     while p < n:
         if vi[p * 16] >= 0:
@@ -21849,8 +21904,8 @@ def fs_ssa_phis(n, s1, s2, df, vi, cnt):
     while j < n:
         pa[j + 1] += pa[j]
         j += 1
-    pp = list(pa[n] + 1)
-    pc = list(n)
+    pp = fs_ssa_buf(12, pa[n] + 1, -2)
+    pc = fs_ssa_buf(13, n, -2)
     j = 0
     while j < n:
         pc[j] = pa[j]
@@ -21901,32 +21956,37 @@ def fs_ssa_check(n, s1, s2, df, vi):
 # incoming value is the predecessor's outgoing one or the successor's own phi; every value named is a write that
 # exists, an incoming value, or a phi that its position really holds. 0 means a bug in the construction (the
 # function is then left as it is).
+    nw = 16 * n
+    np = 16 * n + 16
     p = 0
     while p < n:
-        if vi[p * 16] >= 0:
+        b = p * 16
+        if vi[b] >= 0:
+            sa = s1[p]
+            sb = s2[p]
             r = 0
             while r < 16:
-                x = vi[p * 16 + r]
+                x = vi[b + r]
                 if x < 0:
                     return 0
-                if x < 16 * n:
+                if x < nw:
                     if x % 16 != r or not df[x]:
                         return 0
-                elif x >= 16 * n + 16:
-                    if x % 16 != r or vi[x - 16 * n - 16] != x:
+                elif x >= np:
+                    if x % 16 != r or vi[x - np] != x:
                         return 0
-                elif x != 16 * n + r:
+                elif x != nw + r:
                     return 0
-                k = 0
-                while k < 2:
-                    s = s1[p]
-                    if k == 1:
-                        s = s2[p]
-                    if s >= 0:
-                        y = vi[s * 16 + r]
-                        if y != fs_ssa_vo(p, r, df, vi) and y != 16 * n + 16 + s * 16 + r:
-                            return 0
-                    k += 1
+                if df[b + r]:
+                    x = b + r
+                if sa >= 0:
+                    y = vi[sa * 16 + r]
+                    if y != x and y != np + sa * 16 + r:
+                        return 0
+                if sb >= 0:
+                    y = vi[sb * 16 + r]
+                    if y != x and y != np + sb * 16 + r:
+                        return 0
                 r += 1
         p += 1
     return 1
@@ -22130,10 +22190,6 @@ def fs_ssa_rng(e, a, b, ln, s1, s2, us, df, vi, cnt, mk):
     if w < 0:
         return -1
     loc = list(e - w + 1)
-    j = 0
-    while j <= e - w:
-        loc[j] = 0
-        j += 1
     q = w + 1
     while q <= e:
         if us[q * 16 + a]:

@@ -427,8 +427,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    copy's register throughout. Step 4k (2026-11-16, under `--fs-ssa`): temporaries whose range crosses a label
    do not occur in this code generator (measured: none on the kernel or 63 other sources), so the step instead
    lets a range start with `xor %eA,%eA`. Step 4l (2026-11-17, under `--fs-ssa`): a straight-line `push`/`pop`
-   round-trip of a nested operand keeps the value in a free register instead (kernel pops 3,365 to 1,349). Next:
-   cheaper rounds, so the four-round cap can be raised (see the step 4l entry).
+   round-trip of a nested operand keeps the value in a free register instead (kernel pops 3,365 to 1,349). Since
+   2026-11-17 each round is cheaper (the kernel compiles in 1.74 s instead of 2.31 s, identical output).
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1118,6 +1118,22 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      `--fs-ssa --fs-opt`: 23/23; the step 4d-4k shape checks still pass. Landing rule: `optcov --check` OK (every
      new block hit, no new allow-list entry); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x
      80: 0 differ. Next: cheaper rounds (fewer table rebuilds), then a higher round cap.
+   - *`--fs-ssa` rounds cheaper (2026-11-17).* Timed by phase (a `__clock` build, not committed): of the
+     kernel's SSA time, building the tables took about a third, half of it allocating the per-line tables (16
+     or 32 entries a line, fresh every round of every function) and the rest parsing each line again; the merge
+     sweeps over every position until stable took a fifth, and the verifier an eighth. Now: fs_ssa_buf keeps
+     the scratch tables from one round and function to the next (growing them when needed, clearing only what
+     is used, and not at all for tables that are written in full first); fs_ssa_linec caches what a one-line
+     entry reads and writes by its text (two 16-bit masks), since that depends on the text alone and most
+     lines come back unchanged every round; the merge sweeps skip positions none of whose entries changed since
+     they were last processed (dq), which makes the same updates in the same order, so the phis are the same
+     (a worklist in another order would place some phis differently and was not used); fs_ssa_check and the
+     merge loop hoist their index arithmetic and read the outgoing value inline. The kernel's `--fs-ssa`
+     compile: 2.31 to 1.74 s (median user time of seven runs), fs_ssa's share about 1.9 to 1.15 s. The output
+     is byte-identical: the kernel, every tests/fs and tests/optgate program, examples/user, examples/efi and
+     examples/modules (64 sources) under `--fs-ssa`, `-O0 --fs-ssa`, `-g --fs-ssa`, `--no-bounds --fs-ssa`,
+     `--fs-ssa --fs-opt`, `--fs-temps` and no flag. Landing rule: `optcov --check` OK (the verifier's
+     allow-list entries renamed to the hoisted lines, the edge check split into its two successors).
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in
