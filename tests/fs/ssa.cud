@@ -6,7 +6,8 @@
 # two calls (read there directly, not through copies). Step 4i: ssa_move loads w[1] and the constant 7
 # straight into %rdi/%rsi (a move whose only reader is the next line's copy writes the copy's register). Step 4j:
 # ssa_range adds to its loop values in callee-saved registers in place instead of through %rax and a copy back.
-# Step 4k: ssa_range also zeroes s and i straight in their registers (`xor %ebx,%ebx`).
+# Step 4k: ssa_range also zeroes s and i straight in their registers (`xor %ebx,%ebx`). Step 4m: ssa_args loads
+# its string addresses and p straight into %rdi (a call reads %rax only when an argument goes in %xmm).
 # The output must be the same under every fs optimizer level.
 include "linux.cudi"
 
@@ -120,6 +121,14 @@ def ssa_push(a: i64, b: i64) -> i64:
     w[3] = 7
     return (a + 3) * (w[b & 3] - a) + (w[(a + b) & 3] ^ (b * 5)) - (a << 2) * w[1]
 
+def ssa_args(p: ptr[u8], n: i64) -> i64:
+    puts("args: ")
+    puts(p)
+    puts(" ")
+    put_i64(n * 3)
+    nl()
+    return n + 1
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -157,4 +166,5 @@ def main() -> i64:
     show(ssa_range(9))
     show(ssa_push(4, 1))
     show(ssa_push(-3, 6))
+    show(ssa_args("two", 2))
     return 0

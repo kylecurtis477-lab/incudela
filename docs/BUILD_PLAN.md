@@ -429,8 +429,11 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    lets a range start with `xor %eA,%eA`. Step 4l (2026-11-17, under `--fs-ssa`): a straight-line `push`/`pop`
    round-trip of a nested operand keeps the value in a free register instead (kernel pops 3,365 to 1,349). Since
    2026-11-17 each round is cheaper (the kernel compiles in 1.74 s instead of 2.31 s, identical output), and a
-   function gets eight rounds instead of four (kernel 109,854 to 108,520 instructions, compile 2.36 s). Next:
-   measure what the remaining 1,049 pops and 17,583 register moves of the kernel are, and pick the larger.
+   function gets eight rounds instead of four (kernel 109,854 to 108,520 instructions, compile 2.36 s). Measured
+   (2026-11-17): of the kernel's 17,583 register moves, 5,138 set up a call argument through %rax, the largest
+   group, against 1,049 pops in all. Step 4m (2026-11-17, under `--fs-ssa`): a call reads %rax only as the
+   vector count of a variadic callee (an argument in %xmm), so those set-ups load the argument register
+   directly (kernel 108,520 to 103,596 instructions, moves 17,583 to 12,656).
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -513,6 +516,7 @@ least.
 | Nov 16 | SSA step 4k: phi-crossing temporaries measured (none occur), ranges starting at `xor %eA,%eA` instead; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv180) |
 | Nov 17 | SSA step 4l: `push`/`pop` round-trips kept in registers; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv181) |
 | Nov 17 | `--fs-ssa` rounds cheaper (identical output), eight rounds instead of four; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv182) |
+| Nov 17 | SSA step 4m: call arguments straight in their registers; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv183) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -1148,6 +1152,24 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      tests/fs program under `--fs-ssa`, `-O0 --fs-ssa`, `-g --fs-ssa`, `--no-bounds --fs-ssa` and `--fs-ssa
      --fs-opt`: 23/23; all eight fs-ssa shape checks at O2 and O0. Landing rule: `optcov --check` OK; `fsfuzz
      --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
+   - *Where the kernel's moves and pops are (2026-11-17).* Of the 17,583 register-to-register moves under
+     `--fs-ssa` (at 1aa0e7f): 5,138 copy %rax into an argument register in the straight-line run before a call,
+     4,619 copy into %rax, 1,554 pass the arguments of the cold bounds-failure call, 990 are the prologue's
+     `mov %rsp,%rbp`, 1,295 copy %rax into %rcx (617 of them before a `pop %rax`), 3,987 are other copies. Of the
+     1,049 pops, 695 are `mov %rax,%rcx; pop %rax`, a binary operator taking its left operand back, 170 other
+     `pop %rax` and 184 other registers. The moves are the larger and the call arguments their largest group.
+   - *Step 4m, call arguments straight in their registers (2026-11-17).* fs_ssa_call counted %rax as read by
+     every call whose straight-line run wrote it (the vector count `mov $n,%eax` of a variadic callee), so a
+     value computed in %rax and copied to %rdi had two reads and step 4i/4j could not retarget it. The code
+     generator writes %eax only when an argument goes in an %xmm register, right before the call; fs_ssa_novec
+     checks the run for an %xmm write or a `mov $n,%eax`, and without one the call does not read %rax (a callee
+     never takes an argument there; a variadic callee with no vector argument gets whatever %rax held before,
+     as it did). On the kernel: 108,520 to 103,596 instructions (-4.5%), register moves 17,583 to 12,656, .text
+     431,167 to 416,495 bytes (-3.4%); pops 1,049 to 1,052 (in tty_swap_to and sys_kexec a retargeted copy
+     now shares a round with a push/pop pair that the old copy left alone). Code built without `--fs-ssa` is
+     byte-identical; unsafe report unchanged (659 ops). New test ssa_args and check fs-ssa-args-shape (also: the
+     three vector counts in tests/fs/cabi_float.cud stay right before their calls). Landing rule: `optcov
+     --check` OK; fsfuzz combos seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

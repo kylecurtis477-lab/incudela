@@ -21657,10 +21657,13 @@ def fs_ssa_all(p, us, df):
 
 def fs_ssa_call(p, ops, ln, us, df):
 # A call clobbers the nine caller-saved registers and the flags (the callee preserves %rbx and %r12-%r15). It
-# reads the registers its argument set-up wrote: the argument registers and %rax (the vector count of a variadic
-# callee) written by the straight-line run of instructions just before it (back to a label, jump, call or return). The code generator writes every argument
+# reads the registers its argument set-up wrote: the argument registers written by the straight-line run of
+# instructions just before it (back to a label, jump, call or return). The code generator writes every argument
 # there (reloads from the pushed arguments, or the step 4c moves, which never cross a label), so a register
-# outside that run is not an argument of this call. A line not understood counts as writing every register.
+# outside that run is not an argument of this call. %rax is an argument only as the vector count of a variadic
+# callee, which the code generator sets (`mov $n,%eax`, right before the call) only when an argument goes in an
+# %xmm register; a run with neither has %rax as scratch (step 4m: the `lea ...,%rax; mov %rax,%rdi` set-up of an
+# argument then retargets to `lea ...,%rdi`). A line not understood counts as writing every register.
     r = 0
     while r < 9:
         df[p * 16 + r] = 1
@@ -21669,18 +21672,34 @@ def fs_ssa_call(p, ops, ln, us, df):
     if not fs_ssa_op(ops, p, us, df, 0):
         fs_ssa_all(p, us, df)
         return 0
+    r0 = 0
+    if fs_ssa_novec(p, ln):
+        r0 = 1
     q = p - 1
     while q >= 0:
         l = out[ln[q]]
         if not starts(l, "    ") or starts(l, "    j") or starts(l, "    call") or starts(l, "    ret"):
             return 0
-        r = 0
+        r = r0
         while r < 7:
             if df[q * 16 + r]:
                 us[p * 16 + r] = 1
             r += 1
         q -= 1
     return 0
+
+def fs_ssa_novec(p, ln):
+# 1 if the straight-line run before the call at position p neither writes an %xmm register nor sets %eax to an
+# immediate (the vector count of a variadic callee), so the call does not read %rax
+    q = p - 1
+    while q >= 0:
+        l = out[ln[q]]
+        if not starts(l, "    ") or starts(l, "    j") or starts(l, "    call") or starts(l, "    ret"):
+            return 1
+        if contains(l, "%xmm") or (starts(l, "    mov $") and ends(l, ",%eax\n")):
+            return 0
+        q -= 1
+    return 1
 
 def fs_ssa_vo(p, r, df, vi):
 # the value of register r after the line at position p

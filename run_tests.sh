@@ -162,6 +162,11 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk "$z
 # step 4l: ssa_push's nested operands go through push/pop under --fs-temps; under --fs-ssa fewer pops are left (the
 # straight-line round-trips keep the value in a free register)
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && npop=$(awk '/^ssa_push:/,/ret$/' build/t_ssa.s | grep -c '^    pop %r') && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_push:/,/ret$/' build/t_ssa.s | grep -c '^    pop %r')" -lt "$npop" ] && echo "PASS fs-ssa-pushpop-shape" || { echo "FAIL fs-ssa-pushpop-shape"; fail=1; }
+# step 4m: ssa_args sets up its call arguments in %rax and copies them to %rdi under --fs-temps; under --fs-ssa a
+# call reads %rax only as the vector count, so the loads write %rdi themselves; cabi_float keeps its three
+# `mov $n,%eax` vector counts right before their calls
+apair='/^ssa_args:/ {f=1} f && prev ~ /^    (mov|lea) [^,]*,%rax$/ && $0 == "    mov %rax,%rdi" {c++} f {prev=$0} f && /ret$/ {f=0} END {print c+0}'
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk "$apair" build/t_ssa.s)" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk "$apair" build/t_ssa.s)" = 0 ] && build/cudc tests/fs/cabi_float.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(grep -A1 -E '^    mov \$[0-9]+,%eax$' build/t_ssa.s | grep -c '^    call')" = 3 ] && echo "PASS fs-ssa-args-shape" || { echo "FAIL fs-ssa-args-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs
