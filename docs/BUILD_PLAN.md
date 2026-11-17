@@ -1040,6 +1040,15 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      every tests/fs program under `--fs-ssa`, `-O0 --fs-ssa`, `-g --fs-ssa`, `--no-bounds --fs-ssa` and
      `--fs-ssa --fs-opt`: 23/23. Landing rule: `optcov --check` OK (every new block hit, no new allow-list
      entry); `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
+   - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
+     the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
+     position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in
+     callee-saved registers form long chains through the loops. It now runs on a worklist over each position's
+     reached predecessors (built once per round), which reaches the same least fixpoint, so the output is
+     unchanged: the kernel, every tests/fs, tests/optgate, examples/user, examples/efi and examples/modules
+     source under `--fs-ssa`, `-O0 --fs-ssa` and `-g --fs-ssa` (192 compiles) are byte-identical to the previous
+     compiler. Kernel compile time under `--fs-ssa` 5.5 to 2.2 s (best of three: 5.48 to 2.05 s), below the 2.7 s
+     before step 4h.
    - *fsfuzz conditions (2026-11-16).* tools/fsfuzz.cud's generator now negates one condition in eight
      (`not (a < b)`) and joins two compares with `and`/`or` in another one in eight, so the 0/1 comparison values
      and short-circuit jumps that step 4d works on are in every fuzz run (the programs of every seed change). On

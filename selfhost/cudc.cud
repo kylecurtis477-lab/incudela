@@ -21812,34 +21812,67 @@ def fs_ssa_phis(n, s1, s2, df, vi, cnt):
 # A phi is live if a line reads it or a live phi takes it as an operand (fixpoint); each operand of a live phi
 # then counts as one more read of the value that flows in along that edge. A dead phi reads nothing, so a value
 # that only reaches a join where the register is overwritten before it is read stays at its real use count.
+# The fixpoint runs on a worklist over the reached predecessors of each position (a list built here), so a chain
+# of phis is walked once instead of one sweep per link; it is the same least fixpoint as a sweep until stable.
     pl = list(32 * n + 16)
+    wl = list(16 * n + 16)
+    nw = 0
     j = 0
     while j < 32 * n + 16:
         pl[j] = 0
         if cnt[j] > 0:
             pl[j] = 1
+            if j >= 16 * n + 16:
+                wl[nw] = j
+                nw += 1
         j += 1
-    ch = 1
-    while ch:
-        ch = 0
-        p = 0
-        while p < n:
-            if vi[p * 16] >= 0:
-                k = 0
-                while k < 2:
-                    s = s1[p]
-                    if k == 1:
-                        s = s2[p]
-                    r = 0
-                    while s >= 0 and r < 16:
-                        ph = 16 * n + 16 + s * 16 + r
-                        x = fs_ssa_vo(p, r, df, vi)
-                        if vi[s * 16 + r] == ph and pl[ph] and x >= 16 * n + 16 and not pl[x]:
-                            pl[x] = 1
-                            ch = 1
-                        r += 1
-                    k += 1
-            p += 1
+    pa = list(n + 1)
+    j = 0
+    while j <= n:
+        pa[j] = 0
+        j += 1
+    p = 0
+    while p < n:
+        if vi[p * 16] >= 0:
+            if s1[p] >= 0:
+                pa[s1[p] + 1] += 1
+            if s2[p] >= 0:
+                pa[s2[p] + 1] += 1
+        p += 1
+    j = 0
+    while j < n:
+        pa[j + 1] += pa[j]
+        j += 1
+    pp = list(pa[n] + 1)
+    pc = list(n)
+    j = 0
+    while j < n:
+        pc[j] = pa[j]
+        j += 1
+    p = 0
+    while p < n:
+        if vi[p * 16] >= 0:
+            if s1[p] >= 0:
+                pp[pc[s1[p]]] = p
+                pc[s1[p]] += 1
+            if s2[p] >= 0:
+                pp[pc[s2[p]]] = p
+                pc[s2[p]] += 1
+        p += 1
+    while nw > 0:
+        nw -= 1
+        ph = wl[nw]
+        s = (ph - 16 * n - 16) // 16
+        r = (ph - 16 * n - 16) % 16
+        if vi[s * 16 + r] == ph:
+            j = pa[s]
+            while j < pa[s + 1]:
+                x = fs_ssa_vo(pp[j], r, df, vi)
+                if x >= 16 * n + 16 and not pl[x]:
+                    pl[x] = 1
+                    wl[nw] = x
+                    nw += 1
+                j += 1
     p = 0
     while p < n:
         if vi[p * 16] >= 0:
