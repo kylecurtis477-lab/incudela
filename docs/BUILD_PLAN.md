@@ -444,6 +444,10 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    output). Step 4p (2026-11-17, under `--fs-ssa`): of the 2,276 copies into %rax, the largest groups feed an
    `add`, an `imul` by a constant or a `push`, which now take the source register directly (`lea`, three-operand
    `imul`, `push %rS`), and a function gets twelve rounds instead of eight (to 97,286, copies into %rax 1,360).
+   Step 4q (2026-11-17, under `--fs-ssa`): push/pop round-trips that cross a call keep the value in a
+   callee-saved register when the call's set-up is only an alignment pad (and the pad goes too); unsigned
+   `mul` by a constant whose high half is unread becomes three-operand `imul` (to 96,843, pops 410, copies into
+   %rax 1,185). A fix: `mul` no longer reads %rdx.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -529,6 +533,7 @@ least.
 | Nov 17 | SSA steps 4m (call arguments straight in their registers) and 4n (copies into memory operands); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv183) |
 | Nov 17 | SSA: no phi at a single-predecessor position (fix); step 4o: push/pop round-trips across failure paths; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | `--fs-ssa` rounds cheaper again (identical output); SSA step 4p: copies into %rax; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv185) |
+| Nov 17 | SSA: mul does not read %rdx (fix); step 4q: push/pop across calls and mul by a constant; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv187) |
 | Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate), step 4o (push/pop round-trips across failure paths); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
@@ -1263,6 +1268,21 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      before `mul %rcx` (constant division), shifts by %cl, bounds checks and joins. Landing rule: `optcov
      --check` OK (no new allow-list entry; one entry removed, a 32-bit rename in fs_ssa_ren that is now hit);
      `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
+   - *Step 4q, push/pop across calls and mul by a constant (2026-11-17).* Re-measured after step 4p: 437 pops
+     left (171 of them asm stubs that push the argument registers around a `cld`/`lea (%rsp)` body, which the
+     pass does not touch), and 1,360 copies into %rax of which about 190 feed `mov $N,%rcx; mul %rcx` with the
+     mul's %rdx unread. Step 4q extends the step 4l push/pop rewrite across calls when each call's stack set-up
+     is a pad `sub $8,%rsp`, optional loads of other slots, the call and `add $K,%rsp` (fs_ssa_ppg): a
+     callee-saved register holds the value (the pushed register itself when it is one, else one the function
+     saves in its prologue that is free in the range and dead after the pop), and removing the push drops each
+     pad (fs_ssa_ppd). The same step folds `mov %rS,%rax; mov $N,%rcx; mul %rcx` into `imul $N,%rS,%rax` when
+     no instruction before the next write of %rdx or a return reads %rdx (the low 64 bits match; `ret` names
+     %rdx only for the verifier, so a text scan replaces the use count). A fix (own commit) stops fs_ssa_line
+     marking `mul` as reading %rdx. On the kernel: 97,286 to 96,843 instructions, pops 437 to 410, copies into
+     %rax 1,360 to 1,185, .text 399,599 to 397,855 bytes. Kernel `--fs-ssa` compile about 2.85 s (under
+     3 s; 2.72 s for 727c9cd in the same interleaved runs). Code built without `--fs-ssa` is byte-identical;
+     unsafe report unchanged. New test ssa_mul and check fs-ssa-mul-shape; ssa_ppcall for values across a call.
+     Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

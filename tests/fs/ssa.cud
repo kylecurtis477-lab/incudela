@@ -175,6 +175,16 @@ def ssa_rpush(a: i64, b: i64, c: i64) -> i64:
 # step 4p: the left operand pushed across the call is pushed straight from its register
     return (a + c) * 3 - ssa_imm(b) * (a - ssa_imm(c))
 
+def ssa_mul(a: u64, t: u64) -> u64:
+# step 4q: unsigned mul by a constant whose high half is unread becomes three-operand imul (same low 64 bits)
+    return t * 1000 - a
+
+def ssa_ppcall(a: i64, b: i64) -> i64:
+# step 4q: a callee-saved value pushed across a call with an alignment pad comes back from the register
+    x: i64 = a
+    y: i64 = ssa_imm(b)
+    return x - y + a
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -220,4 +230,8 @@ def main() -> i64:
     show(ssa_rax(3, 4))
     show(ssa_rax(-2147483648, 9))
     show(ssa_rpush(5, 7, 2))
+    show(ssa_mul(3, 4))
+    show(ssa_mul(-5, 1000000))
+    show(ssa_ppcall(9, 2))
+    show(ssa_ppcall(-4, 7))
     return 0

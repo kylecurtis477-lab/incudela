@@ -61,4 +61,10 @@ fs_ssa_mvdst | if cm <= sp: | defensive: the code generator emits every FS_SSMOV
 fs_ssa_rng | else: | defensive: the range after w is straight-line and w writes %rA in full, so every read of %rA there reads a value written in the range
 fs_ssa_rng | if v < w * 16 or v >= (e + 1) * 16 or v % 16 != a: | defensive: e reads %rA as a copy source and the range writes %rA at w with no later unrenameable write, so the value e reads was written in the range
 fs_ssa_ren | elif fs_ssa_rn(g) >= 0 and fs_ssa_rn(g) // 2 == a: | defensive: fs_ssa_rng already refuses a range with an %rA touch that fs_ssa_ren cannot rename
-fs_ssa_cold | if mk[k] or vi[k * 16] < 0 or not starts(l, "    ") or starts(l, "     ") or find_char(l, 10) != len(l) - 1 or s2[k] >= 0 or s1[k] != k + 1 or starts(l, "    push") or starts(l, "    pop") or starts(l, "    ret") or starts(l, "    leave") or starts(l, "    enter"): | defensive: the code generator's failure paths (fs_bfail, fs_ovf) are a conditional jump, reached straight-line set-up with no push, pop, jump or label, then ud2 and the label; fs_ssa_retarget never marks them (its ranges end in a copy, and these lines feed only the call); the ud2() intrinsic is followed by its own lines and the statement's jump, never by a label whose only other predecessor is a jump
+fs_ssa_ppa | if d < 0: | defensive: pad depth while walking back to the push stays non-negative (every add matches a prior pad or push)
+fs_ssa_ppg | if cnt[q * 16 + 15] > 0: | defensive: the pad's flags are never read (sub $8,%rsp is only for alignment)
+fs_ssa_ppg | if x < 8 or x > 8 * (d - 1): | defensive: argument loads name a slot pushed after our push (N at least 8) and not above the pad+pushes so far
+fs_ssa_ppg | if q + 1 >= e or cb[q] == e or cb[q + 1] == e or not starts(out[ln[q]], "    call "): | defensive: a pad is only accepted as part of pad / loads / call / add
+fs_ssa_ppg | if d < 0: | defensive: the adds return the depth the pads and inner pushes raised
+fs_ssa_ppk | if us[q * 16 + r] or (df[q * 16 + r] and cb[q] != e): | defensive: the holding register is free between the push and the pop (cold lines may write it)
+fs_ssa_live | if us[p * 16 + r]: | defensive: a later read of the scratch means it is live after the pop (no kernel case needs a fresh callee-saved yet)

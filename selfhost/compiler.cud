@@ -21711,8 +21711,9 @@ def fs_ssa_vo(p, r, df, vi):
 # rounds got cheaper, eight since. On the kernel eight reach 108,520 instructions (four: 109,854; sixteen: 108,430).
 FS_SSRND = 12
 
-FS_SSB = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-FS_SSBN = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+FS_SSB = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+FS_SSST = [0]  # the stamp of fs_ssa_live's last walk (scratch table 20)
+FS_SSBN = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 def fs_ssa_buf(k, m, v):
 # Scratch table k of fs_ssa_run and its helpers, at least m entries, the first m set to v (-2: left as they are,
@@ -22181,6 +22182,7 @@ def fs_ssa_raxc(p, n, ln, cnt, s, b):
 #   add $N,%rax           ->  lea N(%rS),%rax          (the add's flags read nowhere)
 #   add %rT,%rax          ->  lea (%rS,%rT),%rax       (the same; T not %rax)
 #   mov $N,%rcx / imul %rcx,%rax  ->  imul $N,%rS,%rax   (that %rcx value read once: by the imul)
+#   mov $N,%rcx / mul %rcx        ->  imul $N,%rS,%rax   (same low half; that %rcx once, %rdx unread)
 #   push %rax             ->  push %rS                 (the copy read only by the push)
 # The add and the imul read the copy and write %rax again, so they are its only reader (no label sits between:
 # they are consecutive entries). Returns the number of positions consumed (2 or 3), 0 for no rewrite.
@@ -22199,12 +22201,35 @@ def fs_ssa_raxc(p, n, ln, cnt, s, b):
         out[ln[p + 1]] = c4("    push ", s, "\n", "")
         return 2
     if p + 2 < n and starts(b, "    mov $") and ends(b, ",%rcx\n") and cnt[(p + 1) * 16 + 1] == 1 and fs_ssa_imm(substr(b, 8, len(b) - 6)):
-        if str_eq(out[ln[p + 2]], "    imul %rcx,%rax\n"):
+        c = out[ln[p + 2]]
+        if str_eq(c, "    imul %rcx,%rax\n"):
+            out[ln[p]] = ""
+            out[ln[p + 1]] = ""
+            out[ln[p + 2]] = c4("    imul ", substr(b, 8, len(b) - 6), ",", concat(s, ",%rax\n"))
+            return 3
+        if str_eq(c, "    mul %rcx\n") and fs_ssa_mul_lo(p + 2, n, ln):
+        # unsigned mul whose %rdx half is unread before the next write of %rdx (same low 64 bits as imul;
+        # `ret` lists %rdx as used for the verifier, so cnt alone is not enough)
             out[ln[p]] = ""
             out[ln[p + 1]] = ""
             out[ln[p + 2]] = c4("    imul ", substr(b, 8, len(b) - 6), ",", concat(s, ",%rax\n"))
             return 3
     return 0
+
+def fs_ssa_mul_lo(p, n, ln):
+# 1 if no instruction after the mul at p reads %rdx/%edx before writing them or returning (the mul's high half
+# is then unread; `ret` is ignored: it names %rdx only for the SSA verifier)
+    q = p + 1
+    while q < n:
+        l = out[ln[q]]
+        if starts(l, "    ret"):
+            return 1
+        if contains(l, "%rdx") or contains(l, "%edx"):
+            if ends(l, ",%rdx\n") or ends(l, ",%edx\n"):
+                return 1
+            return 0
+        q += 1
+    return 1
 
 def fs_ssa_dreg(a):
 # a (one instruction line) only writes one tracked register, from an immediate or another tracked register:
@@ -22452,7 +22477,12 @@ def fs_ssa_pushpop(n, ln, s1, s2, us, df, vi, cnt, mk):
 # reads; T is read or written by no line strictly between the two. The push becomes `mov %rA,%rT` and the pop
 # `mov %rT,%rB`, each deleted when it would copy a register to itself. A move changes no flags, nothing in the
 # range addresses the stack, so dropping the slot moves no other access, and T keeps the value across the
-# range. Runs right after fs_ssa_retarget, in the same round and on the same marks (mk): a position either
+# range. Step 4q: the same when the range holds calls, if each call's stack set-up is a pad `sub $8,%rsp`,
+# optional `mov N(%rsp),%rR` loads of slots other than the pushed one, the call and `add $K,%rsp` (fs_ssa_ppg),
+# and a callee-saved register can hold the value (the pushed register itself when it is one, else one the
+# function saves in its prologue that is free in the range and dead after the pop: fs_ssa_ppk). Removing the
+# push makes each call's pad unneeded: the pad goes, the loads move 8 down and the add takes 8 less
+# (fs_ssa_ppd). Runs right after fs_ssa_retarget, in the same round and on the same marks (mk): a position either
 # rewrote is in no pair. A retargeted range writes its register before reading it, so it adds no read of a value
 # live at a push, and the use counts stay valid for the pairs.
     nr = 0
@@ -22465,34 +22495,50 @@ def fs_ssa_pushpop(n, ln, s1, s2, us, df, vi, cnt, mk):
         if vi[e * 16] >= 0 and not mk[e] and starts(m, "    pop %r") and find_char(m, 10) == len(m) - 1:
             b = find(FS_SSR, 14, substr(m, 8, len(m) - 1))
         if b >= 0:
-            w = fs_ssa_ppa(e, ln, s1, s2, us, vi, mk, pc, cb)
+            w = fs_ssa_ppa(e, ln, s1, s2, us, vi, mk, pc, cb, 0)
+            r = -1
+            cm = 0
             if w >= 0:
                 l = out[ln[w]]
                 a = find(FS_SSR, 14, substr(l, 9, len(l) - 1))
                 r = fs_ssa_ppt(w, e, a, b, us, df, vi, cnt, cb)
-                if r >= 0:
-                    out[ln[w]] = ""
-                    if r != a:
-                        out[ln[w]] = c4("    mov ", FS_SSR[a], ",", concat(FS_SSR[r], "\n"))
-                    out[ln[e]] = ""
-                    if r != b:
-                        out[ln[e]] = c4("    mov ", FS_SSR[r], ",", concat(FS_SSR[b], "\n"))
-                    q = w
-                    while q <= e:
-                        mk[q] = 1
-                        if cb[q] == e and (str_eq(out[ln[q]], "    sub $8,%rsp\n") or str_eq(out[ln[q]], "    add $8,%rsp\n")):
-                            out[ln[q]] = ""
-                        q += 1
-                    nr += 1
+            if r < 0:
+                w = fs_ssa_ppa(e, ln, s1, s2, us, vi, mk, pc, cb, 1)
+                if w >= 0 and fs_ssa_ppg(w, e, ln, cb, cnt):
+                    l = out[ln[w]]
+                    a = find(FS_SSR, 14, substr(l, 9, len(l) - 1))
+                    if a >= 9:
+                        r = a
+                    else:
+                        r = fs_ssa_ppk(w, e, a, b, n, ln, s1, s2, us, df, cb)
+                    cm = 1
+            if r >= 0:
+                out[ln[w]] = ""
+                if r != a:
+                    out[ln[w]] = c4("    mov ", FS_SSR[a], ",", concat(FS_SSR[r], "\n"))
+                out[ln[e]] = ""
+                if r != b:
+                    out[ln[e]] = c4("    mov ", FS_SSR[r], ",", concat(FS_SSR[b], "\n"))
+                q = w
+                while q <= e:
+                    mk[q] = 1
+                    if cb[q] == e and (str_eq(out[ln[q]], "    sub $8,%rsp\n") or str_eq(out[ln[q]], "    add $8,%rsp\n")):
+                        out[ln[q]] = ""
+                    elif cm and cb[q] != e:
+                        out[ln[q]] = fs_ssa_ppd(out[ln[q]])
+                    q += 1
+                nr += 1
         e += 1
     return nr
 
-def fs_ssa_ppa(e, ln, s1, s2, us, vi, mk, pc, cb):
+def fs_ssa_ppa(e, ln, s1, s2, us, vi, mk, pc, cb, cm):
 # the position of the `push %rA` (a tracked register) that the pop at e takes back, over a straight-line range
 # of at most FS_SSPP one-line, reached, unrewritten lines that fall through, touch no stack address and have no
 # implicit stack use (no call, return, leave or line fs_ssa_line does not understand, so pushfq and the like
 # never get here: us slot 14 is set only by fs_ssa_all); balanced push/pop pairs inside are kept as they are. -1
-# when there is none.
+# when there is none. With cm (step 4q) the range may also hold calls and the stack lines of their set-up: a
+# `sub $8,%rsp` alignment pad, `mov N(%rsp),%rR` argument loads and the `add $K,%rsp` after the call, counted in
+# the depth (fs_ssa_ppg checks their order).
     d = 0
     q = e - 1
     while q >= 0 and q > e - FS_SSPP:
@@ -22504,9 +22550,18 @@ def fs_ssa_ppa(e, ln, s1, s2, us, vi, mk, pc, cb):
             l = out[ln[q]]
         if mk[q] or not starts(l, "    ") or starts(l, "     ") or find_char(l, 10) != len(l) - 1 or s2[q] >= 0 or s1[q] != q + 1 or vi[q * 16] < 0 or us[q * 16 + 14]:
             return -1
-        if contains(l, "%rsp") or contains(l, "%esp") or contains(l, "%sp") or starts(l, "    call") or starts(l, "    ret") or starts(l, "    leave") or starts(l, "    enter"):
+        k = 0
+        if cm:
+            k = fs_ssa_ppl(l)
+        if k > 1:
+            d += k // 8
+        elif k < 0:
+            d -= 1
+            if d < 0:
+                return -1
+        elif k == 0 and (contains(l, "%rsp") or contains(l, "%esp") or contains(l, "%sp") or starts(l, "    call") or starts(l, "    ret") or starts(l, "    leave") or starts(l, "    enter")):
             return -1
-        if starts(l, "    push "):
+        elif starts(l, "    push "):
             if d == 0:
                 if starts(l, "    push %r") and find(FS_SSR, 14, substr(l, 9, len(l) - 1)) >= 0:
                     return q
@@ -22516,6 +22571,145 @@ def fs_ssa_ppa(e, ln, s1, s2, us, vi, mk, pc, cb):
             d += 1
         q -= 1
     return -1
+
+def fs_ssa_ppl(l):
+# step 4q: the kind of a call set-up line l: 1 a call or an argument load `mov N(%rsp),%rR` (no depth change), K >
+# 1 for `add $K,%rsp` (K a multiple of 8), -1 for the pad `sub $8,%rsp`, 0 for any other line
+    if starts(l, "    call "):
+        return 1
+    if str_eq(l, "    sub $8,%rsp\n"):
+        return -1
+    if starts(l, "    add $") and ends(l, ",%rsp\n"):
+        k = fs_lv_num(substr(l, 9, len(l) - 6))
+        if k >= 8 and k % 8 == 0:
+            return k
+        return 0
+    if fs_ssa_ppn(l) >= 0:
+        return 1
+    return 0
+
+def fs_ssa_ppn(l):
+# N of an argument load `mov N(%rsp),%rR` (R a tracked register), -1 for any other line
+    if not starts(l, "    mov ") or not ends(l, "\n"):
+        return -1
+    b = find_char(l, 40)
+    if b < 9 or not starts(substr(l, b, len(l)), "(%rsp),%r") or find(FS_SSR, 14, substr(l, b + 7, len(l) - 1)) < 0:
+        return -1
+    return fs_lv_num(substr(l, 8, b))
+
+def fs_ssa_ppg(w, e, ln, cb, cnt):
+# step 4q: the stack lines strictly between the push at w and the pop at e (cold lines aside) form whole call
+# set-ups `sub $8,%rsp; mov N(%rsp),%rR...; call F; add $K,%rsp`, every call has one, each argument load reads a
+# slot pushed after w (8 <= N <= 8 (D - 1), D the slots above w's, the pad included), and the pad's and the add's
+# flags are read nowhere. Removing the push then makes every such call's pad unneeded: the depth at each call
+# changes by 8 either way, so the pad goes, the loads move 8 down and the add takes 8 less (fs_ssa_ppd).
+    d = 0
+    q = w + 1
+    while q < e:
+        l = out[ln[q]]
+        if cb[q] != e:
+            k = fs_ssa_ppl(l)
+            if k < 0:
+                if cnt[q * 16 + 15] > 0:
+                    return 0
+                d += 1
+                q += 1
+                while q < e and cb[q] != e and fs_ssa_ppn(out[ln[q]]) >= 0:
+                    x = fs_ssa_ppn(out[ln[q]])
+                    if x < 8 or x > 8 * (d - 1):
+                        return 0
+                    q += 1
+                if q + 1 >= e or cb[q] == e or cb[q + 1] == e or not starts(out[ln[q]], "    call "):
+                    return 0
+                k = fs_ssa_ppl(out[ln[q + 1]])
+                if k < 8 or cnt[(q + 1) * 16 + 15] > 0:
+                    return 0
+                d -= k // 8
+                if d < 0:
+                    return 0
+                q += 1
+            elif k != 0:
+                return 0
+            elif starts(l, "    push "):
+                d += 1
+            elif starts(l, "    pop "):
+                d -= 1
+        q += 1
+    return d == 0
+
+def fs_ssa_ppd(l):
+# l with the step 4q pad removed: the pad itself goes, an argument load reads 8 lower, `add $K,%rsp` adds K - 8
+    k = fs_ssa_ppl(l)
+    if k < 0 or k == 8:
+        return ""
+    if k > 8:
+        return c3("    add $", str(k - 8), ",%rsp\n")
+    x = fs_ssa_ppn(l)
+    if x >= 8:
+        b = find_char(l, 40)
+        return c3("    mov ", str(x - 8), substr(l, b, len(l)))
+    return l
+
+def fs_ssa_ppk(w, e, a, b, n, ln, s1, s2, us, df, cb):
+# step 4q: a callee-saved register (%rbx, %r12-%r15) to hold the value pushed at w over a range with calls: one
+# this function saves in its prologue (fs_ra_save: so writing it keeps the ABI, the epilogue restores it), that
+# no line strictly between reads or writes (a cold line may write it, as in fs_ssa_ppt; a call preserves it),
+# and whose value after the pop can never be read (fs_ssa_live). -1 when there is none.
+# prefer the pushed register itself when it is callee-saved (it survives the call)
+    r0 = a
+    if a < 9:
+        r0 = 9
+    r = r0
+    while r < 14:
+        ok = 0
+        q = 0
+        while q < n and q < 16 and not ok:
+            l = out[ln[q]]
+            if starts(l, c3("    mov ", FS_SSR[r], ",-")) and ends(l, "(%rbp)\n"):
+                ok = 1
+            q += 1
+        q = w + 1
+        while q < e and ok:
+            if us[q * 16 + r] or (df[q * 16 + r] and cb[q] != e):
+                ok = 0
+            q += 1
+        if ok and (r == a or r == b or not fs_ssa_live(e, r, n, s1, s2, us, df)):
+        # %rA across a call (callee-saved) may stay live after the pop: the pop only moves it to %rB. A fresh
+        # scratch must be dead after the pop, or the rewrite would clobber a later read.
+            return r
+        r += 1
+    return -1
+
+def fs_ssa_live(e, r, n, s1, s2, us, df):
+# 1 if a line reached after position e can read slot r's value from e: a walk over the successors that answers 1
+# at a line reading r and does not go past one that writes r without reading it (scratch tables 20, a stamp per
+# position, and 21, the walk's stack)
+    FS_SSST[0] = FS_SSST[0] + 1
+    st = FS_SSST[0]
+    vs = fs_ssa_buf(20, n, -2)
+    sk = fs_ssa_buf(21, n + 1, -2)
+    sk[0] = e
+    ns = 1
+    while ns > 0:
+        ns -= 1
+        p = sk[ns]
+        go = 1
+        if p != e or ns > 0:
+            if us[p * 16 + r]:
+                return 1
+            if df[p * 16 + r]:
+                go = 0
+        k = 0
+        while go and k < 2:
+            s = s1[p]
+            if k == 1:
+                s = s2[p]
+            if s >= 0 and vs[s] != st:
+                vs[s] = st
+                sk[ns] = s
+                ns += 1
+            k += 1
+    return 0
 
 def fs_ssa_cold(q, e, ln, s1, s2, vi, mk, pc, cb):
 # Step 4o: the label at position q ends a failure path that never comes back: its only predecessors are a
