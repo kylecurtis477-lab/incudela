@@ -9,6 +9,8 @@
 # Step 4k: ssa_range also zeroes s and i straight in their registers (`xor %ebx,%ebx`). Step 4m: ssa_args loads
 # its string addresses and p straight into %rdi (a call reads %rax only when an argument goes in %xmm). Step 4n:
 # ssa_move stores w[1] and w[2] through the address register itself (`mov %rdx,(%rax)`, no copies first).
+# ssa_lcopy compares its loop counters where they live (`cmp %rdi,%r8`): a position inside a loop gets no phi of its
+# own, so the copies to %rax before each compare propagate and die.
 # The output must be the same under every fs optimizer level.
 include "linux.cudi"
 
@@ -130,6 +132,17 @@ def ssa_args(p: ptr[u8], n: i64) -> i64:
     nl()
     return n + 1
 
+def ssa_lcopy(n: u64, m: u64) -> u64:
+    s: u64 = 0
+    i: u64 = 0
+    while i < n:
+        j: u64 = 0
+        while j < m:
+            s = s + i * 3 + j
+            j = j + 1
+        i = i + 1
+    return s
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -168,4 +181,6 @@ def main() -> i64:
     show(ssa_push(4, 1))
     show(ssa_push(-3, 6))
     show(ssa_args("two", 2))
+    show(ssa_lcopy(3, 4))
+    show(ssa_lcopy(0, 9))
     return 0

@@ -435,8 +435,10 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    vector count of a variadic callee (an argument in %xmm), so those set-ups load the argument register
    directly (kernel 108,520 to 103,596 instructions, moves 17,583 to 12,656). Step 4n (2026-11-17, under
    `--fs-ssa`): copy propagation reaches memory operands (base and index registers) and the register a store
-   writes (to 102,244, moves 11,296). Next: the 695 `mov %rax,%rcx; pop %rax` binary-operator round-trips and
-   the 4,619 copies into %rax, measured again on this compiler.
+   writes (to 102,244, moves 11,296). Measured again on that compiler (2026-11-17): 1,056 pops, 680 of them
+   kept on the stack only because a bounds check's failure path sits between the push and the pop, and 2,782
+   copies into %rax, many of them loop counters copied for a compare that copy propagation should already have
+   taken. The cause of the second was a bug in the SSA form (fix below: 101,399 instructions, moves 10,447).
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -520,6 +522,7 @@ least.
 | Nov 17 | SSA step 4l: `push`/`pop` round-trips kept in registers; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv181) |
 | Nov 17 | `--fs-ssa` rounds cheaper (identical output), eight rounds instead of four; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv182) |
 | Nov 17 | SSA steps 4m (call arguments straight in their registers) and 4n (copies into memory operands); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv183) |
+| Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -1186,6 +1189,18 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      byte-identical; unsafe report unchanged (659 ops). New check fs-ssa-mem-shape (ssa_move, with
      `--no-bounds` so -O0 has no bounds-check label between the push and pop). Landing rule: `optcov --check`
      OK; fsfuzz combos seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
+   - *Fix, the SSA form inside loops (2026-11-17).* The value sweep of fs_ssa_run gave a position a phi of its
+     own whenever its incoming value changed, also when the position has a single predecessor. In a loop the
+     header's value first arrives from the entry and then turns into the header's phi, so every position after
+     the header up to the next write got a phi of its own: the same register content had a different name at
+     each line, and fs_ssa_cpsrc, which checks that a copy's source still holds the value it had at the copy,
+     always failed inside loops (`mov %r8,%rax; cmp %rdi,%rax` stayed). A position with one predecessor (the
+     function entry counts as one for position 0) now takes that predecessor's outgoing value each time it
+     changes; joins work as before. The sweeps still end (every reached cycle passes a join, whose entry
+     changes at most twice) and fs_ssa_check still holds. On the kernel: 102,244 to 101,399 instructions,
+     register moves 11,296 to 10,447, .text 412,527 to 410,143 bytes. Kernel `--fs-ssa` compile 2.6 s (median
+     of five, 2.6 s before). Code built without `--fs-ssa` is byte-identical; unsafe report unchanged. New test
+     ssa_lcopy and check fs-ssa-loop-copy-shape (its compares read the loop counters, no `cmp ...,%rax`).
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

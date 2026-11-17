@@ -21711,8 +21711,8 @@ def fs_ssa_vo(p, r, df, vi):
 # rounds got cheaper, eight since. On the kernel eight reach 108,520 instructions (four: 109,854; sixteen: 108,430).
 FS_SSRND = 8
 
-FS_SSB = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-FS_SSBN = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+FS_SSB = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+FS_SSBN = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 def fs_ssa_buf(k, m, v):
 # Scratch table k of fs_ssa_run and its helpers, at least m entries, the first m set to v (-2: left as they are,
@@ -21826,16 +21826,30 @@ def fs_ssa_run(s0):
         # never a jump target: every jump names a .LFn label or the function is skipped)
             fs_ssa_all(p, us, df)
         p += 1
+    # pc: the number of predecessors of each position (the function's entry counts as one for position 0). A
+    # position with one predecessor holds that predecessor's outgoing values and never gets a phi of its own (it
+    # did before: once a loop header's value turned into its phi, each position after it got a phi too, so equal
+    # values looked different and copies inside loops were never propagated)
+    pc = fs_ssa_buf(14, n, 0)
+    pc[0] = 1
+    p = 0
+    while p < n:
+        if s1[p] >= 0:
+            pc[s1[p]] += 1
+        if s2[p] >= 0:
+            pc[s2[p]] += 1
+        p += 1
     r = 0
     while r < 16:
         vi[r] = 16 * n + r
         r += 1
     # The incoming values flow along the edges in sweeps over the positions until nothing changes. A position's
     # outgoing values depend only on its own entries, and after it is processed each successor holds either that
-    # value or its own phi (an entry only moves from -1 to a value and from a value to its phi), so processing it
-    # again changes nothing until one of its entries changes: dq marks those positions, and a sweep skips the
-    # others. The sweeps make the same updates in the same order as sweeping every position, so the phis are
-    # the same.
+    # value or its own phi (an entry at a join only moves from -1 to a value and from a value to its phi; an entry
+    # with one predecessor takes that predecessor's value each time it changes), so processing it again changes
+    # nothing until one of its entries changes: dq marks those positions, and a sweep skips the others. The sweeps
+    # make the same updates in the same order as sweeping every position, so the phis are the same. They end:
+    # every reached cycle passes a join, and a join's entry changes at most twice.
     dq = fs_ssa_buf(6, n, 0)
     dq[0] = 1
     ch = 1
@@ -21866,6 +21880,8 @@ def fs_ssa_run(s0):
                                 ch = 1
                             elif c != v and c != ph:
                                 vi[b] = ph
+                                if pc[s] == 1:
+                                    vi[b] = v
                                 dq[s] = 1
                                 ch = 1
                             x += 1
