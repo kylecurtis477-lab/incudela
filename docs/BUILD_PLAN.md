@@ -527,6 +527,8 @@ least.
 | Nov 17 | SSA step 4l: `push`/`pop` round-trips kept in registers; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv181) |
 | Nov 17 | `--fs-ssa` rounds cheaper (identical output), eight rounds instead of four; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv182) |
 | Nov 17 | SSA steps 4m (call arguments straight in their registers) and 4n (copies into memory operands); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv183) |
+| Nov 17 | SSA: no phi at a single-predecessor position (fix); step 4o: push/pop round-trips across failure paths; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
+| Nov 17 | `--fs-ssa` rounds cheaper again (identical output); SSA step 4p: copies into %rax; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv185) |
 | Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate), step 4o (push/pop round-trips across failure paths); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |

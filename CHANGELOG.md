@@ -7,7 +7,7 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4o
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4p
 
 - `f944491` tests: tools/fsfuzz.cud negates one generated condition in eight (`not (...)`) and joins two
   compares with `and`/`or` in another one in eight.
@@ -61,6 +61,13 @@
 - `f0df4f8` `--fs-ssa` keeps step 4l's push/pop round-trips in a register across a bounds check's failure
   path, which never comes back (step 4o); the failure call's alignment pad goes with the push. Kernel
   instructions 101,399 to 99,001, pops 1,058 to 459, .text 410,143 to 404,031 bytes.
+- `79944e3` `--fs-ssa` rounds cheaper again, with byte-identical output: a row cache per line so an unchanged
+  line is not parsed again in the next round, a one-predecessor shortcut in the merge sweeps, and cheaper line
+  checks in fs_regalloc. The kernel's `--fs-ssa` compile 3.14 to 2.30 s.
+- `359c52d` `--fs-ssa` drops copies into %rax that feed an `add`, an `imul` by a constant or a `push` (step
+  4p): `lea N(%rS)`, `lea (%rS,%rT)`, `imul $N,%rS,%rax`, `push %rS`; twelve rounds per function instead of
+  eight. Kernel instructions 99,001 to 97,286, copies into %rax 2,276 to 1,360, .text 404,031 to 399,599
+  bytes; compile 2.46 s.
 
 ## 0.21.1 (unreleased): rename cleanup
 
