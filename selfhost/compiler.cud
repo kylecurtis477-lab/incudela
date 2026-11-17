@@ -21707,7 +21707,7 @@ def fs_ssa_vo(p, r, df, vi):
 
 # Rounds of fs_ssa_run per function (each rebuilds the SSA form from the rewritten lines): four until the
 # rounds got cheaper, eight since. On the kernel eight reach 108,520 instructions (four: 109,854; sixteen: 108,430).
-FS_SSRND = 8
+FS_SSRND = 12
 
 FS_SSB = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 FS_SSBN = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -22165,8 +22165,44 @@ def fs_ssa_fold(n, ln, vi, cnt):
                     out[ln[p + 2]] = ""
                     nf += 1
                     p += 3
+            elif starts(a, "    mov %r") and ends(a, ",%rax\n") and find(FS_SSR, 14, substr(a, 8, len(a) - 6)) > 0:
+            # a copy into %rax that the next line (or the one after) reads and overwrites
+                q = fs_ssa_raxc(p, n, ln, cnt, substr(a, 8, len(a) - 6), b)
+                if q > 0:
+                    nf += 1
+                    p += q - 1
         p += 1
     return nf
+
+def fs_ssa_raxc(p, n, ln, cnt, s, b):
+# Step 4p: `mov %rS,%rax` at position p (S a tracked register other than %rax) followed by
+#   add $N,%rax           ->  lea N(%rS),%rax          (the add's flags read nowhere)
+#   add %rT,%rax          ->  lea (%rS,%rT),%rax       (the same; T not %rax)
+#   mov $N,%rcx / imul %rcx,%rax  ->  imul $N,%rS,%rax   (that %rcx value read once: by the imul)
+#   push %rax             ->  push %rS                 (the copy read only by the push)
+# The add and the imul read the copy and write %rax again, so they are its only reader (no label sits between:
+# they are consecutive entries). Returns the number of positions consumed (2 or 3), 0 for no rewrite.
+    if starts(b, "    add $") and ends(b, ",%rax\n") and cnt[(p + 1) * 16 + 15] == 0 and fs_ssa_imm(substr(b, 8, len(b) - 6)):
+        out[ln[p]] = ""
+        out[ln[p + 1]] = c4("    lea ", substr(b, 9, len(b) - 6), "(", concat(s, "),%rax\n"))
+        return 2
+    if starts(b, "    add %r") and ends(b, ",%rax\n") and cnt[(p + 1) * 16 + 15] == 0:
+        t = substr(b, 8, len(b) - 6)
+        if find(FS_SSR, 14, t) > 0:
+            out[ln[p]] = ""
+            out[ln[p + 1]] = c4("    lea (", s, ",", concat(t, "),%rax\n"))
+            return 2
+    if str_eq(b, "    push %rax\n") and cnt[p * 16] == 1:
+        out[ln[p]] = ""
+        out[ln[p + 1]] = c4("    push ", s, "\n", "")
+        return 2
+    if p + 2 < n and starts(b, "    mov $") and ends(b, ",%rcx\n") and cnt[(p + 1) * 16 + 1] == 1 and fs_ssa_imm(substr(b, 8, len(b) - 6)):
+        if str_eq(out[ln[p + 2]], "    imul %rcx,%rax\n"):
+            out[ln[p]] = ""
+            out[ln[p + 1]] = ""
+            out[ln[p + 2]] = c4("    imul ", substr(b, 8, len(b) - 6), ",", concat(s, ",%rax\n"))
+            return 3
+    return 0
 
 def fs_ssa_dreg(a):
 # a (one instruction line) only writes one tracked register, from an immediate or another tracked register:

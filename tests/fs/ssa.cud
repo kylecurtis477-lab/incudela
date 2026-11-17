@@ -162,6 +162,19 @@ def ssa_cold(a: i64, i: i64, j: i64) -> i64:
         ud2()
     return t + w[i] - w[j] + u
 
+def ssa_rax(a: i64, b: i64) -> i64:
+# step 4p: copies into %rax for an add or an imul by a constant become one lea or three-operand imul
+    s: i64 = a + 5
+    t: i64 = a + b
+    u: i64 = b * 24
+    v: i64 = a - 9
+    w: i64 = b + b
+    return s * 1000000000 + t * 1000000 + u * 1000 + v + w
+
+def ssa_rpush(a: i64, b: i64, c: i64) -> i64:
+# step 4p: the left operand pushed across the call is pushed straight from its register
+    return (a + c) * 3 - ssa_imm(b) * (a - ssa_imm(c))
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -204,4 +217,7 @@ def main() -> i64:
     show(ssa_lcopy(0, 9))
     show(ssa_cold(5, 1, 2))
     show(ssa_cold(-7, 3, 0))
+    show(ssa_rax(3, 4))
+    show(ssa_rax(-2147483648, 9))
+    show(ssa_rpush(5, 7, 2))
     return 0

@@ -441,7 +441,9 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    taken. The cause of the second was a bug in the SSA form (fix below: 101,399 instructions, moves 10,447).
    Step 4o (2026-11-17, under `--fs-ssa`): the step 4l round-trips cross a failure path (to 99,001, pops 459).
    Since 2026-11-17 the rounds are cheaper again (the kernel compiles in 2.3 s instead of 3.1 s, identical
-   output). Next: the 2,276 copies into %rax left, measured again.
+   output). Step 4p (2026-11-17, under `--fs-ssa`): of the 2,276 copies into %rax, the largest groups feed an
+   `add`, an `imul` by a constant or a `push`, which now take the source register directly (`lea`, three-operand
+   `imul`, `push %rS`), and a function gets twelve rounds instead of eight (to 97,286, copies into %rax 1,360).
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1237,6 +1239,28 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      byte-identical; unsafe report unchanged (659 ops). New test ssa_cold and check fs-ssa-cold-shape (no pad
      before its failure calls and one pop, around the `and`, a real join). One allow-listed optcov block, the
      refusal of a failure path that is not straight-line, which the code generator never emits.
+   - *Step 4p, copies into %rax (2026-11-17).* Measured on the compiler after the cheaper rounds (output as at
+     step 4o): 2,276 `mov %rS,%rax` lines in the kernel, by what follows them: 425 `mov $N,%rcx` (most before
+     `imul %rcx,%rax` for an index scale, or `mul %rcx` for a constant division), 417 `add $N,%rax` (a field
+     or element address), 224 `add %rcx,%rax`, 159 a bounds check's `cmp $N,%rcx`, 152 `push %rax` (a left
+     operand kept across a call), 146 a `jmp` (a value flowing into a join). The copy is needed because those
+     instructions read and write %rax in place. fs_ssa_raxc (in fs_ssa_fold, on consecutive entries, reached
+     code) rewrites `mov %rS,%rax` (S a tracked register other than %rax) with the next line: `add $N,%rax`
+     becomes `lea N(%rS),%rax` and `add %rT,%rax` becomes `lea (%rS,%rT),%rax` when the add's flags are read
+     nowhere (lea sets none); `mov $N,%rcx; imul %rcx,%rax` becomes `imul $N,%rS,%rax` when that %rcx value is
+     read only by the imul (the same product and flags); `push %rax` becomes `push %rS` when the push is the
+     copy's only reader. The add and the imul read the copy and overwrite %rax, so they are its only reader.
+     The rewrites need more rounds to finish (each one exposes copy propagation and moves into the copy's
+     register), so FS_SSRND goes from eight to twelve; twelve rounds alone would give 98,669 instructions. On
+     the kernel: 99,001 to 97,286 instructions (-1.7%), copies into %rax 2,276 to 1,360, register moves 10,451 to
+     8,822, pops 459 to 437, .text 404,031 to 399,599 bytes. Kernel `--fs-ssa` compile 2.42-2.46 s against 2.84-2.95 s for
+     f3450b7 in the same interleaved runs (2.26 to 2.60 s against the cheaper rounds alone in another set); under
+     3 s either way. Code built without `--fs-ssa` is byte-identical; unsafe report unchanged (168 functions,
+     659 ops). New tests ssa_rax (lea for `a + 5` and `a + b`, three-operand imul, and `a - 9` and `b + b`) and
+     ssa_rpush (left operands pushed across calls), checks fs-ssa-rax-shape and fs-ssa-rpush-shape. Left: copies
+     before `mul %rcx` (constant division), shifts by %cl, bounds checks and joins. Landing rule: `optcov
+     --check` OK (no new allow-list entry; one entry removed, a 32-bit rename in fs_ssa_ren that is now hit);
+     `fsfuzz --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in
