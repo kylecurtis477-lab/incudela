@@ -22333,6 +22333,8 @@ def fs_ssa_pushpop(n, ln, s1, s2, us, df, vi, cnt, mk):
 # rewrote is in no pair. A retargeted range writes its register before reading it, so it adds no read of a value
 # live at a push, and the use counts stay valid for the pairs.
     nr = 0
+    pc = FS_SSB[14]
+    cb = fs_ssa_buf(10, n, -1)
     e = 0
     while e < n:
         m = out[ln[e]]
@@ -22340,11 +22342,11 @@ def fs_ssa_pushpop(n, ln, s1, s2, us, df, vi, cnt, mk):
         if vi[e * 16] >= 0 and not mk[e] and starts(m, "    pop %r") and find_char(m, 10) == len(m) - 1:
             b = find(FS_SSR, 14, substr(m, 8, len(m) - 1))
         if b >= 0:
-            w = fs_ssa_ppa(e, ln, s1, s2, us, vi, mk)
+            w = fs_ssa_ppa(e, ln, s1, s2, us, vi, mk, pc, cb)
             if w >= 0:
                 l = out[ln[w]]
                 a = find(FS_SSR, 14, substr(l, 9, len(l) - 1))
-                r = fs_ssa_ppt(w, e, a, b, us, df, vi, cnt)
+                r = fs_ssa_ppt(w, e, a, b, us, df, vi, cnt, cb)
                 if r >= 0:
                     out[ln[w]] = ""
                     if r != a:
@@ -22355,12 +22357,14 @@ def fs_ssa_pushpop(n, ln, s1, s2, us, df, vi, cnt, mk):
                     q = w
                     while q <= e:
                         mk[q] = 1
+                        if cb[q] == e and (str_eq(out[ln[q]], "    sub $8,%rsp\n") or str_eq(out[ln[q]], "    add $8,%rsp\n")):
+                            out[ln[q]] = ""
                         q += 1
                     nr += 1
         e += 1
     return nr
 
-def fs_ssa_ppa(e, ln, s1, s2, us, vi, mk):
+def fs_ssa_ppa(e, ln, s1, s2, us, vi, mk, pc, cb):
 # the position of the `push %rA` (a tracked register) that the pop at e takes back, over a straight-line range
 # of at most FS_SSPP one-line, reached, unrewritten lines that fall through, touch no stack address and have no
 # implicit stack use (no call, return, leave or line fs_ssa_line does not understand, so pushfq and the like
@@ -22370,6 +22374,11 @@ def fs_ssa_ppa(e, ln, s1, s2, us, vi, mk):
     q = e - 1
     while q >= 0 and q > e - FS_SSPP:
         l = out[ln[q]]
+        if not mk[q] and starts(l, ".LF") and ends(l, ":\n"):
+            q = fs_ssa_cold(q, e, ln, s1, s2, vi, mk, pc, cb)
+            if q < 0:
+                return -1
+            l = out[ln[q]]
         if mk[q] or not starts(l, "    ") or starts(l, "     ") or find_char(l, 10) != len(l) - 1 or s2[q] >= 0 or s1[q] != q + 1 or vi[q * 16] < 0 or us[q * 16 + 14]:
             return -1
         if contains(l, "%rsp") or contains(l, "%esp") or contains(l, "%sp") or starts(l, "    call") or starts(l, "    ret") or starts(l, "    leave") or starts(l, "    enter"):
@@ -22385,10 +22394,40 @@ def fs_ssa_ppa(e, ln, s1, s2, us, vi, mk):
         q -= 1
     return -1
 
-def fs_ssa_ppt(w, e, a, b, us, df, vi, cnt):
+def fs_ssa_cold(q, e, ln, s1, s2, vi, mk, pc, cb):
+# Step 4o: the label at position q ends a failure path that never comes back: its only predecessors are a
+# conditional jump to it at some position j and a `ud2` right before it, and the lines from j + 1 to the `ud2`
+# are one-line, reached, unmarked instructions that fall through, with no push, pop, return or leave. They are
+# either plain lines (the checked-ints trap) or end in `sub $8,%rsp; call F; add $8,%rsp; ud2` (the bounds
+# check: F never returns), the 8-byte pad keeping the call 16-byte aligned with an odd number of pushes live; any
+# other call or stack-pointer line refuses. The lines j + 1 to q are marked cold for the pop at e (cb) and the
+# line before the jump is returned (the walk of fs_ssa_ppa checks the jump as an ordinary line except for its
+# second successor, which is this label); -1 when the label is anything else.
+    if q < 3 or pc[q] != 2 or not str_eq(out[ln[q - 1]], "    ud2\n") or s1[q - 1] != q:
+        return -1
+    k = q - 2
+    while k >= 0 and k > q - 16:
+        l = out[ln[k]]
+        if s2[k] == q and not mk[k] and vi[k * 16] >= 0 and starts(l, "    j") and find_char(l, 10) == len(l) - 1:
+            j = k
+            k += 1
+            while k <= q:
+                cb[k] = e
+                k += 1
+            return j - 1
+        if mk[k] or vi[k * 16] < 0 or not starts(l, "    ") or starts(l, "     ") or find_char(l, 10) != len(l) - 1 or s2[k] >= 0 or s1[k] != k + 1 or starts(l, "    push") or starts(l, "    pop") or starts(l, "    ret") or starts(l, "    leave") or starts(l, "    enter"):
+            return -1
+        if contains(l, "%rsp") or contains(l, "%esp") or contains(l, "%sp") or starts(l, "    call"):
+            if k < 2 or k + 4 < q or not str_eq(out[ln[q - 4]], "    sub $8,%rsp\n") or not starts(out[ln[q - 3]], "    call ") or not str_eq(out[ln[q - 2]], "    add $8,%rsp\n"):
+                return -1
+        k -= 1
+    return -1
+
+def fs_ssa_ppt(w, e, a, b, us, df, vi, cnt, cb):
 # the register that holds the pushed value from the push at w to the pop at e, or -1: one that no line strictly
 # between reads or writes, tried in the order %rB (the pop overwrites its old value), %rA (it keeps the value
-# itself), then the caller-saved registers whose value at the push has no use at all
+# itself), then the caller-saved registers whose value at the push has no use at all. A cold line (cb, step 4o)
+# may write it: control never comes back from there to the pop.
     k = 0
     while k < 11:
         r = b
@@ -22399,7 +22438,7 @@ def fs_ssa_ppt(w, e, a, b, us, df, vi, cnt):
         ok = 1
         q = w + 1
         while q < e and ok:
-            if us[q * 16 + r] or df[q * 16 + r]:
+            if us[q * 16 + r] or (df[q * 16 + r] and cb[q] != e):
                 ok = 0
             q += 1
         if ok and k > 1 and (r == a or r == b or cnt[vi[w * 16 + r]] > 0):

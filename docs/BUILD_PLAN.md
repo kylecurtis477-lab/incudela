@@ -439,6 +439,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    kept on the stack only because a bounds check's failure path sits between the push and the pop, and 2,782
    copies into %rax, many of them loop counters copied for a compare that copy propagation should already have
    taken. The cause of the second was a bug in the SSA form (fix below: 101,399 instructions, moves 10,447).
+   Step 4o (2026-11-17, under `--fs-ssa`): the step 4l round-trips cross a failure path (to 99,001, pops 459).
+   Next: the 2,276 copies into %rax left, measured again.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -522,7 +524,7 @@ least.
 | Nov 17 | SSA step 4l: `push`/`pop` round-trips kept in registers; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv181) |
 | Nov 17 | `--fs-ssa` rounds cheaper (identical output), eight rounds instead of four; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv182) |
 | Nov 17 | SSA steps 4m (call arguments straight in their registers) and 4n (copies into memory operands); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv183) |
-| Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
+| Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate), step 4o (push/pop round-trips across failure paths); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -1201,6 +1203,22 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      register moves 11,296 to 10,447, .text 412,527 to 410,143 bytes. Kernel `--fs-ssa` compile 2.6 s (median
      of five, 2.6 s before). Code built without `--fs-ssa` is byte-identical; unsafe report unchanged. New test
      ssa_lcopy and check fs-ssa-loop-copy-shape (its compares read the loop counters, no `cmp ...,%rax`).
+   - *Step 4o, push/pop round-trips across failure paths (2026-11-17).* Of the 1,056 pops left after step 4n,
+     680 belonged to a round-trip (`push %rax`, the value of an array store or a binary operator's left operand;
+     the address or right operand with its bounds check; `pop %rax`) that step 4l refused only because the
+     bounds check's label sits in the range. fs_ssa_cold accepts such a label when its only predecessors are a
+     conditional jump to it and a `ud2` right before it, and the lines between are straight-line, reached and
+     unmarked with no push, pop or return: either the checked-ints trap (`jno L; ud2; L:`) or the bounds
+     failure `...; sub $8,%rsp; call forge_bounds_fail; add $8,%rsp; ud2`. Control never comes back from that
+     path, so the register T that keeps the value may be written there (it may not be read), and dropping the
+     push makes the stack depth even, so the call's 8-byte alignment pad goes too (any other stack-pointer line
+     or call refuses). Over the rounds most bounds-checked stores and indexed operands keep their value in a
+     register. On the kernel: 101,399 to 99,001 instructions (-2.4%), pops 1,058 to 459, .text 410,143 to
+     404,031 bytes. Kernel `--fs-ssa` compile 2.95 s (median of seven, 2.7 s for the fix alone and 2.8 s for
+     c6191de on the same box: more functions use all their rounds). Code built without `--fs-ssa` is
+     byte-identical; unsafe report unchanged (659 ops). New test ssa_cold and check fs-ssa-cold-shape (no pad
+     before its failure calls and one pop, around the `and`, a real join). One allow-listed optcov block, the
+     refusal of a failure path that is not straight-line, which the code generator never emits.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

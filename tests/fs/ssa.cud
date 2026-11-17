@@ -11,6 +11,8 @@
 # ssa_move stores w[1] and w[2] through the address register itself (`mov %rdx,(%rax)`, no copies first).
 # ssa_lcopy compares its loop counters where they live (`cmp %rdi,%r8`): a position inside a loop gets no phi of its
 # own, so the copies to %rax before each compare propagate and die.
+# Step 4o: ssa_cold keeps the values it stores and multiplies in registers across the bounds checks of w[i] and
+# w[j] (a failure path never comes back, so the push/pop round-trip around it goes, and with it the call's pad).
 # The output must be the same under every fs optimizer level.
 include "linux.cudi"
 
@@ -143,6 +145,23 @@ def ssa_lcopy(n: u64, m: u64) -> u64:
         i = i + 1
     return s
 
+def ssa_cold(a: i64, i: i64, j: i64) -> i64:
+    w: i64[4]
+    w[0] = a
+    w[1] = a + 1
+    w[2] = 3
+    w[3] = 4
+    w[i] = a * 5 + j
+    t: i64 = (a + 1) * w[j]
+    u: i64 = (a + 2) * (i < j and j < 3)
+    if a > 100:
+        if i > 0:
+            t = t + 1
+        else:
+            t = t - 1
+        ud2()
+    return t + w[i] - w[j] + u
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -183,4 +202,6 @@ def main() -> i64:
     show(ssa_args("two", 2))
     show(ssa_lcopy(3, 4))
     show(ssa_lcopy(0, 9))
+    show(ssa_cold(5, 1, 2))
+    show(ssa_cold(-7, 3, 0))
     return 0

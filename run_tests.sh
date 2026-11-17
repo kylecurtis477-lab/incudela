@@ -174,6 +174,10 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --no-bounds --fs-temps && 
 # fix (SSA form): ssa_lcopy's loop counters are copied to %rax for each compare under --fs-temps; a position inside
 # a loop has no phi of its own any more, so under --fs-ssa the copies propagate and each compare reads its counter
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_lcopy:/,/ret$/' build/t_ssa.s | grep -c '^    cmp .*,%rax$')" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_lcopy:/,/ret$/' build/t_ssa.s | grep -c '^    cmp .*,%rax$')" = 0 ] && echo "PASS fs-ssa-loop-copy-shape" || { echo "FAIL fs-ssa-loop-copy-shape"; fail=1; }
+# step 4o: ssa_cold's stored and multiplied values cross the bounds checks of w[i] and w[j] on the stack under
+# --fs-temps (the failure call then needs `sub $8,%rsp` to stay aligned); under --fs-ssa they stay in registers, so
+# no pad is left and only the pop around the `and` (a real join) remains
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_cold:/,/ret$/' build/t_ssa.s | grep -c '^    sub \$8,%rsp$')" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_cold:/,/ret$/' build/t_ssa.s | grep -c '^    sub \$8,%rsp$')" = 0 ] && [ "$(awk '/^ssa_cold:/,/ret$/' build/t_ssa.s | grep -c '^    pop %r')" = 1 ] && echo "PASS fs-ssa-cold-shape" || { echo "FAIL fs-ssa-cold-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs
