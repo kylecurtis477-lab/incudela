@@ -167,6 +167,10 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && npop=$(awk '
 # `mov $n,%eax` vector counts right before their calls
 apair='/^ssa_args:/ {f=1} f && prev ~ /^    (mov|lea) [^,]*,%rax$/ && $0 == "    mov %rax,%rdi" {c++} f {prev=$0} f && /ret$/ {f=0} END {print c+0}'
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk "$apair" build/t_ssa.s)" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk "$apair" build/t_ssa.s)" = 0 ] && build/cudc tests/fs/cabi_float.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(grep -A1 -E '^    mov \$[0-9]+,%eax$' build/t_ssa.s | grep -c '^    call')" = 3 ] && echo "PASS fs-ssa-args-shape" || { echo "FAIL fs-ssa-args-shape"; fail=1; }
+# step 4n: ssa_move's array stores copy the address to %rcx and the value to %rax first under --fs-temps
+# (`mov %rax,(%rcx)`); under --fs-ssa the store reads the copies' sources (`mov %rdx,(%rax)`). --no-bounds: at
+# -O0 the kept bounds checks put a label between the value's push and pop
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --no-bounds --fs-temps && [ "$(awk '/^ssa_move:/,/ret$/' build/t_ssa.s | grep -c '^    mov %rax,(%rcx)$')" -gt 0 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --no-bounds --fs-ssa && [ "$(awk '/^ssa_move:/,/ret$/' build/t_ssa.s | grep -c '^    mov %rax,(%rcx)$')" = 0 ] && [ "$(awk '/^ssa_move:/,/ret$/' build/t_ssa.s | grep -c '^    mov %rdx,(%rax)$')" = 2 ] && echo "PASS fs-ssa-mem-shape" || { echo "FAIL fs-ssa-mem-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs

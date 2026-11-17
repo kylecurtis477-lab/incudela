@@ -22136,8 +22136,56 @@ def fs_ssa_copy(n, ln, df, vi):
                         else:
                             out[ln[q]] = c4("    ", mn, " ", c3(x2, ",", concat(y2, "\n")))
                         nc += 1
+        elif vi[q * 16] >= 0 and starts(a, "    ") and not starts(a, "     ") and find_char(a, 10) == len(a) - 1:
+            t = fs_ssa_cpline(substr(a, 4, len(a) - 1), q, n, ln, df, vi)
+            if len(t) > 0:
+                out[ln[q]] = c3("    ", t, "\n")
+                nc += 1
         q += 1
     return nc
+
+def fs_ssa_cpline(t, q, n, ln, df, vi):
+# Step 4n, copy propagation through memory operands: a reached one-line `MN X,Y` (MN in FS_SSCP or FS_SSMOV,
+# two operands) with a memory operand reads the copy's source register instead of %rB in the base and index of
+# that operand (they are only read), and, when X is a register and MN in FS_SSCP, in X (`mov %rB,(%rC)` stores
+# %rA). Y as a register is a destination (only cmp/test read it, and they are left to the register-only form).
+# Returns the rewritten line, or "" when nothing changes.
+    sp = find_char(t, 32)
+    if sp < 0 or find(FS_SSCP, 9, substr(t, 0, sp)) < 0 and find(FS_SSMOV, 14, substr(t, 0, sp)) < 0 or fs_ssa_split(substr(t, sp + 1, len(t))) != 2:
+        return ""
+    mn = substr(t, 0, sp)
+    sc = find(FS_SSCP, 9, mn) >= 0
+    x = fs_sso[0]
+    y = fs_sso[1]
+    x2 = x
+    if find_char(x, 40) >= 0 and ends(x, ")"):
+        x2 = fs_ssa_cpmem(x, q, n, ln, df, vi)
+    elif sc:
+        x2 = fs_ssa_cpsrc(x, q, n, ln, df, vi)
+    y2 = y
+    if find_char(y, 40) >= 0 and ends(y, ")"):
+        y2 = fs_ssa_cpmem(y, q, n, ln, df, vi)
+    if str_eq(x2, x) and str_eq(y2, y):
+        return ""
+    return c4(mn, " ", x2, concat(",", y2))
+
+def fs_ssa_cpmem(o, q, n, ln, df, vi):
+# memory operand o (ending in its parentheses) read at position q with each tracked 64-bit base or index register
+# that holds a copy replaced by the copy's source (fs_ssa_cpsrc); the registers inside the parentheses are only read
+    b = find_char(o, 40)
+    e = len(o) - 1
+    x = substr(o, b + 1, e)
+    r = substr(o, 0, b + 1)
+    sep = ""
+    a = 0
+    k = 0
+    while k <= len(x):
+        if k == len(x) or char_at(x, k) == 44:
+            r = c3(r, sep, fs_ssa_cpsrc(substr(x, a, k), q, n, ln, df, vi))
+            sep = ","
+            a = k + 1
+        k += 1
+    return concat(r, substr(o, e, len(o)))
 
 def fs_ssa_cpsrc(x, q, n, ln, df, vi):
 # x read at position q: if it is a tracked 64-bit register %rB whose value there is the write of

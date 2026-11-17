@@ -433,7 +433,10 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    (2026-11-17): of the kernel's 17,583 register moves, 5,138 set up a call argument through %rax, the largest
    group, against 1,049 pops in all. Step 4m (2026-11-17, under `--fs-ssa`): a call reads %rax only as the
    vector count of a variadic callee (an argument in %xmm), so those set-ups load the argument register
-   directly (kernel 108,520 to 103,596 instructions, moves 17,583 to 12,656).
+   directly (kernel 108,520 to 103,596 instructions, moves 17,583 to 12,656). Step 4n (2026-11-17, under
+   `--fs-ssa`): copy propagation reaches memory operands (base and index registers) and the register a store
+   writes (to 102,244, moves 11,296). Next: the 695 `mov %rax,%rcx; pop %rax` binary-operator round-trips and
+   the 4,619 copies into %rax, measured again on this compiler.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -516,7 +519,7 @@ least.
 | Nov 16 | SSA step 4k: phi-crossing temporaries measured (none occur), ranges starting at `xor %eA,%eA` instead; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv180) |
 | Nov 17 | SSA step 4l: `push`/`pop` round-trips kept in registers; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv181) |
 | Nov 17 | `--fs-ssa` rounds cheaper (identical output), eight rounds instead of four; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv182) |
-| Nov 17 | SSA step 4m: call arguments straight in their registers; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv183) |
+| Nov 17 | SSA steps 4m (call arguments straight in their registers) and 4n (copies into memory operands); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv183) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -1170,6 +1173,19 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      byte-identical; unsafe report unchanged (659 ops). New test ssa_args and check fs-ssa-args-shape (also: the
      three vector counts in tests/fs/cabi_float.cud stay right before their calls). Landing rule: `optcov
      --check` OK; fsfuzz combos seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
+   - *Step 4n, copy propagation through memory operands (2026-11-17).* Step 4f rewrote register-only lines, so an
+     array store computed the address in %rax, copied it to %rcx, moved the value to %rax and stored
+     `mov %rax,(%rcx)`. fs_ssa_cpline now also takes a one-line `MN X,Y` with a memory operand (MN in FS_SSCP or
+     FS_SSMOV): fs_ssa_cpmem replaces each base or index register that holds a copy by the copy's source (they
+     are only read), and for FS_SSCP the register X too (the value a store writes). The same conditions as step
+     4f: the source still holds the value it had after the copy, at most one rewrite per line and round, and
+     the use counts stay an upper bound. Over the rounds `mov %rax,%rcx; mov %rdx,%rax; mov %rax,(%rcx)` becomes
+     `mov %rdx,(%rax)`. On the kernel: 103,596 to 102,244 instructions (-1.3%), register moves 12,656 to 11,296,
+     .text 416,495 to 412,527 bytes; pops 1,052 to 1,056. Kernel `--fs-ssa` compile 2.4-2.8 s (median user
+     time of seven runs, the same spread as 1aa0e7f on the same box). Code built without `--fs-ssa` is
+     byte-identical; unsafe report unchanged (659 ops). New check fs-ssa-mem-shape (ssa_move, with
+     `--no-bounds` so -O0 has no bounds-check label between the push and pop). Landing rule: `optcov --check`
+     OK; fsfuzz combos seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in
