@@ -7,7 +7,7 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d and 4e
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4g
 
 - `f944491` tests: tools/fsfuzz.cud negates one generated condition in eight (`not (...)`) and joins two
   compares with `and`/`or` in another one in eight.
@@ -20,6 +20,11 @@
   instructions 134,600 to 120,544; `--unsafe-report` unchanged (168 functions, 659 ops).
 - `70e9cf8` `--fs-ssa` also deletes register writes nothing reads (step 4e): kernel instructions 120,544 to
   119,967.
+- `68836cb` `--fs-ssa` propagates register copies (step 4f): a read of %rB that holds a `mov %rA,%rB` copy
+  reads %rA while %rA still has the same value; the unread copy then dies. Kernel instructions 119,967 to
+  118,980.
+- `f69eff8` the UEFI loader, the kernel modules and the user programs are built with `--fs-ssa` (step 4g):
+  instructions -25.9%, -21.0% and -24.6%; incudelax64.efi 13,312 to 10,752 bytes.
 
 ## 0.21.1 (unreleased): rename cleanup
 
