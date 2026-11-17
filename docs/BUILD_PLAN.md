@@ -428,7 +428,9 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    do not occur in this code generator (measured: none on the kernel or 63 other sources), so the step instead
    lets a range start with `xor %eA,%eA`. Step 4l (2026-11-17, under `--fs-ssa`): a straight-line `push`/`pop`
    round-trip of a nested operand keeps the value in a free register instead (kernel pops 3,365 to 1,349). Since
-   2026-11-17 each round is cheaper (the kernel compiles in 1.74 s instead of 2.31 s, identical output).
+   2026-11-17 each round is cheaper (the kernel compiles in 1.74 s instead of 2.31 s, identical output), and a
+   function gets eight rounds instead of four (kernel 109,854 to 108,520 instructions, compile 2.36 s). Next:
+   measure what the remaining 1,049 pops and 17,583 register moves of the kernel are, and pick the larger.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -510,6 +512,7 @@ least.
 | Nov 16 | `--fs-ssa` compile time back down (live phis on a worklist); SSA step 4j: temporaries over straight-line ranges; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv179) |
 | Nov 16 | SSA step 4k: phi-crossing temporaries measured (none occur), ranges starting at `xor %eA,%eA` instead; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv180) |
 | Nov 17 | SSA step 4l: `push`/`pop` round-trips kept in registers; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv181) |
+| Nov 17 | `--fs-ssa` rounds cheaper (identical output), eight rounds instead of four; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv182) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
@@ -1134,6 +1137,17 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      examples/modules (64 sources) under `--fs-ssa`, `-O0 --fs-ssa`, `-g --fs-ssa`, `--no-bounds --fs-ssa`,
      `--fs-ssa --fs-opt`, `--fs-temps` and no flag. Landing rule: `optcov --check` OK (the verifier's
      allow-list entries renamed to the hoisted lines, the edge check split into its two successors).
+   - *Eight `--fs-ssa` rounds (2026-11-17).* A function's SSA form is rebuilt and rewritten until a round changes
+     nothing, at most FS_SSRND rounds (was four, the 4d loop). Four cut the later rewrites short: at four the
+     kernel's step 4l pairs and the dead writes their folds leave were still being found (a `push %rax ... pop
+     %rax` around an indexed load stayed in tests/fs/ssa.cud's ssa_push). On the kernel: eight rounds give
+     108,520 instructions (four 109,854, sixteen 108,430), pops 1,349 to 1,049, `push %rax` 2,154 to 1,854,
+     register-to-register moves 18,317 to 17,583, .text of kernel.cud 433,951 to 431,167 bytes; compile 1.74 to
+     2.36 s (median user time of seven runs; wall about 2.4 s), under the 2.9 s it took before the rounds got
+     cheaper. Code built without `--fs-ssa` is byte-identical; unsafe report unchanged (659 ops). Tests: every
+     tests/fs program under `--fs-ssa`, `-O0 --fs-ssa`, `-g --fs-ssa`, `--no-bounds --fs-ssa` and `--fs-ssa
+     --fs-opt`: 23/23; all eight fs-ssa shape checks at O2 and O0. Landing rule: `optcov --check` OK; `fsfuzz
+     --combos` seeds 1-3 x 25 and the ten-way form seeds 1-6 x 80: 0 differ.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

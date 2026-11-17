@@ -20766,9 +20766,9 @@ def fs_regalloc(s0):
         fs_tmp_args(s0)
     if fs_ssa:
     # a fold can expose another (a negated test folds into its jump, then the comparison it negated can): rebuild
-    # and fold again, at most four rounds
+    # and fold again, at most FS_SSRND rounds
         k = 0
-        while k < 4 and fs_ssa_run(s0) > 0:
+        while k < FS_SSRND and fs_ssa_run(s0) > 0:
             k += 1
 
 def fs_ra_pin(ops, npin):
@@ -21687,6 +21687,10 @@ def fs_ssa_vo(p, r, df, vi):
     if df[p * 16 + r]:
         return p * 16 + r
     return vi[p * 16 + r]
+
+# Rounds of fs_ssa_run per function (each rebuilds the SSA form from the rewritten lines): four until the
+# rounds got cheaper, eight since. On the kernel eight reach 108,520 instructions (four: 109,854; sixteen: 108,430).
+FS_SSRND = 8
 
 FS_SSB = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 FS_SSBN = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
