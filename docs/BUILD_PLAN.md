@@ -538,6 +538,7 @@ least.
 | Nov 17 | SSA: no phi at a single-predecessor position (fix); step 4o: push/pop round-trips across failure paths; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | `--fs-ssa` rounds cheaper again (identical output); SSA step 4p: copies into %rax; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv185) |
 | Nov 17 | SSA: mul does not read %rdx (fix); step 4q: push/pop across calls and mul by a constant; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv187) |
+| Nov 17 | SSA step 4r: shift by an immediate; step 4s: drop redundant test after and/or/xor; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv188) |
 | Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate), step 4o (push/pop round-trips across failure paths); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
@@ -1293,6 +1294,8 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      (fs_ssa_shimm). On the kernel: 96,843 to 96,232 instructions, copies into %rax 1,185 to 1,072, moves
      8,633 to 8,401. Kernel `--fs-ssa` compile about 2.70 s (under 3 s). Code built without `--fs-ssa` is
      byte-identical; unsafe report unchanged. New test ssa_shift and check fs-ssa-shift-shape.
+     tests/optgate/shimm.cud covers fs_ssa_shimm's three-digit refuse; the `$-` / non-`$` guard is on the
+     allow-list (codegen never emits `mov $-N,%rcx` before a %cl shift).
      Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
    - *Step 4s, redundant test after and/or/xor (2026-11-17).* Re-measured after step 4r: 184 of
      `and ...,%rax; test %rax,%rax` (and/or/xor set ZF/SF/PF and clear CF/OF the same way). Step 4s

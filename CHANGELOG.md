@@ -7,8 +7,13 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4q
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4s
 
+- `93a1258` `--fs-ssa` drops a redundant `test %rax,%rax` after `and`/`or`/`xor` into %rax when those
+  flags were unread (step 4s): kernel instructions 96,232 to 96,055.
+- `4c0b68b` `--fs-ssa` folds `mov $N,%rcx; shr|shl|sar %cl,%rax` into `shr|shl|sar $N,%rax` when that
+  %rcx is read once and N is in 0..63 (step 4r): kernel instructions 96,843 to 96,232, copies into %rax
+  1,185 to 1,072.
 - `f944491` tests: tools/fsfuzz.cud negates one generated condition in eight (`not (...)`) and joins two
   compares with `and`/`or` in another one in eight.
 - `9764d45` `cudc --fs-ssa` (opt-in, implies `--fs-temps`): SSA values for the scratch and argument
