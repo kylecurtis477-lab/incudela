@@ -439,6 +439,16 @@ def seg_extent(g):
             fhi = o.addr + o.size
     return [lo, hi, fhi]
 
+# See tools/fas.cud atomic_write: path.tmp + rename so a killed writer cannot
+# leave a truncated executable (cuditor -o build/fas used to truncate in place).
+def atomic_write(path, data):
+    tmp = path + ".tmp"
+    write_file(tmp, data)
+    r = __syscall(82, tmp, path, 0)
+    if r != 0:
+        __syscall(87, tmp, 0, 0)
+        die("atomic_write rename failed: " + path)
+
 def write_elf(path, segs, entry, hdr_seg):
 # file offsets: each PT_LOAD's first section sits at an offset congruent to its vaddr mod PAGE
     nph = len(segs)
@@ -583,7 +593,7 @@ def write_elf(path, segs, entry, hdr_seg):
     for g in segs:
         ph.append(phdr(g))
     parts[0] = eh + "".join(ph)
-    write_file(path, "".join(parts))
+    atomic_write(path, "".join(parts))
 
 HDRBASE = 0
 # exec images are laid out at 0 and shifted by BIASP pages only as bytes are written: fld itself runs
@@ -833,7 +843,7 @@ def write_pe(path, image_base, entry_sym, subsys):
     dos = "MZ" + "\x00" * 58 + le(0x40, 4)
     hdr = dos + "PE\x00\x00" + coff + opt + "".join(sh)
     hdr += "\x00" * (hdrsz - len(hdr))
-    write_file(path, hdr + "".join(body))
+    atomic_write(path, hdr + "".join(body))
 
 def main():
     global KMODE

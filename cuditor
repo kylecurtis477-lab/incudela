@@ -85,4 +85,4 @@ fi
 src="$1"; out="${src%.cud}"
 [ "$2" = "-o" ] && out="$3"
 "$D/build/cudc" "$src" "$out.s" $CUDC_FLAGS
-"$D/build/fas" -o "$out.o" "$out.s" && "$D/build/fld" --base 0x100000000000 -o "$out" "$out.o" && rm -f "$out.o"
+"$D/build/fas" -o "$out.o" "$out.s" && "$D/build/fld" --base 0x100000000000 -o "$out.new" "$out.o" && mv -f "$out.new" "$out" && rm -f "$out.o"

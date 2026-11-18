@@ -2299,7 +2299,18 @@ def write_elf(path):
     eh = "\x7fELF\x02\x01\x01" + "\x00" * 9 + le(1, 2) + le(62, 2) + le(1, 4) + le(0, 8) + le(0, 8) + le(pos, 8) + le(0, 4) + le(64, 2) + le(0, 2) + le(0, 2) + le(64, 2) + le(nsh, 2) + le(shsi, 2)
     parts[0] = eh
     parts.append("".join(hdrs))
-    write_file(path, "".join(parts))
+    atomic_write(path, "".join(parts))
+
+# Write path via path.tmp + rename(2) so a killed writer never leaves a truncated
+# target (O_TRUNC-then-write). tests/fas compares fas vs gas .o bytes; a truncated
+# .o from a timed-out fas was a false FAIL (inv192 O2: fas build/user/bg.s).
+def atomic_write(path, data):
+    tmp = path + ".tmp"
+    write_file(tmp, data)
+    r = __syscall(82, tmp, path, 0)
+    if r != 0:
+        __syscall(87, tmp, 0, 0)
+        die("atomic_write rename failed: " + path)
 
 def main():
     global SRC

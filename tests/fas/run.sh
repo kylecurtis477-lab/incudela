@@ -7,8 +7,23 @@ FC=build/cudc; T=$(mktemp -d); fail=0
 ./cuditor tools/fas.cud -o build/fas >/dev/null || { echo "FAIL fas-build"; exit 1; }
 chk() { # name file [as-flags]
   local n=$1 f=$2; shift 2
-  as "$@" -o $T/g.o "$f" 2>/dev/null || { echo "SKIP fas $n (as failed)"; return; }
-  if timeout 120 build/fas "$@" -o $T/f.o "$f" >/dev/null 2>&1 && cmp -s $T/g.o $T/f.o; then echo "PASS fas $n"; else echo "FAIL fas $n"; fail=1; fi
+  # Snapshot the source so as and fas always see the same bytes. A concurrent rewrite
+  # of $f (non-atomic write_file elsewhere, or a leftover build) between the two
+  # assemblers was a false FAIL (inv192 O2: fas build/user/bg.s).
+  cp "$f" "$T/in.s" || { echo "FAIL fas $n (cannot read $f)"; fail=1; return; }
+  as "$@" -o $T/g.o "$T/in.s" 2>/dev/null || { echo "SKIP fas $n (as failed)"; return; }
+  rm -f $T/f.o
+  timeout 120 build/fas "$@" -o $T/f.o "$T/in.s" >$T/fas.out 2>$T/fas.err
+  rc=$?
+  if [ $rc -eq 0 ] && [ -f $T/f.o ] && cmp -s $T/g.o $T/f.o; then
+    echo "PASS fas $n"
+  else
+    gb=$(wc -c < $T/g.o 2>/dev/null || echo missing)
+    fb=$(wc -c < $T/f.o 2>/dev/null || echo missing)
+    echo "FAIL fas $n (fas_rc=$rc gas_bytes=$gb fas_bytes=$fb)"
+    if [ -s $T/fas.err ]; then sed -n '1,5p' $T/fas.err; fi
+    fail=1
+  fi
 }
 bad=0
 for t in tests/*.cud tests/runtime/*.cud; do
