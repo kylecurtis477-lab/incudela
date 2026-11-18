@@ -459,6 +459,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    when cnt>1 from a later call. Kernel instructions 95,918 to 95,191.
    Step 4v (2026-11-18, under `--fs-ssa`): `mov $N,%rcx; mul %rcx` / `imul %rcx,%rax` with the multiplicand
    already in %rax becomes `imul $N,%rax` when the high half is unread. Kernel instructions 95,191 to 94,742.
+   Step 4w (2026-11-18, under `--fs-ssa`): `and $N,%rax` whose value only feeds setcc becomes `test $N,%rax`
+   (same flags; %rax kept so a prior copy can die). Kernel instructions 94,742 to 94,731.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1336,6 +1338,13 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      instructions, copies into %rax 1,035 to 979. Kernel `--fs-ssa` compile about 2.73 s (under 3 s).
      Code built without `--fs-ssa` is byte-identical; unsafe report unchanged. New test ssa_mulrax and
      check fs-ssa-mulrax-shape.
+     Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
+   - *Step 4w, and→test before setcc (2026-11-18).* Re-measured after step 4v: 61 of
+     `and $N,%rax; setCC` where the and's value was unread. Step 4w rewrites the and as `test $N,%rax`
+     (same ZF/SF/PF/CF/OF; %rax kept so copy propagation can drop a prior `mov %rS,%rax`). On the kernel:
+     94,742 to 94,731 instructions, copies into %rax 979 to 958. Kernel `--fs-ssa` compile about 2.91 s
+     (under 3 s). Code built without `--fs-ssa` is byte-identical; unsafe report unchanged. New test
+     ssa_andset and check fs-ssa-andset-shape.
      Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every

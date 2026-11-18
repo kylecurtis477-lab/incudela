@@ -212,6 +212,11 @@ def ssa_mulrax(a: u64) -> u64:
 # step 4v: a call's return in %rax multiplied by a constant with an unread high half is imul $N,%rax
     return ssa_mulrax_id(a) * 10
 
+def ssa_andset(a: u64) -> i64:
+# step 4w: and by a constant whose value only feeds a setcc becomes test (same flags, %rax kept)
+    t: i64 = (a & 63) != 0
+    return t + a
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -271,5 +276,7 @@ def main() -> i64:
     show(ssa_aluimm(-3))
     show(ssa_mulrax(5))
     show(ssa_mulrax(7))
+    show(ssa_andset(0))
+    show(ssa_andset(5))
     show(ssa_andtest(2))
     return 0
