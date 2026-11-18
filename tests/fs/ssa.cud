@@ -189,6 +189,11 @@ def ssa_shift(a: u64) -> u64:
 # step 4r: a shift by a constant uses an immediate count (no mov $N,%rcx / sh* %cl,%rax)
     return (a << 3) | (a >> 6) | (a << 12)
 
+def ssa_andtest(a: u64) -> u64:
+# step 4s: and into %rax that only feeds a zero-test keeps the and's flags (no test %rax,%rax)
+    if (a & 1) != 0:
+        return a + 3
+    return a + 9
 
 def ssa_drop(x: i64):
     ssa_loop(x)
@@ -241,4 +246,7 @@ def main() -> i64:
     show(ssa_ppcall(-4, 7))
     show(ssa_shift(5))
     show(ssa_shift(4294967295))
+    show(ssa_andtest(0))
+    show(ssa_andtest(1))
+    show(ssa_andtest(2))
     return 0

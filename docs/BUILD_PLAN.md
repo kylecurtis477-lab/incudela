@@ -450,6 +450,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    %rax 1,185). A fix: `mul` no longer reads %rdx.
    Step 4r (2026-11-17, under `--fs-ssa`): `mov $N,%rcx; sh* %cl,%rax` becomes `sh* $N,%rax` when that %rcx
    is read once and N is in 0..63 (to 96,232, copies into %rax 1,072).
+   Step 4s (2026-11-17, under `--fs-ssa`): `and`/`or`/`xor` into %rax whose flags only feed a following
+   `test %rax,%rax` drops the test (to 96,055).
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1291,6 +1293,12 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      (fs_ssa_shimm). On the kernel: 96,843 to 96,232 instructions, copies into %rax 1,185 to 1,072, moves
      8,633 to 8,401. Kernel `--fs-ssa` compile about 2.70 s (under 3 s). Code built without `--fs-ssa` is
      byte-identical; unsafe report unchanged. New test ssa_shift and check fs-ssa-shift-shape.
+     Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
+   - *Step 4s, redundant test after and/or/xor (2026-11-17).* Re-measured after step 4r: 184 of
+     `and ...,%rax; test %rax,%rax` (and/or/xor set ZF/SF/PF and clear CF/OF the same way). Step 4s
+     deletes the test when the and/or/xor's flags were unread. On the kernel: 96,232 to 96,055
+     instructions. Kernel `--fs-ssa` compile about 2.76 s (under 3 s). Code built without `--fs-ssa` is
+     byte-identical; unsafe report unchanged. New test ssa_andtest and check fs-ssa-andtest-shape.
      Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
