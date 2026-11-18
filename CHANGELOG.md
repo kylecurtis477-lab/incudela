@@ -7,8 +7,11 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ab
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ad
 
+- `cc90ae0` `--fs-ssa` retargets `imul $N,…,%rax` and stores `%rS` straight to MEM (step 4ac) and turns
+  unread-flag `add`/`sub` through `%rax` into `lea` into `%rD` (step 4ad): kernel instructions 92,421 to
+  91,805.
 - `e2e00c6` `--fs-ssa` folds a one-use `xor`/`mov $N,%rax` into `movq $N,MEM` or `mov $N,%rD` (step 4aa)
   and retargets a one-use `lea`/`mov MEM,%rax` copy into `%rD` (step 4ab): kernel instructions 93,068 to
   92,421; setCC chains left for a later flag-safe stop rule.
