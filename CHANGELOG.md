@@ -7,8 +7,16 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4u
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4w
 
+- `b338b9b` fas/fld write `path.tmp` then `rename(2)` onto `path`; cuditor `-o` links to `out.new` then
+  `mv -f`; tests/fas snapshots each `.s` before as vs fas (inv192 O2 one-off `fas build/user/bg.s` FAIL).
+- `2fb9a99` tests: `fs-ssa-mul-shape` accepts two-op or three-op `imul $N` (no `mul %rcx`) after step 4v.
+- `84f8499` `--fs-ssa` rewrites `and $N,%rax` whose value only feeds setcc as `test $N,%rax` (step 4w):
+  kernel instructions 94,742 to 94,731, copies into %rax 979 to 958.
+- `53b86ed` `--fs-ssa` folds `mov $N,%rcx; mul %rcx` / `imul %rcx,%rax` with the multiplicand already in
+  %rax into `imul $N,%rax` when the high half is unread (step 4v): kernel instructions 95,191 to 94,742,
+  copies into %rax 1,035 to 979.
 - `f061ac1` `--fs-ssa` folds `mov $N,%rcx; alu/cmp %rcx,%rax` when a later call only falsely counts as
   reading %rcx (step 4u, same `fs_ssa_rcx_lo` as 4t): kernel instructions 95,918 to 95,191, copies into
   %rax 1,056 to 1,035.
