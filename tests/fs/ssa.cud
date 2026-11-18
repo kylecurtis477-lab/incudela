@@ -199,6 +199,12 @@ def ssa_andtest(a: u64) -> u64:
         return a + 3
     return a + 9
 
+def ssa_aluimm(a: i64) -> i64:
+# step 4u: add/and/or by a constant after a call still folds to an immediate op (rcx_lo)
+    x: i64 = a + 1
+    y: i64 = (a & 255) | 128
+    return ssa_imm(x) + ssa_imm(y)
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -254,5 +260,7 @@ def main() -> i64:
     show(ssa_sar(64))
     show(ssa_andtest(0))
     show(ssa_andtest(1))
+    show(ssa_aluimm(5))
+    show(ssa_aluimm(-3))
     show(ssa_andtest(2))
     return 0

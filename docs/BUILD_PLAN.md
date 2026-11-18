@@ -455,6 +455,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    Step 4t (2026-11-17, under `--fs-ssa`): remaining `mov $N,%rcx; sar|shr|shl %cl,%rax` fold when a later
    call only falsely counts as reading %rcx (`fs_ssa_rcx_lo`); `mov %rS,%rax; sub $N,%rax` becomes
    `lea -N(%rS),%rax` when the flags are unread (N not the int32 min). Kernel instructions 96,055 to 95,918.
+   Step 4u (2026-11-17, under `--fs-ssa`): the same rcx_lo check folds `mov $N,%rcx; alu/cmp %rcx,%rax`
+   when cnt>1 from a later call. Kernel instructions 95,918 to 95,191.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1316,6 +1318,13 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      `--fs-ssa` compile about 2.57 s (under 3 s). Code built without `--fs-ssa` is byte-identical; unsafe
      report unchanged. New test ssa_sar and check fs-ssa-sar-shape; fs-ssa-rax-shape requires a negative
      lea. The rcx-read branch of `fs_ssa_rcx_lo` is on the allow-list (defensive).
+     Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
+   - *Step 4u, alu imm via rcx_lo (2026-11-17).* Re-measured after step 4t: 187 of
+     `mov $N,%rcx; alu/cmp %rcx,%rax` still blocked by false %rcx use counts from later calls. Step 4u
+     reuses `fs_ssa_rcx_lo` on the alu/cmp path (cnt==1 or text scan). On the kernel: 95,918 to 95,191
+     instructions, copies into %rax 1,056 to 1,035. Kernel `--fs-ssa` compile about 2.56 s (under 3 s).
+     Code built without `--fs-ssa` is byte-identical; unsafe report unchanged. New test ssa_aluimm and
+     check fs-ssa-aluimm-shape. The rcx-read allow-list entry from step 4t is removed (now covered).
      Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every

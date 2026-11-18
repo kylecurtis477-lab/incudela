@@ -22157,7 +22157,9 @@ def fs_ssa_fold(n, ln, vi, cnt):
             if starts(a, "    mov $") and ends(a, ",%rcx\n"):
                 imm = substr(a, 8, len(a) - 6)
                 did = 0
-                if cnt[p * 16 + 1] == 1 and fs_ssa_imm(imm):
+                # step 4u: cnt can be >1 when a later call is treated as reading %rcx; fs_ssa_rcx_lo
+                # reads the text after the alu/cmp (same idea as the shift path in step 4t)
+                if fs_ssa_imm(imm) and (cnt[p * 16 + 1] == 1 or fs_ssa_rcx_lo(p + 1, n, ln)):
                     sp = find_char(substr(b, 4, len(b)), 32)
                     if sp >= 0 and str_eq(substr(b, 4 + sp, len(b)), " %rcx,%rax\n"):
                         mn = substr(b, 4, 4 + sp)
