@@ -205,6 +205,13 @@ def ssa_aluimm(a: i64) -> i64:
     y: i64 = (a & 255) | 128
     return ssa_imm(x) + ssa_imm(y)
 
+def ssa_mulrax_id(a: u64) -> u64:
+    return a
+
+def ssa_mulrax(a: u64) -> u64:
+# step 4v: a call's return in %rax multiplied by a constant with an unread high half is imul $N,%rax
+    return ssa_mulrax_id(a) * 10
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -262,5 +269,7 @@ def main() -> i64:
     show(ssa_andtest(1))
     show(ssa_aluimm(5))
     show(ssa_aluimm(-3))
+    show(ssa_mulrax(5))
+    show(ssa_mulrax(7))
     show(ssa_andtest(2))
     return 0

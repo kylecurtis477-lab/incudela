@@ -457,6 +457,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    `lea -N(%rS),%rax` when the flags are unread (N not the int32 min). Kernel instructions 96,055 to 95,918.
    Step 4u (2026-11-17, under `--fs-ssa`): the same rcx_lo check folds `mov $N,%rcx; alu/cmp %rcx,%rax`
    when cnt>1 from a later call. Kernel instructions 95,918 to 95,191.
+   Step 4v (2026-11-18, under `--fs-ssa`): `mov $N,%rcx; mul %rcx` / `imul %rcx,%rax` with the multiplicand
+   already in %rax becomes `imul $N,%rax` when the high half is unread. Kernel instructions 95,191 to 94,742.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -545,6 +547,7 @@ least.
 | Nov 17 | SSA: mul does not read %rdx (fix); step 4q: push/pop across calls and mul by a constant; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv187) |
 | Nov 17 | SSA step 4r: shift by an immediate; step 4s: drop redundant test after and/or/xor; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv188) |
 | Nov 17 | SSA step 4t: sar imm via rcx_lo and sub→lea; step 4u: alu imm via rcx_lo; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv190) |
+| Nov 18 | SSA step 4v: mul already in %rax; step 4w: and→test before setcc; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv191) |
 | Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate), step 4o (push/pop round-trips across failure paths); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
@@ -1325,6 +1328,14 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      instructions, copies into %rax 1,056 to 1,035. Kernel `--fs-ssa` compile about 2.56 s (under 3 s).
      Code built without `--fs-ssa` is byte-identical; unsafe report unchanged. New test ssa_aluimm and
      check fs-ssa-aluimm-shape. The rcx-read allow-list entry from step 4t is removed (now covered).
+     Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
+   - *Step 4v, mul already in %rax (2026-11-18).* Re-measured after step 4u: 267 of
+     `mov $N,%rcx; mul %rcx` with the multiplicand already in %rax (and 40 of `imul %rcx,%rax`).
+     Step 4v folds those to `imul $N,%rax` when N fits a 32-bit immediate and the mul's high half is
+     unread (`fs_ssa_mul_lo`), reusing rcx_lo for false %rcx use counts. On the kernel: 95,191 to 94,742
+     instructions, copies into %rax 1,035 to 979. Kernel `--fs-ssa` compile about 2.73 s (under 3 s).
+     Code built without `--fs-ssa` is byte-identical; unsafe report unchanged. New test ssa_mulrax and
+     check fs-ssa-mulrax-shape.
      Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every

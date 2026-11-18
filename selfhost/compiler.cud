@@ -22143,6 +22143,8 @@ def fs_ssa_fold(n, ln, vi, cnt):
 # The rewrites, each on consecutive entries (so no label sits inside), all in reached code:
 #   mov $N,%rcx / OP %rcx,%rax  ->  OP $N,%rax   (OP add sub and or xor cmp; that %rcx value read once)
 #   mov $N,%rcx / sh* %cl,%rax  ->  sh* $N,%rax  (step 4r; sh* is shr shl sar; N in 0..63; that %rcx once)
+#   mov $N,%rcx / mul %rcx      ->  imul $N,%rax (step 4v; multiplicand already in %rax; high half unread)
+#   mov $N,%rcx / imul %rcx,%rax -> imul $N,%rax (step 4v; that %rcx once)
 #   OP ...,%rax / test %rax,%rax  ->  OP ...,%rax  (step 4s; OP and/or/xor; the OP's flags match the test's and
 #   were unread, so the test is redundant)
 #   xor %ecx,%ecx / cmp %rcx,%rax  ->  test %rax,%rax   (same flags for every jcc and setcc)
@@ -22174,6 +22176,17 @@ def fs_ssa_fold(n, ln, vi, cnt):
                     if str_eq(mn, "shr") or str_eq(mn, "shl") or str_eq(mn, "sar"):
                         out[ln[p]] = ""
                         out[ln[p + 1]] = c4("    ", mn, " ", concat(imm, ",%rax\n"))
+                        nf += 1
+                        did = 1
+                if not did and fs_ssa_imm(imm) and (cnt[p * 16 + 1] == 1 or fs_ssa_rcx_lo(p + 1, n, ln)):
+                # step 4v: multiplicand already in %rax; unread high half -> two-operand imul $N,%rax
+                    if str_eq(b, "    mul %rcx\n") and fs_ssa_mul_lo(p + 1, n, ln):
+                        out[ln[p]] = ""
+                        out[ln[p + 1]] = c4("    imul ", imm, ",%rax\n", "")
+                        nf += 1
+                    elif str_eq(b, "    imul %rcx,%rax\n"):
+                        out[ln[p]] = ""
+                        out[ln[p + 1]] = c4("    imul ", imm, ",%rax\n", "")
                         nf += 1
             elif str_eq(b, "    test %rax,%rax\n") and cnt[p * 16 + 15] == 0 and ends(a, ",%rax\n"):
             # step 4s: and/or/xor into %rax already set ZF/SF/PF (and cleared CF/OF) for that result
