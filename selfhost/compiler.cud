@@ -22196,6 +22196,11 @@ def fs_ssa_fold(n, ln, vi, cnt):
 #   Kernel use-counts on these values are inflated by phis, so the fold does not trust cnt here)
 #   mov %rS,D(%rbp) / mov D(%rbp),%rS  ->  mov %rS,D(%rbp)   (step 4y: reload is redundant; store kept)
 #   add $0,%rsp                       ->  (dropped)          (step 4z: no-op after calls; next line unread flags)
+#   xor %eax,%eax / mov %rax,MEM      ->  movq $0,MEM        (step 4aa: zero store; that %rax once; sized for fas)
+#   mov $N,%rax / mov %rax,MEM        ->  movq $N,MEM        (step 4aa; N a fit imm; that %rax once; sized for fas)
+#   mov $N,%rax / mov %rax,%rD        ->  mov $N,%rD         (step 4aa; D tracked, not %rax; that %rax once)
+#   lea ADDR,%rax / mov %rax,%rD      ->  lea ADDR,%rD       (step 4ab; D tracked, not %rax; that %rax once)
+#   mov MEM,%rax / mov %rax,%rD       ->  mov MEM,%rD        (step 4ab; MEM not a reg; D tracked; that %rax once)
     nf = 0
     p = 0
     while p + 1 < n:
@@ -22318,6 +22323,38 @@ def fs_ssa_fold(n, ln, vi, cnt):
                     if find(FS_SSR, 14, rs) >= 0 and str_eq(b, c3("    mov ", slot, c3(",", rs, "\n"))):
                         out[ln[p + 1]] = ""
                         nf += 1
+            elif (str_eq(a, "    xor %eax,%eax\n") or str_eq(a, "    xor %rax,%rax\n")) and starts(b, "    mov %rax,") and not starts(b, "    mov %rax,%") and cnt[p * 16] == 1:
+            # step 4aa: store of zero; the xor's %rax is read only by this store (movq so fas knows the size)
+                out[ln[p]] = ""
+                out[ln[p + 1]] = concat("    movq $0,", substr(b, 13, len(b)))
+                nf += 1
+            elif starts(a, "    mov $") and ends(a, ",%rax\n") and cnt[p * 16] == 1 and fs_ssa_imm(substr(a, 8, len(a) - 6)):
+            # step 4aa: store or copy of a fit immediate through %rax
+                imm = substr(a, 8, len(a) - 6)
+                if starts(b, "    mov %rax,") and not starts(b, "    mov %rax,%"):
+                    out[ln[p]] = ""
+                    out[ln[p + 1]] = c4("    movq ", imm, ",", substr(b, 13, len(b)))
+                    nf += 1
+                elif starts(b, "    mov %rax,%") and ends(b, "\n"):
+                    rd = substr(b, 13, len(b) - 1)
+                    if find(FS_SSR, 14, rd) > 0:
+                        out[ln[p]] = ""
+                        out[ln[p + 1]] = c4("    mov ", imm, ",", concat(rd, "\n"))
+                        nf += 1
+            elif starts(a, "    lea ") and ends(a, ",%rax\n") and starts(b, "    mov %rax,%") and ends(b, "\n") and cnt[p * 16] == 1:
+            # step 4ab: lea into the register that was going to receive the copy
+                rd = substr(b, 13, len(b) - 1)
+                if find(FS_SSR, 14, rd) > 0:
+                    out[ln[p]] = c3(substr(a, 0, len(a) - 6), ",", concat(rd, "\n"))
+                    out[ln[p + 1]] = ""
+                    nf += 1
+            elif starts(a, "    mov ") and ends(a, ",%rax\n") and not starts(a, "    mov %") and not starts(a, "    mov $") and starts(b, "    mov %rax,%") and ends(b, "\n") and cnt[p * 16] == 1:
+            # step 4ab: load straight into the destination register
+                rd = substr(b, 13, len(b) - 1)
+                if find(FS_SSR, 14, rd) > 0:
+                    out[ln[p]] = c3(substr(a, 0, len(a) - 6), ",", concat(rd, "\n"))
+                    out[ln[p + 1]] = ""
+                    nf += 1
             elif starts(a, "    mov %r") and ends(a, ",%rax\n") and find(FS_SSR, 14, substr(a, 8, len(a) - 6)) > 0:
             # a copy into %rax that the next line (or the one after) reads and overwrites
                 q = fs_ssa_raxc(p, n, ln, cnt, substr(a, 8, len(a) - 6), b)

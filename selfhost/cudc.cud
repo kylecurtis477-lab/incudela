@@ -22130,44 +22130,231 @@ def fs_ssa_imm(t):
         return v <= 2147483648
     return v <= 2147483647
 
+def fs_ssa_shimm(t):
+# t is `$N` with N a decimal shift count in 0..63 (what `sh* $N,%rax` encodes)
+    if starts(t, "$-") or not starts(t, "$"):
+        return 0
+    d = substr(t, 1, len(t))
+    if len(d) == 0 or len(d) > 2 or fs_lv_num(d) < 0:
+        return 0
+    return fs_lv_num(d) <= 63
+
+def fs_ssa_reg_rd(t, r64, r32):
+# 1 when line t reads register r64/r32 before defining it (fold safety for the 0/1 in that reg)
+    if len(t) < 5 or not starts(t, "    "):
+        return 0
+    if starts(t, "    j") or starts(t, "    set") or starts(t, "    ret") or starts(t, "    leave") or starts(t, "    ud2") or starts(t, "    cld") or starts(t, "    pause") or starts(t, "    mfence") or starts(t, "    cq"):
+        return 0
+    if not contains(t, r64) and not contains(t, r32):
+        return 0
+    if starts(t, "    pop ") and (ends(t, concat(r64, "\n")) or ends(t, concat(r32, "\n"))):
+        return 0
+    if starts(t, "    xor ") and (str_eq(t, c3("    xor ", r32, c3(",", r32, "\n"))) or str_eq(t, c3("    xor ", r64, c3(",", r64, "\n")))):
+        return 0
+    if ends(t, concat(",", concat(r64, "\n"))) or ends(t, concat(",", concat(r32, "\n"))):
+        body = substr(t, 4, len(t) - 1 - len(r64) - 1)
+        if ends(t, concat(",", concat(r32, "\n"))):
+            body = substr(t, 4, len(t) - 1 - len(r32) - 1)
+        if contains(body, r64) or contains(body, r32):
+            return 1
+        return 0
+    return 1
+
+def fs_ssa_jcc_tgt(n, ln, lab):
+# returns the position after the label (first non-empty), or -1 if missing / flags consumer at target
+    want = concat(lab, ":\n")
+    q = 0
+    while q < n:
+        if str_eq(out[ln[q]], want):
+            q += 1
+            while q < n and (len(out[ln[q]]) == 0 or (starts(out[ln[q]], ".L") and ends(out[ln[q]], ":\n"))):
+                q += 1
+            if q >= n:
+                return q
+            t = out[ln[q]]
+            if starts(t, "    set"):
+                return -1
+            if starts(t, "    j") and not starts(t, "    jmp"):
+                return -1
+            return q
+        q += 1
+    return -1
+
 def fs_ssa_fold(n, ln, vi, cnt):
 # The rewrites, each on consecutive entries (so no label sits inside), all in reached code:
 #   mov $N,%rcx / OP %rcx,%rax  ->  OP $N,%rax   (OP add sub and or xor cmp; that %rcx value read once)
+#   mov $N,%rcx / sh* %cl,%rax  ->  sh* $N,%rax  (step 4r; sh* is shr shl sar; N in 0..63; that %rcx once)
+#   mov $N,%rcx / mul %rcx      ->  imul $N,%rax (step 4v; multiplicand already in %rax; high half unread)
+#   mov $N,%rcx / imul %rcx,%rax -> imul $N,%rax (step 4v; that %rcx once)
+#   and $N,%rax / setCC         ->  test $N,%rax (step 4w; and's value unread; same flags for setCC)
+#   OP ...,%rax / test %rax,%rax  ->  OP ...,%rax  (step 4s; OP and/or/xor; the OP's flags match the test's and
+#   were unread, so the test is redundant)
 #   xor %ecx,%ecx / cmp %rcx,%rax  ->  test %rax,%rax   (same flags for every jcc and setcc)
-#   setCC %al / movzbl %al,%eax / test %rax,%rax / je L (jne L)  ->  jNCC L (jCC L)   (both %rax values and the
-#   test's flags read once: by the next line of the pattern)
+#   setCC %al / movzbl %al,%r32 / test %r64,%r64 [/ dup] / je L (jne L)  ->  jNCC L (jCC L)
+#   (step 4x: any tracked register; optional duplicate test dropped; L must not begin with setCC or jCC —
+#   short-circuit and/or keeps setne at L needing the test's ZF; neither edge's first insn may read the 0/1.
+#   Kernel use-counts on these values are inflated by phis, so the fold does not trust cnt here)
+#   mov %rS,D(%rbp) / mov D(%rbp),%rS  ->  mov %rS,D(%rbp)   (step 4y: reload is redundant; store kept)
+#   add $0,%rsp                       ->  (dropped)          (step 4z: no-op after calls; next line unread flags)
+#   xor %eax,%eax / mov %rax,MEM      ->  movq $0,MEM        (step 4aa: zero store; that %rax once; sized for fas)
+#   mov $N,%rax / mov %rax,MEM        ->  movq $N,MEM        (step 4aa; N a fit imm; that %rax once; sized for fas)
+#   mov $N,%rax / mov %rax,%rD        ->  mov $N,%rD         (step 4aa; D tracked, not %rax; that %rax once)
+#   lea ADDR,%rax / mov %rax,%rD      ->  lea ADDR,%rD       (step 4ab; D tracked, not %rax; that %rax once)
+#   mov MEM,%rax / mov %rax,%rD       ->  mov MEM,%rD        (step 4ab; MEM not a reg; D tracked; that %rax once)
     nf = 0
     p = 0
     while p + 1 < n:
         a = out[ln[p]]
         b = out[ln[p + 1]]
-        if vi[p * 16] >= 0 and starts(b, "    ") and starts(a, "    "):
-            if starts(a, "    mov $") and ends(a, ",%rcx\n") and cnt[p * 16 + 1] == 1 and fs_ssa_imm(substr(a, 8, len(a) - 6)):
-                sp = find_char(substr(b, 4, len(b)), 32)
-                if sp >= 0 and str_eq(substr(b, 4 + sp, len(b)), " %rcx,%rax\n"):
-                    mn = substr(b, 4, 4 + sp)
-                    if find(FS_SSALU, 5, mn) >= 0 or str_eq(mn, "cmp"):
+        if vi[p * 16] >= 0 and starts(a, "    ") and str_eq(a, "    add $0,%rsp\n"):
+        # step 4z: no-op; next may be a label (starts(b) would skip). Refuse only a setCC/jCC right after.
+            q = p + 1
+            while q < n and (len(out[ln[q]]) == 0 or (starts(out[ln[q]], ".L") and ends(out[ln[q]], ":\n"))):
+                q += 1
+            ok = 1
+            if q < n:
+                t = out[ln[q]]
+                if starts(t, "    set"):
+                    ok = 0
+                if starts(t, "    j") and not starts(t, "    jmp"):
+                    ok = 0
+            if ok:
+                out[ln[p]] = ""
+                nf += 1
+        elif vi[p * 16] >= 0 and starts(b, "    ") and starts(a, "    "):
+            if starts(a, "    mov $") and ends(a, ",%rcx\n"):
+                imm = substr(a, 8, len(a) - 6)
+                did = 0
+                # step 4u: cnt can be >1 when a later call is treated as reading %rcx; fs_ssa_rcx_lo
+                # reads the text after the alu/cmp (same idea as the shift path in step 4t)
+                if fs_ssa_imm(imm) and (cnt[p * 16 + 1] == 1 or fs_ssa_rcx_lo(p + 1, n, ln)):
+                    sp = find_char(substr(b, 4, len(b)), 32)
+                    if sp >= 0 and str_eq(substr(b, 4 + sp, len(b)), " %rcx,%rax\n"):
+                        mn = substr(b, 4, 4 + sp)
+                        if find(FS_SSALU, 5, mn) >= 0 or str_eq(mn, "cmp"):
+                            out[ln[p]] = ""
+                            out[ln[p + 1]] = c4("    ", mn, " ", concat(imm, ",%rax\n"))
+                            nf += 1
+                            did = 1
+                if not did and ends(b, " %cl,%rax\n") and fs_ssa_shimm(imm) and fs_ssa_rcx_lo(p + 1, n, ln):
+                # step 4r/4t: shr/shl/sar; cnt can be >1 when a later call is treated as reading %rcx
+                    mn = substr(b, 4, len(b) - 10)
+                    if str_eq(mn, "shr") or str_eq(mn, "shl") or str_eq(mn, "sar"):
                         out[ln[p]] = ""
-                        out[ln[p + 1]] = c4("    ", mn, " ", concat(substr(a, 8, len(a) - 6), ",%rax\n"))
+                        out[ln[p + 1]] = c4("    ", mn, " ", concat(imm, ",%rax\n"))
+                        nf += 1
+                        did = 1
+                if not did and fs_ssa_imm(imm) and (cnt[p * 16 + 1] == 1 or fs_ssa_rcx_lo(p + 1, n, ln)):
+                # step 4v: multiplicand already in %rax; unread high half -> two-operand imul $N,%rax
+                    if str_eq(b, "    mul %rcx\n") and fs_ssa_mul_lo(p + 1, n, ln):
+                        out[ln[p]] = ""
+                        out[ln[p + 1]] = c4("    imul ", imm, ",%rax\n", "")
+                        nf += 1
+                    elif str_eq(b, "    imul %rcx,%rax\n"):
+                        out[ln[p]] = ""
+                        out[ln[p + 1]] = c4("    imul ", imm, ",%rax\n", "")
+                        nf += 1
+            elif starts(a, "    and $") and ends(a, ",%rax\n") and starts(b, "    set") and cnt[p * 16] == 0:
+            # step 4w: the and's value is unread (only its flags feed setcc); test sets the same flags and keeps %rax
+                imm = substr(a, 8, len(a) - 6)
+                if fs_ssa_imm(imm):
+                    out[ln[p]] = c4("    test ", imm, ",%rax\n", "")
+                    nf += 1
+            elif str_eq(b, "    test %rax,%rax\n") and cnt[p * 16 + 15] == 0 and ends(a, ",%rax\n"):
+            # step 4s: and/or/xor into %rax already set ZF/SF/PF (and cleared CF/OF) for that result
+                sp = find_char(substr(a, 4, len(a)), 32)
+                if sp >= 0:
+                    mn = substr(a, 4, 4 + sp)
+                    if str_eq(mn, "and") or str_eq(mn, "or") or str_eq(mn, "xor"):
+                        out[ln[p + 1]] = ""
                         nf += 1
             elif str_eq(a, "    xor %ecx,%ecx\n") and str_eq(b, "    cmp %rcx,%rax\n") and cnt[p * 16 + 1] == 1:
                 out[ln[p]] = ""
                 out[ln[p + 1]] = "    test %rax,%rax\n"
                 nf += 1
-            elif starts(a, "    set") and ends(a, " %al\n") and p + 3 < n and cnt[p * 16] == 1 and cnt[(p + 1) * 16] == 1 and cnt[(p + 2) * 16 + 15] == 1:
+            elif starts(a, "    set") and ends(a, " %al\n") and p + 3 < n and starts(b, "    movzbl %al,%") and ends(b, "\n"):
+            # step 4x: setCC/movzbl/test[/dup test]/je|jne -> jCC when L does not consume flags and
+            # neither edge's first insn reads the 0/1 (kernel use-counts are inflated by phis)
                 cc = find(FS_SSCC, 10, substr(a, 7, len(a) - 5))
+                r32 = substr(b, 15, len(b) - 1)
+                ri = find(FS_SSR32, 14, r32)
                 c = out[ln[p + 2]]
                 d = out[ln[p + 3]]
-                if cc >= 0 and str_eq(b, "    movzbl %al,%eax\n") and str_eq(c, "    test %rax,%rax\n") and (starts(d, "    je .LF") or starts(d, "    jne .LF")):
-                    if starts(d, "    je "):
-                        out[ln[p + 3]] = c4("    j", FS_SSCCN[cc], substr(d, 6, len(d)), "")
-                    else:
-                        out[ln[p + 3]] = c4("    j", FS_SSCC[cc], substr(d, 7, len(d)), "")
+                extra = 0
+                if cc >= 0 and ri >= 0:
+                    r64 = FS_SSR[ri]
+                    tst = c3("    test ", r64, c3(",", r64, "\n"))
+                    if str_eq(c, tst) and str_eq(d, tst) and p + 4 < n:
+                        d = out[ln[p + 4]]
+                        extra = 1
+                    if str_eq(c, tst) and (starts(d, "    je .LF") or starts(d, "    jne .LF")):
+                        if starts(d, "    je "):
+                            lab = substr(d, 7, len(d) - 1)
+                        else:
+                            lab = substr(d, 8, len(d) - 1)
+                        tpos = fs_ssa_jcc_tgt(n, ln, lab)
+                        jpos = p + 3 + extra
+                        fpos = jpos + 1
+                        while fpos < n and len(out[ln[fpos]]) == 0:
+                            fpos += 1
+                        if tpos >= 0 and (fpos >= n or not fs_ssa_reg_rd(out[ln[fpos]], r64, r32)) and (tpos >= n or not fs_ssa_reg_rd(out[ln[tpos]], r64, r32)):
+                            if starts(d, "    je "):
+                                out[ln[jpos]] = c4("    j", FS_SSCCN[cc], substr(d, 6, len(d)), "")
+                            else:
+                                out[ln[jpos]] = c4("    j", FS_SSCC[cc], substr(d, 7, len(d)), "")
+                            out[ln[p]] = ""
+                            out[ln[p + 1]] = ""
+                            out[ln[p + 2]] = ""
+                            if extra:
+                                out[ln[p + 3]] = ""
+                            nf += 1
+                            p += 3 + extra
+                        elif extra:
+                        # duplicate test is always redundant; drop it even when the jCC fold is refused
+                            out[ln[p + 3]] = ""
+                            nf += 1
+                            p += 3
+            elif starts(a, "    mov %") and ends(a, "(%rbp)\n") and starts(b, "    mov ") and ends(b, "\n"):
+            # step 4y: store then reload of the same register from the same slot -> drop the reload
+                sp = find_char(substr(a, 8, len(a)), 44)
+                if sp >= 0:
+                    rs = substr(a, 8, 8 + sp)
+                    slot = substr(a, 8 + sp + 1, len(a) - 1)
+                    if find(FS_SSR, 14, rs) >= 0 and str_eq(b, c3("    mov ", slot, c3(",", rs, "\n"))):
+                        out[ln[p + 1]] = ""
+                        nf += 1
+            elif (str_eq(a, "    xor %eax,%eax\n") or str_eq(a, "    xor %rax,%rax\n")) and starts(b, "    mov %rax,") and not starts(b, "    mov %rax,%") and cnt[p * 16] == 1:
+            # step 4aa: store of zero; the xor's %rax is read only by this store (movq so fas knows the size)
+                out[ln[p]] = ""
+                out[ln[p + 1]] = concat("    movq $0,", substr(b, 13, len(b)))
+                nf += 1
+            elif starts(a, "    mov $") and ends(a, ",%rax\n") and cnt[p * 16] == 1 and fs_ssa_imm(substr(a, 8, len(a) - 6)):
+            # step 4aa: store or copy of a fit immediate through %rax
+                imm = substr(a, 8, len(a) - 6)
+                if starts(b, "    mov %rax,") and not starts(b, "    mov %rax,%"):
                     out[ln[p]] = ""
-                    out[ln[p + 1]] = ""
-                    out[ln[p + 2]] = ""
+                    out[ln[p + 1]] = c4("    movq ", imm, ",", substr(b, 13, len(b)))
                     nf += 1
-                    p += 3
+                elif starts(b, "    mov %rax,%") and ends(b, "\n"):
+                    rd = substr(b, 13, len(b) - 1)
+                    if find(FS_SSR, 14, rd) > 0:
+                        out[ln[p]] = ""
+                        out[ln[p + 1]] = c4("    mov ", imm, ",", concat(rd, "\n"))
+                        nf += 1
+            elif starts(a, "    lea ") and ends(a, ",%rax\n") and starts(b, "    mov %rax,%") and ends(b, "\n") and cnt[p * 16] == 1:
+            # step 4ab: lea into the register that was going to receive the copy
+                rd = substr(b, 13, len(b) - 1)
+                if find(FS_SSR, 14, rd) > 0:
+                    out[ln[p]] = c3(substr(a, 0, len(a) - 6), ",", concat(rd, "\n"))
+                    out[ln[p + 1]] = ""
+                    nf += 1
+            elif starts(a, "    mov ") and ends(a, ",%rax\n") and not starts(a, "    mov %") and not starts(a, "    mov $") and starts(b, "    mov %rax,%") and ends(b, "\n") and cnt[p * 16] == 1:
+            # step 4ab: load straight into the destination register
+                rd = substr(b, 13, len(b) - 1)
+                if find(FS_SSR, 14, rd) > 0:
+                    out[ln[p]] = c3(substr(a, 0, len(a) - 6), ",", concat(rd, "\n"))
+                    out[ln[p + 1]] = ""
+                    nf += 1
             elif starts(a, "    mov %r") and ends(a, ",%rax\n") and find(FS_SSR, 14, substr(a, 8, len(a) - 6)) > 0:
             # a copy into %rax that the next line (or the one after) reads and overwrites
                 q = fs_ssa_raxc(p, n, ln, cnt, substr(a, 8, len(a) - 6), b)
@@ -22180,6 +22367,7 @@ def fs_ssa_fold(n, ln, vi, cnt):
 def fs_ssa_raxc(p, n, ln, cnt, s, b):
 # Step 4p: `mov %rS,%rax` at position p (S a tracked register other than %rax) followed by
 #   add $N,%rax           ->  lea N(%rS),%rax          (the add's flags read nowhere)
+#   sub $N,%rax           ->  lea -N(%rS),%rax         (step 4t; same flag rule; N not the min int32)
 #   add %rT,%rax          ->  lea (%rS,%rT),%rax       (the same; T not %rax)
 #   mov $N,%rcx / imul %rcx,%rax  ->  imul $N,%rS,%rax   (that %rcx value read once: by the imul)
 #   mov $N,%rcx / mul %rcx        ->  imul $N,%rS,%rax   (same low half; that %rcx once, %rdx unread)
@@ -22190,6 +22378,13 @@ def fs_ssa_raxc(p, n, ln, cnt, s, b):
         out[ln[p]] = ""
         out[ln[p + 1]] = c4("    lea ", substr(b, 9, len(b) - 6), "(", concat(s, "),%rax\n"))
         return 2
+    if starts(b, "    sub $") and ends(b, ",%rax\n") and cnt[(p + 1) * 16 + 15] == 0:
+    # step 4t: sub $N,%rax with unread flags -> lea -N(%rS),%rax (skip the int32 min: unary minus is not a digit)
+        imm = substr(b, 8, len(b) - 6)
+        if fs_ssa_imm(imm) and not str_eq(imm, "$-2147483648"):
+            out[ln[p]] = ""
+            out[ln[p + 1]] = c4("    lea -", substr(imm, 1, len(imm)), "(", concat(s, "),%rax\n"))
+            return 2
     if starts(b, "    add %r") and ends(b, ",%rax\n") and cnt[(p + 1) * 16 + 15] == 0:
         t = substr(b, 8, len(b) - 6)
         if find(FS_SSR, 14, t) > 0:
@@ -22230,6 +22425,24 @@ def fs_ssa_mul_lo(p, n, ln):
             return 0
         q += 1
     return 1
+
+
+def fs_ssa_rcx_lo(p, n, ln):
+# 1 if no instruction after position p (a sh* %cl,%rax that already consumed that %rcx) reads %rcx/%cl
+# before writing %rcx (a later call may be counted as a use of %rcx in the SSA table even when the text
+# does not name it)
+    q = p + 1
+    while q < n:
+        l = out[ln[q]]
+        if starts(l, "    ret"):
+            return 1
+        if ends(l, ",%rcx\n") or ends(l, ",%ecx\n") or str_eq(l, "    xor %ecx,%ecx\n") or str_eq(l, "    xor %rcx,%rcx\n"):
+            return 1
+        if contains(l, "%rcx") or contains(l, "%ecx") or contains(l, "%cl") or contains(l, "%ch") or contains(l, "%cx"):
+            return 0
+        q += 1
+    return 1
+
 
 def fs_ssa_dreg(a):
 # a (one instruction line) only writes one tracked register, from an immediate or another tracked register:
