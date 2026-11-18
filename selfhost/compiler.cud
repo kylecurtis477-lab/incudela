@@ -22154,10 +22154,10 @@ def fs_ssa_fold(n, ln, vi, cnt):
         a = out[ln[p]]
         b = out[ln[p + 1]]
         if vi[p * 16] >= 0 and starts(b, "    ") and starts(a, "    "):
-            if starts(a, "    mov $") and ends(a, ",%rcx\n") and cnt[p * 16 + 1] == 1:
+            if starts(a, "    mov $") and ends(a, ",%rcx\n"):
                 imm = substr(a, 8, len(a) - 6)
                 did = 0
-                if fs_ssa_imm(imm):
+                if cnt[p * 16 + 1] == 1 and fs_ssa_imm(imm):
                     sp = find_char(substr(b, 4, len(b)), 32)
                     if sp >= 0 and str_eq(substr(b, 4 + sp, len(b)), " %rcx,%rax\n"):
                         mn = substr(b, 4, 4 + sp)
@@ -22166,8 +22166,8 @@ def fs_ssa_fold(n, ln, vi, cnt):
                             out[ln[p + 1]] = c4("    ", mn, " ", concat(imm, ",%rax\n"))
                             nf += 1
                             did = 1
-                if not did and starts(b, "    sh") and ends(b, " %cl,%rax\n") and fs_ssa_shimm(imm):
-                # step 4r: the shift reads only %cl of that %rcx; an immediate count needs no %rcx
+                if not did and ends(b, " %cl,%rax\n") and fs_ssa_shimm(imm) and fs_ssa_rcx_lo(p + 1, n, ln):
+                # step 4r/4t: shr/shl/sar; cnt can be >1 when a later call is treated as reading %rcx
                     mn = substr(b, 4, len(b) - 10)
                     if str_eq(mn, "shr") or str_eq(mn, "shl") or str_eq(mn, "sar"):
                         out[ln[p]] = ""
@@ -22211,6 +22211,7 @@ def fs_ssa_fold(n, ln, vi, cnt):
 def fs_ssa_raxc(p, n, ln, cnt, s, b):
 # Step 4p: `mov %rS,%rax` at position p (S a tracked register other than %rax) followed by
 #   add $N,%rax           ->  lea N(%rS),%rax          (the add's flags read nowhere)
+#   sub $N,%rax           ->  lea -N(%rS),%rax         (step 4t; same flag rule; N not the min int32)
 #   add %rT,%rax          ->  lea (%rS,%rT),%rax       (the same; T not %rax)
 #   mov $N,%rcx / imul %rcx,%rax  ->  imul $N,%rS,%rax   (that %rcx value read once: by the imul)
 #   mov $N,%rcx / mul %rcx        ->  imul $N,%rS,%rax   (same low half; that %rcx once, %rdx unread)
@@ -22221,6 +22222,13 @@ def fs_ssa_raxc(p, n, ln, cnt, s, b):
         out[ln[p]] = ""
         out[ln[p + 1]] = c4("    lea ", substr(b, 9, len(b) - 6), "(", concat(s, "),%rax\n"))
         return 2
+    if starts(b, "    sub $") and ends(b, ",%rax\n") and cnt[(p + 1) * 16 + 15] == 0:
+    # step 4t: sub $N,%rax with unread flags -> lea -N(%rS),%rax (skip the int32 min: unary minus is not a digit)
+        imm = substr(b, 8, len(b) - 6)
+        if fs_ssa_imm(imm) and not str_eq(imm, "$-2147483648"):
+            out[ln[p]] = ""
+            out[ln[p + 1]] = c4("    lea -", substr(imm, 1, len(imm)), "(", concat(s, "),%rax\n"))
+            return 2
     if starts(b, "    add %r") and ends(b, ",%rax\n") and cnt[(p + 1) * 16 + 15] == 0:
         t = substr(b, 8, len(b) - 6)
         if find(FS_SSR, 14, t) > 0:
@@ -22261,6 +22269,24 @@ def fs_ssa_mul_lo(p, n, ln):
             return 0
         q += 1
     return 1
+
+
+def fs_ssa_rcx_lo(p, n, ln):
+# 1 if no instruction after position p (a sh* %cl,%rax that already consumed that %rcx) reads %rcx/%cl
+# before writing %rcx (a later call may be counted as a use of %rcx in the SSA table even when the text
+# does not name it)
+    q = p + 1
+    while q < n:
+        l = out[ln[q]]
+        if starts(l, "    ret"):
+            return 1
+        if ends(l, ",%rcx\n") or ends(l, ",%ecx\n") or str_eq(l, "    xor %ecx,%ecx\n") or str_eq(l, "    xor %rcx,%rcx\n"):
+            return 1
+        if contains(l, "%rcx") or contains(l, "%ecx") or contains(l, "%cl") or contains(l, "%ch") or contains(l, "%cx"):
+            return 0
+        q += 1
+    return 1
+
 
 def fs_ssa_dreg(a):
 # a (one instruction line) only writes one tracked register, from an immediate or another tracked register:
