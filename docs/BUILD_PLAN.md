@@ -469,6 +469,9 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    Step 4aa/4ab (2026-11-18, under `--fs-ssa`): fold `xor`/`mov $N,%rax` through a one-use `%rax` into
    `movq $N,MEM` or `mov $N,%rD`, and retarget `lea`/`mov MEM,%rax` copies into `%rD`. Kernel
    instructions 93,068 to 92,421.
+   Step 4ac/4ad (2026-11-18, under `--fs-ssa`): retarget `imul $N,%rS,%rax` (and two-operand `imul $N,%rax`)
+   into `%rD`, fold unread-flag `add`/`sub` through `%rax` into `lea` into `%rD`, and store `%rS` straight
+   to MEM. Kernel instructions 92,421 to 91,805.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -561,6 +564,7 @@ least.
 | Nov 18 | SSA step 4x: setCC/test/je→jCC when L is flag-safe; jcc-shape; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv194) |
 | Nov 18 | SSA step 4y: drop store-reload; step 4z: drop add $0,%rsp; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv195) |
 | Nov 18 | SSA step 4aa: imm/zero through %rax into MEM/rD; step 4ab: lea/load into rD; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv197) |
+| Nov 18 | SSA step 4ac: imul/reg-store through %rax; step 4ad: add/sub→lea into rD; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv200) |
 | Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate), step 4o (push/pop round-trips across failure paths); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
@@ -1378,6 +1382,14 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      Step 4ab retargets a one-use `lea` or load into `%rD`. Left alone: setCC chains (~1043) until a
      flag-safe stop rule. On the kernel: 93,068 to 92,421 instructions; compile about 2.81 s (under 3 s).
      Code built without `--fs-ssa` is byte-identical. Checks fs-ssa-zstore-shape and fs-ssa-leamov-shape.
+     Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
+   - *Step 4ac/4ad, imul and add/sub through %rax into %rD (2026-11-18).* Re-measured after step 4ab: 99 of
+     `imul $N,%rS,%rax; mov %rax,%rD`, 16 of `imul $N,%rax; mov %rax,%rD`, 428 of `add %rS,%rax; mov %rax,%rD`,
+     62 of `add $N,%rax; mov %rax,%rD`, 11 of `sub $N,%rax; mov %rax,%rD`, and 11 of `mov %rS,%rax; mov %rax,MEM`.
+     Step 4ac retargets three-operand imul (and turns two-operand into three-operand into `%rD`) and stores
+     `%rS` straight to MEM. Step 4ad turns unread-flag add/sub into `lea` into `%rD`. setCC chains still left
+     for a flag-safe stop rule. On the kernel: 92,421 to 91,805 instructions; compile about 2.48 s (under 3 s).
+     Code built without `--fs-ssa` is byte-identical. Checks fs-ssa-imuldest-shape and fs-ssa-addlea-shape.
      Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every

@@ -22201,6 +22201,12 @@ def fs_ssa_fold(n, ln, vi, cnt):
 #   mov $N,%rax / mov %rax,%rD        ->  mov $N,%rD         (step 4aa; D tracked, not %rax; that %rax once)
 #   lea ADDR,%rax / mov %rax,%rD      ->  lea ADDR,%rD       (step 4ab; D tracked, not %rax; that %rax once)
 #   mov MEM,%rax / mov %rax,%rD       ->  mov MEM,%rD        (step 4ab; MEM not a reg; D tracked; that %rax once)
+#   imul $N,%rS,%rax / mov %rax,%rD   ->  imul $N,%rS,%rD    (step 4ac; that %rax once)
+#   imul $N,%rax / mov %rax,%rD       ->  imul $N,%rax,%rD   (step 4ac; three-operand; that %rax once)
+#   add %rS,%rax / mov %rax,%rD       ->  lea (%rax,%rS),%rD (step 4ad; flags unread; that %rax once)
+#   add $N,%rax / mov %rax,%rD        ->  lea N(%rax),%rD    (step 4ad; flags unread; that %rax once)
+#   sub $N,%rax / mov %rax,%rD        ->  lea -N(%rax),%rD   (step 4ad; flags unread; N not int32 min)
+#   mov %rS,%rax / mov %rax,MEM       ->  mov %rS,MEM        (step 4ac; that %rax once)
     nf = 0
     p = 0
     while p + 1 < n:
@@ -22355,12 +22361,60 @@ def fs_ssa_fold(n, ln, vi, cnt):
                     out[ln[p]] = c3(substr(a, 0, len(a) - 6), ",", concat(rd, "\n"))
                     out[ln[p + 1]] = ""
                     nf += 1
+            elif starts(a, "    imul $") and ends(a, ",%rax\n") and starts(b, "    mov %rax,%") and ends(b, "\n") and cnt[p * 16] == 1:
+            # step 4ac: three-operand imul retargets %rax; two-operand becomes three-operand into %rD
+                rd = substr(b, 13, len(b) - 1)
+                if find(FS_SSR, 14, rd) > 0:
+                # imul $N,%rS,%rax  (two commas) vs imul $N,%rax (one comma)
+                    mid = substr(a, 10, len(a) - 6)
+                    if find_char(mid, 44) >= 0:
+                        out[ln[p]] = c3(substr(a, 0, len(a) - 6), ",", concat(rd, "\n"))
+                        out[ln[p + 1]] = ""
+                        nf += 1
+                    else:
+                    # imul $N,%rax -> imul $N,%rax,%rD (reads %rax, writes %rD)
+                        out[ln[p]] = c3(substr(a, 0, len(a) - 1), ",", concat(rd, "\n"))
+                        out[ln[p + 1]] = ""
+                        nf += 1
+            elif (starts(a, "    add %r") or starts(a, "    add $") or starts(a, "    sub $")) and ends(a, ",%rax\n") and starts(b, "    mov %rax,%") and ends(b, "\n") and cnt[p * 16] == 1 and cnt[p * 16 + 15] == 0:
+            # step 4ad: add/sub into %rax whose flags are unread becomes lea into %rD
+                rd = substr(b, 13, len(b) - 1)
+                if find(FS_SSR, 14, rd) > 0:
+                    did = 0
+                    if starts(a, "    add %r"):
+                        rs = substr(a, 8, len(a) - 6)
+                        if find(FS_SSR, 14, rs) > 0:
+                            out[ln[p]] = c4("    lea (%rax,", rs, "),", concat(rd, "\n"))
+                            out[ln[p + 1]] = ""
+                            nf += 1
+                            did = 1
+                    elif starts(a, "    add $"):
+                        imm = substr(a, 8, len(a) - 6)
+                        if fs_ssa_imm(imm):
+                            out[ln[p]] = c4("    lea ", substr(imm, 1, len(imm)), "(%rax),", concat(rd, "\n"))
+                            out[ln[p + 1]] = ""
+                            nf += 1
+                            did = 1
+                    elif starts(a, "    sub $"):
+                        imm = substr(a, 8, len(a) - 6)
+                        if fs_ssa_imm(imm) and not str_eq(imm, "$-2147483648"):
+                            out[ln[p]] = c4("    lea -", substr(imm, 1, len(imm)), "(%rax),", concat(rd, "\n"))
+                            out[ln[p + 1]] = ""
+                            nf += 1
+                            did = 1
             elif starts(a, "    mov %r") and ends(a, ",%rax\n") and find(FS_SSR, 14, substr(a, 8, len(a) - 6)) > 0:
             # a copy into %rax that the next line (or the one after) reads and overwrites
-                q = fs_ssa_raxc(p, n, ln, cnt, substr(a, 8, len(a) - 6), b)
-                if q > 0:
+                rs = substr(a, 8, len(a) - 6)
+                if starts(b, "    mov %rax,") and not starts(b, "    mov %rax,%") and cnt[p * 16] == 1:
+                # step 4ac: store the source register straight to MEM (no %rax temp)
+                    out[ln[p]] = ""
+                    out[ln[p + 1]] = c4("    mov ", rs, ",", substr(b, 13, len(b)))
                     nf += 1
-                    p += q - 1
+                else:
+                    q = fs_ssa_raxc(p, n, ln, cnt, rs, b)
+                    if q > 0:
+                        nf += 1
+                        p += q - 1
         p += 1
     return nf
 

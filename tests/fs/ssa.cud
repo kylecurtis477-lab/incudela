@@ -148,6 +148,7 @@ def ssa_lcopy(n: u64, m: u64) -> u64:
 def ssa_cold(a: i64, i: i64, j: i64) -> i64:
 # step 4y/4z: store-reload and add $0,%rsp folds are checked by run_tests shapes on this file.
 # step 4aa/4ab: ssa_zstore / ssa_leamov check zero-store and lea-into-dest folds.
+# step 4ac/4ad: imuldest / addlea shapes use existing multiply and add chains in this file.
 # step 4x: short-circuit `i < j and j < 3` keeps setCC/setne at the merge (fold refuses targets that
 # consume the test's flags); safe setCC/movzbl/test/je elsewhere become jCC
     w: i64[4]
