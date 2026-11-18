@@ -22130,9 +22130,19 @@ def fs_ssa_imm(t):
         return v <= 2147483648
     return v <= 2147483647
 
+def fs_ssa_shimm(t):
+# t is `$N` with N a decimal shift count in 0..63 (what `sh* $N,%rax` encodes)
+    if starts(t, "$-") or not starts(t, "$"):
+        return 0
+    d = substr(t, 1, len(t))
+    if len(d) == 0 or len(d) > 2 or fs_lv_num(d) < 0:
+        return 0
+    return fs_lv_num(d) <= 63
+
 def fs_ssa_fold(n, ln, vi, cnt):
 # The rewrites, each on consecutive entries (so no label sits inside), all in reached code:
 #   mov $N,%rcx / OP %rcx,%rax  ->  OP $N,%rax   (OP add sub and or xor cmp; that %rcx value read once)
+#   mov $N,%rcx / sh* %cl,%rax  ->  sh* $N,%rax  (step 4r; sh* is shr shl sar; N in 0..63; that %rcx once)
 #   xor %ecx,%ecx / cmp %rcx,%rax  ->  test %rax,%rax   (same flags for every jcc and setcc)
 #   setCC %al / movzbl %al,%eax / test %rax,%rax / je L (jne L)  ->  jNCC L (jCC L)   (both %rax values and the
 #   test's flags read once: by the next line of the pattern)
@@ -22142,13 +22152,24 @@ def fs_ssa_fold(n, ln, vi, cnt):
         a = out[ln[p]]
         b = out[ln[p + 1]]
         if vi[p * 16] >= 0 and starts(b, "    ") and starts(a, "    "):
-            if starts(a, "    mov $") and ends(a, ",%rcx\n") and cnt[p * 16 + 1] == 1 and fs_ssa_imm(substr(a, 8, len(a) - 6)):
-                sp = find_char(substr(b, 4, len(b)), 32)
-                if sp >= 0 and str_eq(substr(b, 4 + sp, len(b)), " %rcx,%rax\n"):
-                    mn = substr(b, 4, 4 + sp)
-                    if find(FS_SSALU, 5, mn) >= 0 or str_eq(mn, "cmp"):
+            if starts(a, "    mov $") and ends(a, ",%rcx\n") and cnt[p * 16 + 1] == 1:
+                imm = substr(a, 8, len(a) - 6)
+                did = 0
+                if fs_ssa_imm(imm):
+                    sp = find_char(substr(b, 4, len(b)), 32)
+                    if sp >= 0 and str_eq(substr(b, 4 + sp, len(b)), " %rcx,%rax\n"):
+                        mn = substr(b, 4, 4 + sp)
+                        if find(FS_SSALU, 5, mn) >= 0 or str_eq(mn, "cmp"):
+                            out[ln[p]] = ""
+                            out[ln[p + 1]] = c4("    ", mn, " ", concat(imm, ",%rax\n"))
+                            nf += 1
+                            did = 1
+                if not did and starts(b, "    sh") and ends(b, " %cl,%rax\n") and fs_ssa_shimm(imm):
+                # step 4r: the shift reads only %cl of that %rcx; an immediate count needs no %rcx
+                    mn = substr(b, 4, len(b) - 10)
+                    if str_eq(mn, "shr") or str_eq(mn, "shl") or str_eq(mn, "sar"):
                         out[ln[p]] = ""
-                        out[ln[p + 1]] = c4("    ", mn, " ", concat(substr(a, 8, len(a) - 6), ",%rax\n"))
+                        out[ln[p + 1]] = c4("    ", mn, " ", concat(imm, ",%rax\n"))
                         nf += 1
             elif str_eq(a, "    xor %ecx,%ecx\n") and str_eq(b, "    cmp %rcx,%rax\n") and cnt[p * 16 + 1] == 1:
                 out[ln[p]] = ""

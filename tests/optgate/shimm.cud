@@ -1,0 +1,15 @@
+# cuditor: no-runtime
+# optimizer gate: a shift by a constant with three or more digits (100) makes fs_ssa_shimm refuse the
+# immediate (len(d) > 2). Under --fs-temps the body still has mov $100,%rcx / shr %cl,%rax; under --fs-ssa
+# the fold leaves that pair alone. Output must match under every optimizer configuration.
+include "../fs/linux.cudi"
+
+def wide_shift(a: u64) -> u64:
+    return (a >> 100) + (a << 128)
+
+def main() -> i64:
+    put_u64(wide_shift(1))
+    nl()
+    put_u64(wide_shift(0xff))
+    nl()
+    return 0

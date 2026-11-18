@@ -68,3 +68,4 @@ fs_ssa_ppg | if q + 1 >= e or cb[q] == e or cb[q + 1] == e or not starts(out[ln[
 fs_ssa_ppg | if d < 0: | defensive: the adds return the depth the pads and inner pushes raised
 fs_ssa_ppk | if us[q * 16 + r] or (df[q * 16 + r] and cb[q] != e): | defensive: the holding register is free between the push and the pop (cold lines may write it)
 fs_ssa_live | if us[p * 16 + r]: | defensive: a later read of the scratch means it is live after the pop (no kernel case needs a fresh callee-saved yet)
+fs_ssa_shimm | if starts(t, "$-") or not starts(t, "$"): | defensive: every caller passes the source of a generated `mov $N,%rcx` (always `$` + decimal); negatives for shifts are emitted as `mov $N,%rax; neg; mov %rax,%rcx`, never `mov $-N,%rcx` before a %cl shift

@@ -185,6 +185,11 @@ def ssa_ppcall(a: i64, b: i64) -> i64:
     y: i64 = ssa_imm(b)
     return x - y + a
 
+def ssa_shift(a: u64) -> u64:
+# step 4r: a shift by a constant uses an immediate count (no mov $N,%rcx / sh* %cl,%rax)
+    return (a << 3) | (a >> 6) | (a << 12)
+
+
 def ssa_drop(x: i64):
     ssa_loop(x)
 
@@ -234,4 +239,6 @@ def main() -> i64:
     show(ssa_mul(-5, 1000000))
     show(ssa_ppcall(9, 2))
     show(ssa_ppcall(-4, 7))
+    show(ssa_shift(5))
+    show(ssa_shift(4294967295))
     return 0
