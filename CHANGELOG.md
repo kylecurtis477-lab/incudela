@@ -7,8 +7,14 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4s
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4u
 
+- `f061ac1` `--fs-ssa` folds `mov $N,%rcx; alu/cmp %rcx,%rax` when a later call only falsely counts as
+  reading %rcx (step 4u, same `fs_ssa_rcx_lo` as 4t): kernel instructions 95,918 to 95,191, copies into
+  %rax 1,056 to 1,035.
+- `1d473c1` `--fs-ssa` folds remaining `mov $N,%rcx; shr|shl|sar %cl,%rax` via `fs_ssa_rcx_lo` and
+  rewrites unread-flag `sub $N,%rax` after a copy into %rax as `lea -N(%rS),%rax` (step 4t): kernel
+  instructions 96,055 to 95,918, copies into %rax 1,074 to 1,056.
 - `93a1258` `--fs-ssa` drops a redundant `test %rax,%rax` after `and`/`or`/`xor` into %rax when those
   flags were unread (step 4s): kernel instructions 96,232 to 96,055.
 - `4c0b68b` `--fs-ssa` folds `mov $N,%rcx; shr|shl|sar %cl,%rax` into `shr|shl|sar $N,%rax` when that
