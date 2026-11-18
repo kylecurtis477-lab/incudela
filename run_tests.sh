@@ -201,6 +201,10 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^
 # step 4x: ssa_cold's short-circuit and keeps setne at the merge (fold refuses flag-consuming targets);
 # a safe setCC/movzbl/test/je (kernel serial_putc tries loop) becomes jCC — covered by kernel build in the os gate
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_cold:/,/^ssa_rax:/' build/t_ssa.s | grep -c 'setne %al')" -ge 1 ] && [ "$(awk '/^ssa_cold:/,/^ssa_rax:/' build/t_ssa.s | grep -cE '^    setl %al$')" -ge 1 ] && echo "PASS fs-ssa-jcc-shape" || { echo "FAIL fs-ssa-jcc-shape"; fail=1; }
+# step 4y: store then reload of the same register from the same %rbp slot drops under --fs-ssa
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(python3 tests/fs/count_store_reload.py build/t_ssa.s)" -ge 1 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(python3 tests/fs/count_store_reload.py build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-reload-shape" || { echo "FAIL fs-ssa-reload-shape"; fail=1; }
+# step 4z: add $0,%rsp is dropped under --fs-ssa
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(grep -cE '^    add \$0,%rsp$' build/t_ssa.s)" -ge 1 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(grep -cE '^    add \$0,%rsp$' build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-add0-shape" || { echo "FAIL fs-ssa-add0-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs

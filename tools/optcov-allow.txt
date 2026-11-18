@@ -75,3 +75,5 @@ fs_ssa_reg_rd | if contains(body, r64) or contains(body, r32): | defensive: a fi
 fs_ssa_jcc_tgt | if q >= n: | defensive: a .LF label with no following line in the function body is not emitted
 fs_ssa_fold | while fpos < n and len(out[ln[fpos]]) == 0: | defensive: the fold blanks lines only behind the scan position, so the fall-through after je is never already empty
 fs_ssa_fold | if extra: | the corpus never pairs a duplicate test with a flag-safe L (duplicate tests sit on short-circuit and/or merges that refuse the jCC fold; the elif-extra path drops those dups without entering this blanking branch)
+fs_ssa_fold | if starts(t, "    set"): | defensive: add $0,%rsp is never followed by setCC in the corpus (the no-op sits after calls before mov/jmp/label)
+fs_ssa_fold | if starts(t, "    j") and not starts(t, "    jmp"): | defensive: add $0,%rsp is never followed by a conditional jump in the corpus

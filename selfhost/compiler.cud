@@ -22194,12 +22194,29 @@ def fs_ssa_fold(n, ln, vi, cnt):
 #   (step 4x: any tracked register; optional duplicate test dropped; L must not begin with setCC or jCC —
 #   short-circuit and/or keeps setne at L needing the test's ZF; neither edge's first insn may read the 0/1.
 #   Kernel use-counts on these values are inflated by phis, so the fold does not trust cnt here)
+#   mov %rS,D(%rbp) / mov D(%rbp),%rS  ->  mov %rS,D(%rbp)   (step 4y: reload is redundant; store kept)
+#   add $0,%rsp                       ->  (dropped)          (step 4z: no-op after calls; next line unread flags)
     nf = 0
     p = 0
     while p + 1 < n:
         a = out[ln[p]]
         b = out[ln[p + 1]]
-        if vi[p * 16] >= 0 and starts(b, "    ") and starts(a, "    "):
+        if vi[p * 16] >= 0 and starts(a, "    ") and str_eq(a, "    add $0,%rsp\n"):
+        # step 4z: no-op; next may be a label (starts(b) would skip). Refuse only a setCC/jCC right after.
+            q = p + 1
+            while q < n and (len(out[ln[q]]) == 0 or (starts(out[ln[q]], ".L") and ends(out[ln[q]], ":\n"))):
+                q += 1
+            ok = 1
+            if q < n:
+                t = out[ln[q]]
+                if starts(t, "    set"):
+                    ok = 0
+                if starts(t, "    j") and not starts(t, "    jmp"):
+                    ok = 0
+            if ok:
+                out[ln[p]] = ""
+                nf += 1
+        elif vi[p * 16] >= 0 and starts(b, "    ") and starts(a, "    "):
             if starts(a, "    mov $") and ends(a, ",%rcx\n"):
                 imm = substr(a, 8, len(a) - 6)
                 did = 0
@@ -22292,6 +22309,15 @@ def fs_ssa_fold(n, ln, vi, cnt):
                             out[ln[p + 3]] = ""
                             nf += 1
                             p += 3
+            elif starts(a, "    mov %") and ends(a, "(%rbp)\n") and starts(b, "    mov ") and ends(b, "\n"):
+            # step 4y: store then reload of the same register from the same slot -> drop the reload
+                sp = find_char(substr(a, 8, len(a)), 44)
+                if sp >= 0:
+                    rs = substr(a, 8, 8 + sp)
+                    slot = substr(a, 8 + sp + 1, len(a) - 1)
+                    if find(FS_SSR, 14, rs) >= 0 and str_eq(b, c3("    mov ", slot, c3(",", rs, "\n"))):
+                        out[ln[p + 1]] = ""
+                        nf += 1
             elif starts(a, "    mov %r") and ends(a, ",%rax\n") and find(FS_SSR, 14, substr(a, 8, len(a) - 6)) > 0:
             # a copy into %rax that the next line (or the one after) reads and overwrites
                 q = fs_ssa_raxc(p, n, ln, cnt, substr(a, 8, len(a) - 6), b)
