@@ -146,6 +146,8 @@ def ssa_lcopy(n: u64, m: u64) -> u64:
     return s
 
 def ssa_cold(a: i64, i: i64, j: i64) -> i64:
+# step 4x: short-circuit `i < j and j < 3` keeps setCC/setne at the merge (fold refuses targets that
+# consume the test's flags); safe setCC/movzbl/test/je elsewhere become jCC
     w: i64[4]
     w[0] = a
     w[1] = a + 1

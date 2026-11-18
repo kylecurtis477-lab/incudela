@@ -461,6 +461,9 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    already in %rax becomes `imul $N,%rax` when the high half is unread. Kernel instructions 95,191 to 94,742.
    Step 4w (2026-11-18, under `--fs-ssa`): `and $N,%rax` whose value only feeds setcc becomes `test $N,%rax`
    (same flags; %rax kept so a prior copy can die). Kernel instructions 94,742 to 94,731.
+   Step 4x (2026-11-18, under `--fs-ssa`): `setCC; movzbl; test; je|jne L` becomes one `jCC` when L does not
+   consume flags and neither edge reads the 0/1 (short-circuit and/or merges keep setne at L). Kernel
+   instructions 94,731 to 93,932.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -550,6 +553,7 @@ least.
 | Nov 17 | SSA step 4r: shift by an immediate; step 4s: drop redundant test after and/or/xor; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv188) |
 | Nov 17 | SSA step 4t: sar imm via rcx_lo and sub→lea; step 4u: alu imm via rcx_lo; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv190) |
 | Nov 18 | SSA step 4v: mul already in %rax; step 4w: and→test before setcc; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv191) |
+| Nov 18 | SSA step 4x: setCC/test/je→jCC when L is flag-safe; jcc-shape; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv194) |
 | Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate), step 4o (push/pop round-trips across failure paths); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
@@ -1345,6 +1349,14 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      94,742 to 94,731 instructions, copies into %rax 979 to 958. Kernel `--fs-ssa` compile about 2.91 s
      (under 3 s). Code built without `--fs-ssa` is byte-identical; unsafe report unchanged. New test
      ssa_andset and check fs-ssa-andset-shape.
+     Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
+   - *Step 4x, setCC/test/je→jCC (2026-11-18).* Re-measured after step 4w: 1,210 of
+     `setCC %al; movzbl %al,%r32; test %r64,%r64; je|jne L` on the kernel (302 with a duplicate test).
+     Folding when L begins with setCC or jCC is wrong: short-circuit and/or keeps `setne` at L that needs
+     ZF from the test (ssa_cold). Step 4x folds only when L does not consume flags and neither edge's first
+     insn reads the 0/1 (kernel use-counts are inflated by phis). On the kernel: 94,731 to 93,932
+     instructions (~167 safe jCC folds plus ~302 duplicate tests dropped); compile about 2.73 s (under 3 s). Code built without `--fs-ssa` is
+     byte-identical; unsafe report unchanged. Check fs-ssa-jcc-shape (ssa_cold keeps setl/setne).
      Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every

@@ -69,3 +69,9 @@ fs_ssa_ppg | if d < 0: | defensive: the adds return the depth the pads and inner
 fs_ssa_ppk | if us[q * 16 + r] or (df[q * 16 + r] and cb[q] != e): | defensive: the holding register is free between the push and the pop (cold lines may write it)
 fs_ssa_live | if us[p * 16 + r]: | defensive: a later read of the scratch means it is live after the pop (no kernel case needs a fresh callee-saved yet)
 fs_ssa_shimm | if starts(t, "$-") or not starts(t, "$"): | defensive: every caller passes the source of a generated `mov $N,%rcx` (always `$` + decimal); negatives for shifts are emitted as `mov $N,%rax; neg; mov %rax,%rcx`, never `mov $-N,%rcx` before a %cl shift
+fs_ssa_reg_rd | if starts(t, "    pop ") and (ends(t, concat(r64, "\n")) or ends(t, concat(r32, "\n"))): | defensive: fold safety looks at the first insn on each edge; a pop of the 0/1 register right after the je or at L does not appear in the corpus (the 0/1 dies at the test)
+fs_ssa_reg_rd | if ends(t, concat(",", concat(r32, "\n"))): | defensive: first-edge writes that name the 32-bit form as destination are not emitted after the test/jCC pattern in the corpus
+fs_ssa_reg_rd | if contains(body, r64) or contains(body, r32): | defensive: a first-edge insn that both reads and writes the 0/1 register (e.g. add %r,%r) is not the next line after the je in the corpus
+fs_ssa_jcc_tgt | if q >= n: | defensive: a .LF label with no following line in the function body is not emitted
+fs_ssa_fold | while fpos < n and len(out[ln[fpos]]) == 0: | defensive: the fold blanks lines only behind the scan position, so the fall-through after je is never already empty
+fs_ssa_fold | if extra: | the corpus never pairs a duplicate test with a flag-safe L (duplicate tests sit on short-circuit and/or merges that refuse the jCC fold; the elif-extra path drops those dups without entering this blanking branch)
