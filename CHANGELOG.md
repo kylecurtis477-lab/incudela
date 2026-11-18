@@ -7,8 +7,12 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4w
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4x
 
+- `f949df7` `--fs-ssa` rewrites `setCC %al; movzbl; test; je|jne L` as one `jCC` when L does not
+  consume flags and neither edge reads the 0/1 (step 4x); duplicate tests are dropped even when the fold
+  is refused: kernel instructions 94,731 to 93,932; short-circuit and/or merges that keep `setne` at L
+  are left alone.
 - `b338b9b` fas/fld write `path.tmp` then `rename(2)` onto `path`; cuditor `-o` links to `out.new` then
   `mv -f`; tests/fas snapshots each `.s` before as vs fas (inv192 O2 one-off `fas build/user/bg.s` FAIL).
 - `2fb9a99` tests: `fs-ssa-mul-shape` accepts two-op or three-op `imul $N` (no `mul %rcx`) after step 4v.
