@@ -7,8 +7,10 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4x
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4z
 
+- `025419d` `--fs-ssa` drops `mov %rS,D(%rbp); mov D(%rbp),%rS` reloads (step 4y) and `add $0,%rsp`
+  after calls (step 4z): kernel instructions 93,932 to 93,068.
 - `f949df7` `--fs-ssa` rewrites `setCC %al; movzbl; test; je|jne L` as one `jCC` when L does not
   consume flags and neither edge reads the 0/1 (step 4x); duplicate tests are dropped even when the fold
   is refused: kernel instructions 94,731 to 93,932; short-circuit and/or merges that keep `setne` at L
