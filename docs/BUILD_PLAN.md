@@ -480,6 +480,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    forms an address becomes that address's scaled index `(%rB,%rR,S)`. Kernel instructions 87,642 to 86,168.
    Step 4ai (2026-11-19, under `--fs-ssa`): `lea ADDR,%rT` read once, by the next `mov*` as its memory operand
    `(%rT)`, is folded into that mov (`mov (%rB,%rI,8),%rD`, `mov %rS,N(%rB)`). Kernel instructions 86,168 to 84,336.
+   Step 4aj (2026-11-19, under `--fs-ssa`): `ud2` ends a path in the SSA form (it never falls through), so a
+   bounds check's pass label keeps the index register and the `%rcx` copy goes. Kernel instructions 84,336 to 83,521.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1447,6 +1449,18 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      (tss_install 2 pairs, sha_compress 1) keep push/pop pairs they lost before: the extra fold rounds use up
      the 12-round limit (FS_SSRND) before the round in which fs_ssa_pushpop runs; 16 rounds would give 84,293
      (not changed here). Code built without `--fs-ssa` is byte-identical. Check fs-ssa-memfold-shape (ssa_idx).
+   - *Step 4aj, `ud2` ends a path (2026-11-19).* Re-measured after step 4ai against w224/cudc-base (84,336 kernel
+     instructions at 3ea3a9f): 696 bounds checks still copy the index to %rcx (`mov %rB,%rcx; cmp $N,%rB`) and
+     address the element through the copy. Copy propagation (steps 4f/4n) could not reach the use: the SSA form
+     let `ud2` fall through, so the failure path's `lea .LFBn(%rip),%rcx` (the call's file argument) merged into
+     the pass label as a phi. `ud2` traps and nothing resumes after it, so it now has no successor: the pass label
+     has one predecessor, the copy reaches the address (`mov (%rax,%rbx,8)`) and the copy goes. Step 4o's cold
+     path test (fs_ssa_cold) now expects the label's single predecessor. On the kernel: 84,336 to 83,521
+     instructions; index copies 696 to 70. Compile user time about 2.53 s (base 2.37 s; more functions now need
+     more fold rounds), under 3 s. sys_kexec, mod_load, od_open, ob_lrec and sh_comp keep 10 more push/pop pairs:
+     the 12-round limit again (16 rounds would recover them but cost about 0.14 s, so not done). Code built
+     without `--fs-ssa` is byte-identical. Check
+     fs-ssa-trapend-shape (ssa_idx); fs-ssa-scale-shape and fs-ssa-memfold-shape now accept any index register.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

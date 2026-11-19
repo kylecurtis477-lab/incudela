@@ -21813,6 +21813,11 @@ def fs_ssa_run(s0):
         else:
             if k == 1:
                 s1[p] = -1
+            elif str_eq(l, "    ud2\n"):
+            # step 4aj: ud2 traps and never falls through (a #UD handler never resumes after it), so the label after
+            # it is reached only by its jumps: a bounds check's pass label then keeps the values from before the
+            # check (the failure path's writes of %rcx, %rdx, %rsi and %rdi no longer merge into it)
+                s1[p] = -1
             m = ru[i]
             w = rd[i]
             if m or w:
@@ -23119,15 +23124,15 @@ def fs_ssa_live(e, r, n, s1, s2, us, df):
     return 0
 
 def fs_ssa_cold(q, e, ln, s1, s2, vi, mk, pc, cb):
-# Step 4o: the label at position q ends a failure path that never comes back: its only predecessors are a
-# conditional jump to it at some position j and a `ud2` right before it, and the lines from j + 1 to the `ud2`
+# Step 4o: the label at position q ends a failure path that never comes back: its only predecessor is a
+# conditional jump to it at some position j, with a `ud2` right before it (no successor since step 4aj), and the lines from j + 1 to the `ud2`
 # are one-line, reached, unmarked instructions that fall through, with no push, pop, return or leave. They are
 # either plain lines (the checked-ints trap) or end in `sub $8,%rsp; call F; add $8,%rsp; ud2` (the bounds
 # check: F never returns), the 8-byte pad keeping the call 16-byte aligned with an odd number of pushes live; any
 # other call or stack-pointer line refuses. The lines j + 1 to q are marked cold for the pop at e (cb) and the
 # line before the jump is returned (the walk of fs_ssa_ppa checks the jump as an ordinary line except for its
 # second successor, which is this label); -1 when the label is anything else.
-    if q < 3 or pc[q] != 2 or not str_eq(out[ln[q - 1]], "    ud2\n") or s1[q - 1] != q:
+    if q < 3 or pc[q] != 1 or not str_eq(out[ln[q - 1]], "    ud2\n") or s1[q - 1] != -1:
         return -1
     k = q - 2
     while k >= 0 and k > q - 16:
