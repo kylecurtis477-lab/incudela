@@ -217,6 +217,8 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk "$i
 # step 4ad: add %rS,%rax; mov %rax,%rD becomes lea (%rax,%rS),%rD under --fs-ssa
 addpair='/^    add %r[a-z0-9]+,%rax$/ {a=$0; getline; if ($0 ~ /^    mov %rax,%r/ && $0 !~ /^    mov %rax,%rax/) c++} END {print c+0}'
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk "$addpair" build/t_ssa.s)" -ge 1 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk "$addpair" build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-addlea-shape" || { echo "FAIL fs-ssa-addlea-shape"; fail=1; }
+# step 4ae: ssa_andmerge's first arm becomes a direct jCC to the false target (through-merge stop)
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_andmerge:/,/^ssa_leamov:/' build/t_ssa.s | grep -cE '^    setl %al$')" -ge 1 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_andmerge:/,/^ssa_leamov:/' build/t_ssa.s | grep -cE '^    j(ge|l|le|g|e|ne) ')" -ge 1 ] && [ "$(awk '/^ssa_andmerge:/,/^ssa_leamov:/' build/t_ssa.s | grep -cE '^    setl %al$')" -le 1 ] && echo "PASS fs-ssa-through-shape" || { echo "FAIL fs-ssa-through-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs

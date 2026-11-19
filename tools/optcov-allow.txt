@@ -72,10 +72,15 @@ fs_ssa_ppk | if us[q * 16 + r] or (df[q * 16 + r] and cb[q] != e): | defensive: 
 fs_ssa_live | if us[p * 16 + r]: | defensive: a later read of the scratch means it is live after the pop (no kernel case needs a fresh callee-saved yet)
 fs_ssa_shimm | if starts(t, "$-") or not starts(t, "$"): | defensive: every caller passes the source of a generated `mov $N,%rcx` (always `$` + decimal); negatives for shifts are emitted as `mov $N,%rax; neg; mov %rax,%rcx`, never `mov $-N,%rcx` before a %cl shift
 fs_ssa_reg_rd | if starts(t, "    pop ") and (ends(t, concat(r64, "\n")) or ends(t, concat(r32, "\n"))): | defensive: fold safety looks at the first insn on each edge; a pop of the 0/1 register right after the je or at L does not appear in the corpus (the 0/1 dies at the test)
-fs_ssa_reg_rd | if ends(t, concat(",", concat(r32, "\n"))): | defensive: first-edge writes that name the 32-bit form as destination are not emitted after the test/jCC pattern in the corpus
 fs_ssa_reg_rd | if contains(body, r64) or contains(body, r32): | defensive: a first-edge insn that both reads and writes the 0/1 register (e.g. add %r,%r) is not the next line after the je in the corpus
 fs_ssa_jcc_tgt | if q >= n: | defensive: a .LF label with no following line in the function body is not emitted
 fs_ssa_fold | while fpos < n and len(out[ln[fpos]]) == 0: | defensive: the fold blanks lines only behind the scan position, so the fall-through after je is never already empty
-fs_ssa_fold | if extra: | the corpus never pairs a duplicate test with a flag-safe L (duplicate tests sit on short-circuit and/or merges that refuse the jCC fold; the elif-extra path drops those dups without entering this blanking branch)
 fs_ssa_fold | if starts(t, "    set"): | defensive: add $0,%rsp is never followed by setCC in the corpus (the no-op sits after calls before mov/jmp/label)
 fs_ssa_fold | if starts(t, "    j") and not starts(t, "    jmp"): | defensive: add $0,%rsp is never followed by a conditional jump in the corpus
+fs_ssa_jcc_through | while q < n and (len(out[ln[q]]) == 0 or (starts(out[ln[q]], ".L") and ends(out[ln[q]], ":\n"))): | defensive: through-merge targets are single labels; stacked .L labels before the je/jne are not emitted at short-circuit merges
+fs_ssa_jcc_through | if q >= n: | defensive: a .LF merge label with no following line is not emitted
+fs_ssa_jcc_through | if not want_je and starts(x, "    jne "): | defensive: the corpus's through-merge cases use je L; L: je F (AND false-path); jne L; L: jne F is rare and not in the optcov programs
+fs_ssa_fold | if extra: #1 | defensive: through-merge with a duplicate test before je L does not appear (dups sit on merges that keep setne, which refuse both 4x and 4ae)
+fs_ssa_fold | else: #3 | defensive: the jne-L through-merge arm (FS_SSCC path) is not hit in the optcov corpus; AND false-paths use je L
+fs_ssa_fold | if extra: #2 | defensive: same as if extra #1 on the through-merge success path
+fs_ssa_fold | elif extra: #2 | defensive: through-merge refuse with a duplicate test to drop is not in the corpus

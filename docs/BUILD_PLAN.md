@@ -565,6 +565,7 @@ least.
 | Nov 18 | SSA step 4y: drop store-reload; step 4z: drop add $0,%rsp; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv195) |
 | Nov 18 | SSA step 4aa: imm/zero through %rax into MEM/rD; step 4ab: lea/load into rD; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv197) |
 | Nov 18 | SSA step 4ac: imul/reg-store through %rax; step 4ad: add/sub→lea into rD; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv200) |
+| Nov 18 | SSA step 4ae: setCC through-merge stop; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 |
 | Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate), step 4o (push/pop round-trips across failure paths); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
@@ -1387,9 +1388,17 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      `imul $N,%rS,%rax; mov %rax,%rD`, 16 of `imul $N,%rax; mov %rax,%rD`, 428 of `add %rS,%rax; mov %rax,%rD`,
      62 of `add $N,%rax; mov %rax,%rD`, 11 of `sub $N,%rax; mov %rax,%rD`, and 11 of `mov %rS,%rax; mov %rax,MEM`.
      Step 4ac retargets three-operand imul (and turns two-operand into three-operand into `%rD`) and stores
-     `%rS` straight to MEM. Step 4ad turns unread-flag add/sub into `lea` into `%rD`. setCC chains still left
-     for a flag-safe stop rule. On the kernel: 92,421 to 91,805 instructions; compile about 2.48 s (under 3 s).
+     `%rS` straight to MEM. Step 4ad turns unread-flag add/sub into `lea` into `%rD`. setCC chains were left
+     for a flag-safe stop rule (step 4ae). On the kernel: 92,421 to 91,805 instructions; compile about 2.48 s (under 3 s).
      Code built without `--fs-ssa` is byte-identical. Checks fs-ssa-imuldest-shape and fs-ssa-addlea-shape.
+     Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
+   - *Step 4ae, setCC through-merge stop (2026-11-18).* Re-measured after step 4ad: 1,043 of
+     `setCC; movzbl; test; je|jne L` still on the kernel because L begins with je/jne (short-circuit
+     and/or merges). When L is `je F` (or `jne F` with matching sense), the test's ZF is still live at L,
+     so jumping straight to F is the same as taking L's jCC. Step 4ae folds those to one `jCC F` (same
+     polarity as step 4x). Merges that keep `setne` at L stay refused. On the kernel: 91,807 to 90,625
+     instructions; compile about 2.47 s (under 3 s). Code built without `--fs-ssa` is byte-identical.
+     Check fs-ssa-through-shape (ssa_andmerge); fs-ssa-jcc-shape still requires setne/setl in ssa_cold.
      Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every

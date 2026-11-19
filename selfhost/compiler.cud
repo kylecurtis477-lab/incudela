@@ -22160,6 +22160,27 @@ def fs_ssa_reg_rd(t, r64, r32):
         return 0
     return 1
 
+def fs_ssa_jcc_through(n, ln, lab, want_je):
+# If lab's first real insn is je F (want_je) or jne F (not), return F; else "".
+# Step 4ae: short-circuit merges keep the test's ZF, so je L; L: je F is the same as going to F.
+    want = concat(lab, ":\n")
+    q = 0
+    while q < n:
+        if str_eq(out[ln[q]], want):
+            q += 1
+            while q < n and (len(out[ln[q]]) == 0 or (starts(out[ln[q]], ".L") and ends(out[ln[q]], ":\n"))):
+                q += 1
+            if q >= n:
+                return ""
+            x = out[ln[q]]
+            if want_je and starts(x, "    je "):
+                return substr(x, 7, len(x) - 1)
+            if not want_je and starts(x, "    jne "):
+                return substr(x, 8, len(x) - 1)
+            return ""
+        q += 1
+    return ""
+
 def fs_ssa_jcc_tgt(n, ln, lab):
 # returns the position after the label (first non-empty), or -1 if missing / flags consumer at target
     want = concat(lab, ":\n")
@@ -22194,6 +22215,8 @@ def fs_ssa_fold(n, ln, vi, cnt):
 #   (step 4x: any tracked register; optional duplicate test dropped; L must not begin with setCC or jCC —
 #   short-circuit and/or keeps setne at L needing the test's ZF; neither edge's first insn may read the 0/1.
 #   Kernel use-counts on these values are inflated by phis, so the fold does not trust cnt here)
+#   setCC / movzbl / test / je L (jne L) where L is je F (jne F, same sense)  ->  jNCC F (jCC F)
+#   (step 4ae: through-merge stop; AND/OR false-path merges keep the same ZF at L, so jump straight to F)
 #   mov %rS,D(%rbp) / mov D(%rbp),%rS  ->  mov %rS,D(%rbp)   (step 4y: reload is redundant; store kept)
 #   add $0,%rsp                       ->  (dropped)          (step 4z: no-op after calls; next line unread flags)
 #   xor %eax,%eax / mov %rax,MEM      ->  movq $0,MEM        (step 4aa: zero store; that %rax once; sized for fas)
@@ -22315,6 +22338,28 @@ def fs_ssa_fold(n, ln, vi, cnt):
                                 out[ln[p + 3]] = ""
                             nf += 1
                             p += 3 + extra
+                        elif tpos < 0 and (fpos >= n or not fs_ssa_reg_rd(out[ln[fpos]], r64, r32)):
+                        # step 4ae: L begins with je/jne (same sense) to F — jump straight to F
+                            final = fs_ssa_jcc_through(n, ln, lab, starts(d, "    je "))
+                            t2 = -1
+                            if len(final) > 0:
+                                t2 = fs_ssa_jcc_tgt(n, ln, final)
+                            if len(final) > 0 and t2 >= 0 and (t2 >= n or not fs_ssa_reg_rd(out[ln[t2]], r64, r32)):
+                                if starts(d, "    je "):
+                                    out[ln[jpos]] = c4("    j", FS_SSCCN[cc], concat(" ", concat(final, "\n")), "")
+                                else:
+                                    out[ln[jpos]] = c4("    j", FS_SSCC[cc], concat(" ", concat(final, "\n")), "")
+                                out[ln[p]] = ""
+                                out[ln[p + 1]] = ""
+                                out[ln[p + 2]] = ""
+                                if extra:
+                                    out[ln[p + 3]] = ""
+                                nf += 1
+                                p += 3 + extra
+                            elif extra:
+                                out[ln[p + 3]] = ""
+                                nf += 1
+                                p += 3
                         elif extra:
                         # duplicate test is always redundant; drop it even when the jCC fold is refused
                             out[ln[p + 3]] = ""
