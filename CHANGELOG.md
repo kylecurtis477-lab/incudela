@@ -7,8 +7,12 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ag
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ai
 
+- `174afe2` `--fs-ssa` folds a `lea ADDR,%rT` read only by the next mov, through `(%rT)`, into that mov
+  (step 4ai, `mov (%rax,%rcx,8),%rax`, `mov %rsi,8(%rax)`): kernel instructions 86,168 to 84,336.
+- `dc50329` `--fs-ssa` puts a checked index's `imul $8` scale into the address it forms (step 4ah, `lea
+  (%rD,%rR,8),%rD`): kernel instructions 87,642 to 86,168.
 - `1aabd27` `--fs-ssa` deletes a `jmp .LFk` whose target is among the labels straight after it (step 4ag):
   kernel instructions 89,193 to 87,642.
 - `4ccc1aa` `--fs-ssa` deletes the never-run lines straight after an unconditional `jmp` with no label between
