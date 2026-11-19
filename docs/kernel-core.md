@@ -162,7 +162,9 @@ condvars are exercised by the kernel sync self-test (`wait queues + sleeping mut
 not the kernel (`kernel stack guard pages:`, `stack canaries:`). A thread that has reported back is not yet
 dead: `thread reap: 4 workers reported done while 4 still ran; all reaped after T_DEAD` checks that the
 parent reaps (waits for `T_DEAD`) instead of freeing. Stop-machine rendezvous:
-`stop_machine stress OK: 3000 rounds`. Handle rights that only shrink, and the syscall-class
+`stop_machine stress OK: 3000 rounds`, and inside every round the three lock hammers on the other CPUs must
+not advance (`no CPU ran while parked`; a parked CPU that answered the next round from its park loop used to
+run again, kbs-s1 boot 30). Handle rights that only shrink, and the syscall-class
 gate, are pinned by `examples/user/captest.cud` (`captest: PASS`) and `capdeny` (`capability
 gate: undeclared spawn and probe denied at the syscall boundary`). Channel move, XFER, EOF on
 peer close, and `EFAULT` leaving a message queued are pinned by `chantest.cud` (`chantest: PASS`)

@@ -1475,8 +1475,18 @@ def smx_hammer(i: u64):
             k += 1
         spin_unlock(addr(smx_lock))
 
+SMX_ROUNDS = 3000
+SMX_WINDOW = 200
+
+def smx_sum() -> u64:
+    return atomic_load(addr(smx_spins[0]), acquire) + atomic_load(addr(smx_spins[1]), acquire) + atomic_load(addr(smx_spins[2]), acquire)
+
 def stop_machine_stress():
-# regression: many stop-machine rounds against CPUs spinning on a lock with interrupts on
+# regression: many back-to-back stop-machine rounds against CPUs spinning on a lock with interrupts on.
+# Inside each round no other CPU may run: the hammers' pass counts must not move between stop_machine_begin
+# and stop_machine_end (kbs-s1 boot 30: a CPU parked for round g answered round g+1 from its park loop,
+# left the loop because the round number changed, and ran sys_getppid while livepatch rewrote it -> #UD).
+# A count read after the acks includes every pass made before the park (the ack is a release store).
     if ncpu_online < 2:
         puts("stop_machine stress skipped (1 cpu)\n")
         return
@@ -1485,19 +1495,34 @@ def stop_machine_stress():
     t2 = thread_spawn(u64(smx_hammer), 2)
     sleep_ticks(2)
     r: u64 = 0
-    while r < 3000:
+    esc: u64 = 0
+    while r < SMX_ROUNDS:
         f = stop_machine_begin()
+        s0 = smx_sum()
+        k: u64 = 0
+        while k < SMX_WINDOW:
+            cpu_relax()
+            k += 1
+        if smx_sum() != s0:
+            esc += 1
         stop_machine_end(f)
         r += 1
     atomic_store(addr(smx_stop), 1, release)
     thread_reap(t0)
     thread_reap(t1)
     thread_reap(t2)
+    if esc != 0:
+        puts("stop_machine stress FAILED: a parked CPU ran inside ")
+        put_u64(esc)
+        puts(" of ")
+        put_u64(r)
+        puts(" rounds\n")
+        panic("stop_machine: CPU escaped the park")
     puts("stop_machine stress OK: ")
     put_u64(r)
     puts(" rounds against ")
     put_u64(smx_spins[0] + smx_spins[1] + smx_spins[2])
-    puts(" contended lock passes\n")
+    puts(" contended lock passes, no CPU ran while parked\n")
 
 @unsafe
 def livepatch_test():

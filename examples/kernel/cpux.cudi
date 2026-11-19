@@ -375,13 +375,27 @@ def tlb_poll():
         if g != 0:
         # stop-machine: stay parked (interrupts off) until the initiator ends round g, then serialise
         # so this CPU refetches any instruction bytes the initiator rewrote. Waiting on the round
-        # number (not on 0) means a CPU that misses the brief 0 is not trapped into the next round;
-        # a request posted meanwhile is answered from inside the wait.
-            while tlb_halt:
-                hlt()
-            while atomic_load(addr(tlb_park), acquire) == g:
-                tlb_answer(c)
-                cpu_relax()
+        # number (not on 0) means a CPU that misses the brief 0 is not trapped into the next round.
+        # A request answered from inside the wait belongs to the next round g' (tlb_lock serialises
+        # rounds, so no shootdown is posted while g is open): that answer counts this CPU as parked for
+        # g', so it stays parked for g' (and halts for good if g' is the kexec round). g' is stored
+        # (seq_cst) before its requests are posted, so the re-read sees g' or, once g' has ended, 0.
+        # Without this the CPU left the loop on seeing g' != g and ran while the initiator rewrote text
+        # (kbs-s1 boot 30: #UD in sys_getppid during livepatch; the stop_machine stress, which now
+        # checks that no other CPU runs inside a round, counted 2-15 escapes per 3000 rounds under load).
+            adopt: u64 = 1
+            while adopt != 0:
+                adopt = 0
+                while tlb_halt:
+                    hlt()
+                while atomic_load(addr(tlb_park), acquire) == g:
+                    if tlb_answer(c) != 0:
+                        p = atomic_load(addr(tlb_park), acquire)
+                        if p != 0 and p != g:
+                            g = p
+                            adopt = 1
+                            break
+                    cpu_relax()
             cpuid4(0, 0)
     tlb_in_poll[c] = 0
     irq_restore(f)
