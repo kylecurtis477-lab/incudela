@@ -22233,6 +22233,7 @@ def fs_ssa_fold(n, ln, vi, cnt):
 #   sub $N,%rax / mov %rax,%rD        ->  lea -N(%rax),%rD   (step 4ad; flags unread; N not int32 min)
 #   mov %rS,%rax / mov %rax,MEM       ->  mov %rS,MEM        (step 4ac; that %rax once)
 #   imul $S,%rR,%rR / add %rR,%rD     ->  lea (%rD,%rR,S),%rD (step 4ah; S 1/2/4/8; that %rR once; add flags unread)
+#   lea ADDR,%rT / mov* ..(%rT)..     ->  mov* ..ADDR..        (step 4ai; that %rT once; no %rip; see fs_ssa_memfold)
     nf = 0
     p = 0
     while p + 1 < n:
@@ -22395,6 +22396,9 @@ def fs_ssa_fold(n, ln, vi, cnt):
                         out[ln[p]] = ""
                         out[ln[p + 1]] = c4("    mov ", imm, ",", concat(rd, "\n"))
                         nf += 1
+            elif starts(a, "    lea ") and starts(b, "    mov") and find_char(a, 10) == len(a) - 1 and find_char(b, 10) == len(b) - 1 and fs_ssa_memfold(p, ln, cnt, a, b) > 0:
+            # step 4ai: lea ADDR,%rT read once, by a mov through (%rT): the mov takes ADDR (rewritten by memfold)
+                nf += 1
             elif starts(a, "    lea ") and ends(a, ",%rax\n") and starts(b, "    mov %rax,%") and ends(b, "\n") and cnt[p * 16] == 1:
             # step 4ab: lea into the register that was going to receive the copy
                 rd = substr(b, 13, len(b) - 1)
@@ -22492,6 +22496,67 @@ def fs_ssa_scale(a):
     if d == 49 or d == 50 or d == 52 or d == 56:
         return d - 48
     return 0
+
+def fs_ssa_at(s, p):
+# step 4ai: index of the first p in s, or -1
+    n = len(p)
+    m = len(s) - n
+    i = 0
+    while i <= m:
+        j = 0
+        while j < n and char_at(s, i + j) == char_at(p, j):
+            j += 1
+        if j == n:
+            return i
+        i += 1
+    return -1
+
+def fs_ssa_names(s, ti):
+# step 4ai: 1 if s names register ti of FS_SSR at any width (FS_SSR, FS_SSR32, the FS_SSRP parts)
+    if contains(s, FS_SSR[ti]) or contains(s, FS_SSR32[ti]):
+        return 1
+    j = 0
+    while j < 32:
+        if FS_SSRPI[j] == ti and contains(s, FS_SSRP[j]):
+            return 1
+        j += 1
+    return 0
+
+def fs_ssa_memfold(p, ln, cnt, a, b):
+# Step 4ai: `lea ADDR,%rT` at p (one-line entries; ADDR a register form `D(...)`, not %rip-relative; T tracked)
+# whose value is read only by the `mov*` at p + 1, which uses it as its plain memory operand `(%rT)` (after a
+# space or comma, so no displacement of its own) and names T nowhere else except as the whole destination of a
+# load: the mov takes ADDR and the lea is deleted. T then keeps its old value, which nothing read as the
+# address; lea sets no flags, so no flag reader changes. Returns 1 for a rewrite, else 0.
+    cm = -1
+    i = 8
+    while i < len(a):
+        if char_at(a, i) == 44:
+            cm = i
+        i += 1
+    if cm < 9 or contains(a, "%rip"):
+        return 0
+    addr_s = substr(a, 8, cm)
+    rt = substr(a, cm + 1, len(a) - 1)
+    ti = find(FS_SSR, 14, rt)
+    if ti < 0 or cnt[p * 16 + ti] != 1 or not ends(addr_s, ")"):
+        return 0
+    m = c3("(", rt, ")")
+    k = fs_ssa_at(b, m)
+    if k < 1 or (char_at(b, k - 1) != 32 and char_at(b, k - 1) != 44):
+        return 0
+    rest = concat(substr(b, 0, k), substr(b, k + len(m), len(b)))
+    chk = rest
+    if char_at(b, k + len(m)) == 44:
+    # a load: a full write of T (%rT, or its 32-bit name, which zero-extends) as the destination is no read of it
+        d = substr(b, k + len(m) + 1, len(b) - 1)
+        if str_eq(d, rt) or str_eq(d, FS_SSR32[ti]):
+            chk = substr(b, 0, k)
+    if fs_ssa_names(chk, ti):
+        return 0
+    out[ln[p]] = ""
+    out[ln[p + 1]] = c3(substr(b, 0, k), addr_s, substr(b, k + len(m), len(b)))
+    return 1
 
 def fs_ssa_raxc(p, n, ln, cnt, s, b):
 # Step 4p: `mov %rS,%rax` at position p (S a tracked register other than %rax) followed by

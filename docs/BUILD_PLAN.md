@@ -476,8 +476,10 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    are never run and are deleted. Kernel instructions 90,924 to 89,193.
    Step 4ag (2026-11-19, under `--fs-ssa`): a `jmp .LFk` with `.LFk:` among the labels straight after it is
    deleted. Kernel instructions 89,193 to 87,642.
-   Step 4ah (2026-11-19, under `--fs-ssa`): `imul $S,%rR,%rR` (S 1, 2, 4 or 8) read once by the `add` or `lea` that
+   Step 4ah (2026-11-19, under `--fs-ssa`): `imul $S,%rR,%rR` (S 1, 2, 4 or 8) read once by the `add` that
    forms an address becomes that address's scaled index `(%rB,%rR,S)`. Kernel instructions 87,642 to 86,168.
+   Step 4ai (2026-11-19, under `--fs-ssa`): `lea ADDR,%rT` read once, by the next `mov*` as its memory operand
+   `(%rT)`, is folded into that mov (`mov (%rB,%rI,8),%rD`, `mov %rS,N(%rB)`). Kernel instructions 86,168 to 84,336.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1434,6 +1436,17 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      %rR then keeps the unscaled index, which nothing reads. On the kernel: 87,642 to 86,168 instructions
      (1,474 fewer); compile about 2.48 s (base 2.55 s, under 3 s). Code built without `--fs-ssa` is
      byte-identical. Check fs-ssa-scale-shape (ssa_idx).
+   - *Step 4ai, address into the mov (2026-11-19).* Re-measured after step 4ah: the next group is a `lea ADDR,%rT`
+     straight before a `mov` that goes through `(%rT)`: the element addresses step 4ah leaves (`lea (%rB,%rI,8)`)
+     and field addresses (`lea N(%rB)`). When that lea's value is read only by the mov, step 4ai gives the mov the
+     address itself (`mov (%rax,%rcx,8),%rax`, `mov %rsi,8(%rax)`) and deletes the lea (1,812 on the kernel: 1,295
+     element addresses, 494 field addresses, 23 others); %rT keeps its old value, and lea sets no flags. Refused:
+     %rip-relative addresses, a mov with a displacement of its own on `(%rT)`, and any other mention of T in the
+     mov at any width except a full (64- or 32-bit) load into T. On the kernel: 86,168 to 84,336 instructions
+     (87,642 to 84,336 for the batch, -3.8%); compile about 2.39 s (base 2.48 s, under 3 s). Two functions
+     (tss_install 2 pairs, sha_compress 1) keep push/pop pairs they lost before: the extra fold rounds use up
+     the 12-round limit (FS_SSRND) before the round in which fs_ssa_pushpop runs; 16 rounds would give 84,293
+     (not changed here). Code built without `--fs-ssa` is byte-identical. Check fs-ssa-memfold-shape (ssa_idx).
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

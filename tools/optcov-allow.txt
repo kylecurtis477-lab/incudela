@@ -84,3 +84,6 @@ fs_ssa_fold | if extra: #1 | defensive: through-merge with a duplicate test befo
 fs_ssa_fold | else: #3 | defensive: the jne-L through-merge arm (FS_SSCC path) is not hit in the optcov corpus; AND false-paths use je L
 fs_ssa_fold | if extra: #2 | defensive: same as if extra #1 on the through-merge success path
 fs_ssa_fold | elif extra: #2 | defensive: through-merge refuse with a duplicate test to drop is not in the corpus
+fs_ssa_names | if contains(s, FS_SSR[ti]) or contains(s, FS_SSR32[ti]): | defensive (step 4ai): the code generator never uses the address register of a store or load as its other operand, so a folded mov never names T again
+fs_ssa_names | if FS_SSRPI[j] == ti and contains(s, FS_SSRP[j]): | defensive (step 4ai): as above, for the 16- and 8-bit names of T
+fs_ssa_memfold | if fs_ssa_names(chk, ti): | defensive (step 4ai): follows fs_ssa_names; a load into T's full or 32-bit name is allowed before this test
