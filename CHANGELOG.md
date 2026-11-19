@@ -7,8 +7,11 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ad
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ae
 
+- `ad017f8` `--fs-ssa` folds `setCC; movzbl; test; je|jne L` through a same-sense `je|jne F` at L
+  straight to F (step 4ae through-merge stop): kernel instructions 91,807 to 90,625; short-circuit
+  merges that keep `setne` at L stay refused.
 - `cc90ae0` `--fs-ssa` retargets `imul $N,…,%rax` and stores `%rS` straight to MEM (step 4ac) and turns
   unread-flag `add`/`sub` through `%rax` into `lea` into `%rD` (step 4ad): kernel instructions 92,421 to
   91,805.
