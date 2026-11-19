@@ -9,6 +9,16 @@
 
 ## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ak
 
+- `ddcedab` tests/os/forgefs.sh no longer counts box freezes against a boot's 180 s: a wall gap of 5 s or more
+  between two 1 s polls is a freeze, not counted and logged as `box frozen Ns, not counted`
+  (tests/os/frozen.sh); guest running time stays capped at 180 s. Check: `os/forgefs-freeze-accounting`
+  (os211b: boot 0 killed by `timeout 180` after a 12-minute freeze).
+- `5b81e0a` The OS boot harness (tests/os/boot.cud) keeps a read end of QEMU's stdin pipe and monitor FIFO,
+  so writing `q` to a QEMU that already exited no longer kills it by SIGPIPE (exit 141, no result line, no
+  log: `os/kernel-iommu` lost in os211b); writes are checked. Check: `os/boot-harness-early-exit` (a stub
+  QEMU that exits before `q`; missing markers, a wrong exit code and a failed screendump still FAIL).
+- `571967d` The OS boot harness reports a missing or truncated screendump as `screendump failed` (a
+  framebuffer FAIL with its result line and log) instead of crashing on None.
 - `f6890f1` `--fs-ssa` moves a constant index read once by a scaled address into its displacement (step 4ak,
   `mov %rdi,24(%rax)`): kernel instructions 83,521 to 83,106.
 - `b449cc3` `--fs-ssa` lets `ud2` end a path, so a bounds check's pass label keeps the index register and the
