@@ -87,3 +87,5 @@ fs_ssa_fold | elif extra: #2 | defensive: through-merge refuse with a duplicate 
 fs_ssa_names | if contains(s, FS_SSR[ti]) or contains(s, FS_SSR32[ti]): | defensive (step 4ai): the code generator never uses the address register of a store or load as its other operand, so a folded mov never names T again
 fs_ssa_names | if FS_SSRPI[j] == ti and contains(s, FS_SSRP[j]): | defensive (step 4ai): as above, for the 16- and 8-bit names of T
 fs_ssa_memfold | if fs_ssa_names(chk, ti): | defensive (step 4ai): follows fs_ssa_names; a load into T's full or 32-bit name is allowed before this test
+fs_ssa_cidx | if (s != 1 and s != 2 and s != 4 and s != 8) or (char_at(b, o - 1) != 32 and char_at(b, o - 1) != 44) or find(FS_SSR, 14, rb) < 0 or str_eq(rb, rr) or v * s > 2147483647: | defensive (step 4ak): generated scaled addresses are (%rB,%rI,S) with S 1/2/4/8, a tracked base other than the index, no displacement of their own, and indexes far below 2^31/S
+fs_ssa_cidx | if fs_ssa_names(chk, ri): | defensive (step 4ak): the code generator never names the index register again in the mov that uses it, except as a load's destination

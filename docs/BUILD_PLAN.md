@@ -482,6 +482,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    `(%rT)`, is folded into that mov (`mov (%rB,%rI,8),%rD`, `mov %rS,N(%rB)`). Kernel instructions 86,168 to 84,336.
    Step 4aj (2026-11-19, under `--fs-ssa`): `ud2` ends a path in the SSA form (it never falls through), so a
    bounds check's pass label keeps the index register and the `%rcx` copy goes. Kernel instructions 84,336 to 83,521.
+   Step 4ak (2026-11-19, under `--fs-ssa`): a constant index (`mov $N,%rR`, `xor %eR,%eR`) read once by a scaled
+   address goes into its displacement (`mov %rS,24(%rB)`). Kernel instructions 83,521 to 83,106.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1461,6 +1463,16 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      the 12-round limit again (16 rounds would recover them but cost about 0.14 s, so not done). Code built
      without `--fs-ssa` is byte-identical. Check
      fs-ssa-trapend-shape (ssa_idx); fs-ssa-scale-shape and fs-ssa-memfold-shape now accept any index register.
+   - *Step 4ak, constant index into the displacement (2026-11-19).* Re-measured after step 4aj: 406 scaled
+     addresses `(%rB,%rcx,S)` take a constant index loaded just before (`mov $N,%rcx`, 298; `xor %ecx,%ecx`, 108),
+     element N of an array whose bounds check the compiler already dropped. When that index is read only by the
+     address (and the xor's flags are unread), step 4ak writes `N*S(%rB)` (`(%rB)` for 0) and deletes the load;
+     the mov must name %rR nowhere else except as a full load into it. On the kernel: 83,521 to 83,106
+     instructions (415 fewer, some through step 4ai folding the `lea` before it); 84,336 to 83,106 for the two
+     steps. Compile user time about 2.39 s (base 2.32 s), wall about 2.46 s (base 2.37 s), under 3 s. Code built
+     without `--fs-ssa` is byte-identical. Check fs-ssa-cidx-shape (ssa_cidx; --no-bounds, since at -O0 the
+     kept bounds checks compare the constant too). fs-ssa-mem-shape (step 4n) now also accepts `N(%rB)`, still
+     exactly 2 stores of %rdx.
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in

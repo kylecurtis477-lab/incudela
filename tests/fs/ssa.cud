@@ -264,6 +264,12 @@ def ssa_idx(i: i64, v: i64) -> i64:
     g_arr[i] = v
     return g_arr[i] + g_arr[7 - i]
 
+def ssa_cidx(a: i64) -> i64:
+# step 4ak: constant indexes (no bounds check left) load `mov $3,%rcx` or `xor %ecx,%ecx` for the scaled address;
+# under --fs-ssa they go into the displacement: `mov %rS,24(%rax)`, `mov (%rax),%rD`
+    g_arr[3] = a
+    return g_arr[0] + g_arr[3]
+
 def show(x: i64):
     put_i64(x)
     nl()
@@ -333,4 +339,6 @@ def main() -> i64:
     show(ssa_idx(2, 40))
     show(ssa_idx(7, -5))
     show(ssa_idx(0, 9))
+    show(ssa_cidx(11))
+    show(ssa_cidx(-2))
     return 0

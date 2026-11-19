@@ -22239,6 +22239,7 @@ def fs_ssa_fold(n, ln, vi, cnt):
 #   mov %rS,%rax / mov %rax,MEM       ->  mov %rS,MEM        (step 4ac; that %rax once)
 #   imul $S,%rR,%rR / add %rR,%rD     ->  lea (%rD,%rR,S),%rD (step 4ah; S 1/2/4/8; that %rR once; add flags unread)
 #   lea ADDR,%rT / mov* ..(%rT)..     ->  mov* ..ADDR..        (step 4ai; that %rT once; no %rip; see fs_ssa_memfold)
+#   mov $N,%rR / mov* ..(%rB,%rR,S).. ->  mov* ..NS(%rB)..   (step 4ak; also xor %eR,%eR, N 0; see fs_ssa_cidx)
     nf = 0
     p = 0
     while p + 1 < n:
@@ -22260,7 +22261,10 @@ def fs_ssa_fold(n, ln, vi, cnt):
                 out[ln[p]] = ""
                 nf += 1
         elif vi[p * 16] >= 0 and starts(b, "    ") and starts(a, "    "):
-            if starts(a, "    mov $") and ends(a, ",%rcx\n"):
+            if (starts(a, "    mov $") or starts(a, "    xor %e")) and starts(b, "    ") and find_char(a, 10) == len(a) - 1 and find_char(b, 10) == len(b) - 1 and fs_ssa_cidx(p, ln, cnt, a, b) > 0:
+            # step 4ak: a constant index goes into the displacement of the address that reads it (fs_ssa_cidx)
+                nf += 1
+            elif starts(a, "    mov $") and ends(a, ",%rcx\n"):
                 imm = substr(a, 8, len(a) - 6)
                 did = 0
                 # step 4u: cnt can be >1 when a later call is treated as reading %rcx; fs_ssa_rcx_lo
@@ -22561,6 +22565,53 @@ def fs_ssa_memfold(p, ln, cnt, a, b):
         return 0
     out[ln[p]] = ""
     out[ln[p + 1]] = c3(substr(b, 0, k), addr_s, substr(b, k + len(m), len(b)))
+    return 1
+
+def fs_ssa_cidx(p, ln, cnt, a, b):
+# Step 4ak: `mov $N,%rR` (N a decimal) or `xor %eR,%eR` (N = 0; its flags unread) at p whose %rR is read only by
+# the mov or lea at p + 1, as the index of its memory operand `(%rB,%rR,S)` (no displacement of its own, B not R),
+# where the mov names R nowhere else except as the whole destination of a load: the operand becomes
+# `N*S(%rB)` (`(%rB)` for 0; N*S must fit a signed 32-bit displacement) and the line at p is deleted. %rR keeps its
+# old value, which nothing read. Returns 1 for a rewrite, else 0.
+    cm = find_char(a, 44)
+    rr = substr(a, cm + 1, len(a) - 1)
+    v = 0
+    if starts(a, "    xor %e"):
+        r32 = substr(a, 8, cm)
+        ri = find(FS_SSR32, 14, r32)
+        if ri < 0 or not str_eq(r32, rr) or cnt[p * 16 + 15] != 0:
+            return 0
+        rr = FS_SSR[ri]
+    else:
+        ri = find(FS_SSR, 14, rr)
+        imm = substr(a, 8, cm)
+        if ri < 0 or not fs_ssa_imm(imm) or starts(imm, "$-"):
+            return 0
+        v = fs_lv_num(substr(imm, 1, len(imm)))
+    if cnt[p * 16 + ri] != 1 or not (starts(b, "    mov") or starts(b, "    lea ")):
+        return 0
+    k = fs_ssa_at(b, c3(",", rr, ","))
+    if k < 6 or char_at(b, k - 5) != 40 or char_at(b, k + len(rr) + 3) != 41:
+        return 0
+    s = char_at(b, k + len(rr) + 2) - 48
+    o = k - 5
+    rb = substr(b, o + 1, k)
+    e = k + len(rr) + 4
+    if (s != 1 and s != 2 and s != 4 and s != 8) or (char_at(b, o - 1) != 32 and char_at(b, o - 1) != 44) or find(FS_SSR, 14, rb) < 0 or str_eq(rb, rr) or v * s > 2147483647:
+        return 0
+    rest = concat(substr(b, 0, o), substr(b, e, len(b)))
+    chk = rest
+    if char_at(b, e) == 44:
+        d = substr(b, e + 1, len(b) - 1)
+        if str_eq(d, rr) or str_eq(d, FS_SSR32[ri]):
+            chk = substr(b, 0, o)
+    if fs_ssa_names(chk, ri):
+        return 0
+    dsp = ""
+    if v * s != 0:
+        dsp = str(v * s)
+    out[ln[p]] = ""
+    out[ln[p + 1]] = c4(substr(b, 0, o), dsp, c3("(", rb, ")"), substr(b, e, len(b)))
     return 1
 
 def fs_ssa_raxc(p, n, ln, cnt, s, b):
