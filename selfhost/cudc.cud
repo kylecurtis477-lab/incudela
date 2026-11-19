@@ -22232,6 +22232,7 @@ def fs_ssa_fold(n, ln, vi, cnt):
 #   add $N,%rax / mov %rax,%rD        ->  lea N(%rax),%rD    (step 4ad; flags unread; that %rax once)
 #   sub $N,%rax / mov %rax,%rD        ->  lea -N(%rax),%rD   (step 4ad; flags unread; N not int32 min)
 #   mov %rS,%rax / mov %rax,MEM       ->  mov %rS,MEM        (step 4ac; that %rax once)
+#   imul $S,%rR,%rR / add %rR,%rD     ->  lea (%rD,%rR,S),%rD (step 4ah; S 1/2/4/8; that %rR once; add flags unread)
     nf = 0
     p = 0
     while p + 1 < n:
@@ -22408,6 +22409,20 @@ def fs_ssa_fold(n, ln, vi, cnt):
                     out[ln[p]] = c3(substr(a, 0, len(a) - 6), ",", concat(rd, "\n"))
                     out[ln[p + 1]] = ""
                     nf += 1
+            elif starts(a, "    imul $") and p + 1 < n and fs_ssa_scale(a) > 0:
+            # step 4ah: imul $S,%rR,%rR (S 1/2/4/8) read once, by an add into %rD, becomes the scaled index of
+            # a lea into %rD (4ad would otherwise make it lea (%rD,%rR) later); %rR keeps the unscaled value, unread
+                s = fs_ssa_scale(a)
+                rr = substr(a, len(a) - 5, len(a) - 1)
+                ri = find(FS_SSR, 14, rr)
+                if ri > 0 and cnt[p * 16 + ri] == 1:
+                    sc = c3(",", substr(a, 10, 11), ")")
+                    if starts(b, c3("    add ", rr, ",%r")) and ends(b, "\n") and cnt[(p + 1) * 16 + 15] == 0:
+                        rd = substr(b, 13, len(b) - 1)
+                        if find(FS_SSR, 14, rd) >= 0 and not str_eq(rd, rr):
+                            out[ln[p]] = ""
+                            out[ln[p + 1]] = c4("    lea (", rd, c3(",", rr, sc), concat(",", concat(rd, "\n")))
+                            nf += 1
             elif starts(a, "    imul $") and ends(a, ",%rax\n") and starts(b, "    mov %rax,%") and ends(b, "\n") and cnt[p * 16] == 1:
             # step 4ac: three-operand imul retargets %rax; two-operand becomes three-operand into %rD
                 rd = substr(b, 13, len(b) - 1)
@@ -22464,6 +22479,19 @@ def fs_ssa_fold(n, ln, vi, cnt):
                         p += q - 1
         p += 1
     return nf
+
+def fs_ssa_scale(a):
+# step 4ah: S for `imul $S,%rR,%rR` with S 1, 2, 4 or 8 and R a four-letter name (%rax..%rdi, %r10..%r15), else 0
+    if len(a) != 22 or not ends(a, "\n"):
+        return 0
+    r1 = substr(a, 12, 16)
+    r2 = substr(a, 17, 21)
+    if char_at(a, 11) != 44 or char_at(a, 16) != 44 or not str_eq(r1, r2) or not starts(r1, "%r"):
+        return 0
+    d = char_at(a, 10)
+    if d == 49 or d == 50 or d == 52 or d == 56:
+        return d - 48
+    return 0
 
 def fs_ssa_raxc(p, n, ln, cnt, s, b):
 # Step 4p: `mov %rS,%rax` at position p (S a tracked register other than %rax) followed by

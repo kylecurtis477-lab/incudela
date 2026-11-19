@@ -227,6 +227,7 @@ def ssa_drop(x: i64):
 
 
 g_z: i64
+g_arr: i64[8]
 
 def ssa_zstore(a: i64) -> i64:
 # step 4aa: stores of 0 go out as movq $0,MEM under --fs-ssa (no xor/%rax temp)
@@ -256,6 +257,12 @@ def ssa_leamov(a: i64) -> i64:
 # step 4ab: lea of a global address goes straight into the call/use register
     p: ptr[i64] = addr(g_z)
     return a + p[0]
+
+def ssa_idx(i: i64, v: i64) -> i64:
+# step 4ah: each checked index scales with `imul $8` into the add or lea that forms the address; under --fs-ssa
+# the scale moves into that address as (%rB,%rI,8) and the imul goes
+    g_arr[i] = v
+    return g_arr[i] + g_arr[7 - i]
 
 def show(x: i64):
     put_i64(x)
@@ -323,4 +330,7 @@ def main() -> i64:
     show(ssa_andmerge(3, 25))
     show(ssa_brk(3))
     show(ssa_brk(200))
+    show(ssa_idx(2, 40))
+    show(ssa_idx(7, -5))
+    show(ssa_idx(0, 9))
     return 0

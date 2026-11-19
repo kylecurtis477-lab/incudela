@@ -476,6 +476,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    are never run and are deleted. Kernel instructions 90,924 to 89,193.
    Step 4ag (2026-11-19, under `--fs-ssa`): a `jmp .LFk` with `.LFk:` among the labels straight after it is
    deleted. Kernel instructions 89,193 to 87,642.
+   Step 4ah (2026-11-19, under `--fs-ssa`): `imul $S,%rR,%rR` (S 1, 2, 4 or 8) read once by the `add` or `lea` that
+   forms an address becomes that address's scaled index `(%rB,%rR,S)`. Kernel instructions 87,642 to 86,168.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1423,6 +1425,15 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      87,642 instructions (90,924 to 87,642 for the batch); compile about 2.47 s (base 2.35 s, under 3 s). Code
      built without `--fs-ssa` is byte-identical. Check fs-ssa-jnext-shape (ssa_brk's return-label jump goes;
      no `jmp` to a following label anywhere in tests/fs/ssa.cud).
+   - *Step 4ah, scaled index (2026-11-19).* Re-measured after step 4ag against w223/cudc-base (87,642 kernel
+     instructions at 63be618): the largest remaining group is the checked index scale, `imul $8,%rcx,%rcx` followed
+     by `add %rcx,%rax` (1,007) or by the `lea (%rax,%rcx),%rD` that step 4ad makes of that add (576) to form an
+     element address. When the scaled value is read only by the `add` and its flags are unread, step 4ah puts
+     the scale in the address: `lea (%rD,%rR,S),%rD` (step 4ab then retargets it as before), with S 1, 2, 4 or 8
+     and %rR a four-letter name (%rax..%rdi, %r10..%r15);
+     %rR then keeps the unscaled index, which nothing reads. On the kernel: 87,642 to 86,168 instructions
+     (1,474 fewer); compile about 2.48 s (base 2.55 s, under 3 s). Code built without `--fs-ssa` is
+     byte-identical. Check fs-ssa-scale-shape (ssa_idx).
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in
