@@ -2,6 +2,7 @@
 # run_tests.sh fails os/result-count if any is missing, so lost output can never look like a smaller passing run.
 os/kernel-wx
 os/boot-harness-self-test
+os/boot-harness-early-exit
 os/kernel-bios
 os/hang-probe-live
 os/irq-off-watch

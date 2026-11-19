@@ -42,6 +42,7 @@ class H:
         self.root = ""
         self.mon = ""
         self.mfd = -1
+        self.minkeep = -1
         self.shot = ""
         self.log = ""
         self.name = ""
@@ -158,8 +159,10 @@ def monitor(h, cmd, wait=1.0):
     try:
         mon_drain(h)
         w = os.open(concat(h.mon, ".in"), 2048 | 1)
-        os.write(w, concat(cmd, "\n"))
+        e = send(w, concat(cmd, "\n"))
         os.close(w)
+        if e != "":
+            return f"[monitor {__repr(cmd)} failed: {e}]"
         out = ""
         t0 = clk()
         while clk() - t0 < wait:
@@ -347,10 +350,23 @@ def type_keys(h, line):
             k = concat("shift-", lower(ch))
         else:
             k = ch
-        os.write(w, f"sendkey {k}\n")
+        e = send(w, f"sendkey {k}\n")
+        if e != "":
+            os.close(w)
+            raise Exception(e)
         time.sleep(0.03)
     os.close(w)
     time.sleep(0.2)
+
+def send(fd, s):
+# write s to a pipe or FIFO and check the result: "" when all of it went, else why not (os.write returns the raw
+# syscall result, -errno on failure). Never SIGPIPE: boot() keeps a read end of every pipe and FIFO it writes to.
+    n: int = os.write(fd, s)
+    if n == len(s):
+        return ""
+    if n < 0:
+        return f"write failed, errno {0 - n}"
+    return f"short write, {n} of {len(s)} bytes"
 
 def spawn(h, pin, pout):
     pid = os.fork()
@@ -381,10 +397,17 @@ def boot(h, attempt):
             os.remove(concat(h.mon, sfx))
         os.mkfifo(concat(h.mon, sfx), 384)
     h.mfd = os.open(concat(h.mon, ".out"), 2048 | 2)
+    # inv211: the harness keeps a read end of QEMU's stdin pipe and of MON.in for the whole boot. A write to a
+    # pipe with no reader raises SIGPIPE, which killed the harness silently (exit 141, no result line, no log)
+    # when QEMU had already exited, e.g. the kernel's 5 s wait for 'q' ran out during the screendumps
+    # (os/kernel-iommu result lost in os211b). With a reader always present a late write just sits unread in
+    # the pipe and the boot is judged from the serial log as usual. (SIGPIPE cannot be set to SIG_IGN from
+    # Cuditor: __syscall passes r10 = 0, and rt_sigaction needs sigsetsize 8 there.)
+    h.minkeep = os.open(concat(h.mon, ".in"), 2048 | 2)
     pin = os.pipe()
     pout = os.pipe()
     pid = spawn(h, pin, pout)
-    os.close(pin[0])
+    inkeep = pin[0]
     os.close(pout[1])
     sin = pin[1]
     sout = pout[0]
@@ -491,7 +514,9 @@ def boot(h, attempt):
                 if how == "k":
                     type_keys(h, line)
                 else:
-                    os.write(sin, concat(line, "\r"))
+                    e = send(sin, concat(line, "\r"))
+                    if e != "":
+                        buf += f"[harness: send failed: {e}]"
             except Exception as ex:
                 buf += f"[harness: send failed: {ex}]"
             tprev = clk()
@@ -502,10 +527,9 @@ def boot(h, attempt):
                 buf = concat(buf, concat("\n", probe_dump(h, buf)))
             if FBTEXT[0] != "":
                 fbmsg = screenshot(h)
-            try:
-                os.write(sin, "q")
-            except Exception:
-                pass
+            e = send(sin, "q")
+            if e != "":
+                buf += f"[harness: 'q' not delivered: {e}]"
             tprev = clk()
         time.sleep(0.05)
     if rc is None:
@@ -520,6 +544,8 @@ def boot(h, attempt):
         buf += c
     os.close(sout)
     os.close(sin)
+    os.close(inkeep)
+    os.close(h.minkeep)
     os.close(h.mfd)
     for sfx in [".in", ".out"]:
         if os.path.exists(concat(h.mon, sfx)):

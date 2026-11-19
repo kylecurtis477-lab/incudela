@@ -28,6 +28,8 @@ B=$L/boot
 build/cudc tests/os/boot.cud $L/boot.s && build/fas -o $L/boot.o $L/boot.s && build/fld --base 0x100000000000 -o $B $L/boot.o || { echo "FAIL os/boot-harness-build"; exit 0; }
 # No QEMU: stall predicate + pipe drain (inv118b hang-dump regression)
 if $B --self-test; then echo "PASS os/boot-harness-self-test"; else echo "FAIL os/boot-harness-self-test"; exit 0; fi
+# No QEMU: a stub that drops its stdin and exits before the harness sends 'q' (inv211: SIGPIPE killed the harness)
+bash tests/os/boot-early-exit.sh $B $L
 # every path also gets the GPT disk as a read-only virtio-blk data disk (removable-media fallback loader
 # deleted so firmware never boots from it); the kernel reads \EFI\Incudela\init.elf from its ESP
 cp build/efi/disk.img $L/vdisk.img && mdel -i $L/vdisk.img@@1048576 ::/EFI/BOOT/BOOTX64.EFI
