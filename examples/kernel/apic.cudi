@@ -92,22 +92,33 @@ def pic_disable():
 # the tail of a typed line, as if CPU 0 had not taken interrupts for seconds. Its LAPIC timer stays pending while
 # IF=0, so the gap between two CPU 0 timer interrupts bounds the longest interrupts-off stretch (to one tick). One
 # rdtsc per CPU 0 tick; nothing in the kernel reads these. Reported at the end of the shell session and in the
-# hang probe. Gaps are raw TSC time: a frozen or suspended box shows up here as a gap too.
+# hang probe. Gaps are raw TSC time, and under QEMU the TSC follows host time while the guest is not run: in
+# kbs-s1 a 126 s, 304 s and 140 s gap each matched a whole-box freeze the harness measured, to the millisecond.
+# Gaps of I0_STALL_MS or more are therefore counted apart as "guest not running" (i0_stalls, i0_stall_max) and
+# kept out of i0_max and i0_over. Both are printed; nothing is judged on either.
 I0_WARN_MS = 250
+I0_STALL_MS = 5000
 i0_last: u64
-i0_max: u64  # longest gap, TSC ticks
+i0_max: u64  # longest gap under I0_STALL_MS, TSC ticks
 i0_max_tick: u64  # lapic_ticks when the longest gap ended
-i0_over: u64  # gaps over I0_WARN_MS
+i0_over: u64  # gaps over I0_WARN_MS (and under I0_STALL_MS)
+i0_stalls: u64  # gaps of I0_STALL_MS or more: guest not running (box or vCPU stalled)
+i0_stall_max: u64  # longest such gap, TSC ticks
 
 def i0_watch():
     n = rdtsc()
     if i0_last != 0 and tsc_per_ms != 0:
         d = n - i0_last
-        if d > i0_max:
-            i0_max = d
-            i0_max_tick = lapic_ticks
-        if d > tsc_per_ms * I0_WARN_MS:
-            i0_over += 1
+        if d >= tsc_per_ms * I0_STALL_MS:
+            i0_stalls += 1
+            if d > i0_stall_max:
+                i0_stall_max = d
+        else:
+            if d > i0_max:
+                i0_max = d
+                i0_max_tick = lapic_ticks
+            if d > tsc_per_ms * I0_WARN_MS:
+                i0_over += 1
     i0_last = n
 
 def i0_reset():
@@ -116,18 +127,27 @@ def i0_reset():
     i0_max = 0
     i0_max_tick = 0
     i0_over = 0
+    i0_stalls = 0
+    i0_stall_max = 0
+
+def i0_ms(t: u64):
+    if tsc_per_ms != 0:
+        put_u64(t / tsc_per_ms)
+    else:
+        putc(63)
 
 def i0_report():
     puts("irq-off watch: cpu0 longest gap between timer interrupts ")
-    if tsc_per_ms != 0:
-        put_u64(i0_max / tsc_per_ms)
-    else:
-        putc(63)
+    i0_ms(i0_max)
     puts(" ms (at tick ")
     put_u64(i0_max_tick)
     puts("), gaps over 250 ms: ")
     put_u64(i0_over)
-    putc(10)
+    puts("; guest not running (gaps of 5 s or more): ")
+    put_u64(i0_stalls)
+    puts(", longest ")
+    i0_ms(i0_stall_max)
+    puts(" ms\n")
 
 @interrupt
 def on_lapic_timer(frame: ptr[u64]):

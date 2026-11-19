@@ -109,9 +109,12 @@ gen-3 dump: all 4 CPUs in the scheduler test, two in `spin_lock` on `counter_loc
 Interrupts-off watch (`apic.cudi`, after inv203, diagnostic only): CPU 0 takes one `rdtsc` per LAPIC timer
 interrupt and keeps the longest gap between two of them for the shell session (the timer stays pending while
 IF=0, so the gap bounds the longest interrupts-off stretch on the only IRQ1 target), printed as `irq-off watch:
-cpu0 longest gap between timer interrupts N ms (at tick T), gaps over 250 ms: K` and carried by the hang probe.
-It never fails a boot and does not use `tsc_counted` (a box freeze shows as a gap and is not counted in
-`clock_jumps`); `os/irq-off-watch` logs the numbers.
+cpu0 longest gap between timer interrupts N ms (at tick T), gaps over 250 ms: K; guest not running (gaps of
+5 s or more): S, longest M ms` and carried by the hang probe (`i0_stalls` too). It never fails a boot and does not
+use `tsc_counted`: under QEMU the TSC follows host time while the guest is not run, so a box freeze shows as
+one long gap (kbs-s1: 126 s, 304 s and 140 s gaps, each the freeze the harness measured); gaps of 5 s or more
+are counted apart as "guest not running" and kept out of N and K. `os/irq-off-watch` needs the full line and
+logs the numbers.
 Both checks count only check-to-check TSC gaps up to 1 s (`tsc_counted`): the box running QEMU is itself a
 VM that is at times suspended whole (90-145 s), and the guest TSC jumps by the freeze on resume. Without this, a
 freeze during a lock wait or the worker window would raise a false PANIC-STALL. Skipped jumps are counted in

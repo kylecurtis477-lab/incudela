@@ -369,4 +369,5 @@ def hang_probe_line():
     probe_put("i0_max", addr(i0_max))
     probe_put("i0_max_tick", addr(i0_max_tick))
     probe_put("i0_over", addr(i0_over))
+    probe_put("i0_stalls", addr(i0_stalls))
     putc(10)
