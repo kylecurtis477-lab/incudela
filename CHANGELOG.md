@@ -7,8 +7,12 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ae
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ag
 
+- `1aabd27` `--fs-ssa` deletes a `jmp .LFk` whose target is among the labels straight after it (step 4ag):
+  kernel instructions 89,193 to 87,642.
+- `4ccc1aa` `--fs-ssa` deletes the never-run lines straight after an unconditional `jmp` with no label between
+  (step 4af, `jmp; jmp` after `break` and `jmp; xor` after a loop exit): kernel instructions 90,924 to 89,193.
 - `f2ffc23` Kernel irq-off watch counts CPU 0 timer gaps of 5 s or more apart as "guest not running" (a box
   freeze: the guest TSC follows host time), keeping them out of the longest gap and the over-250-ms count;
   diagnostic only (kbs-s1 stress: 126 s, 304 s and 140 s gaps were box freezes).
