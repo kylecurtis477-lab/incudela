@@ -116,22 +116,9 @@ def exists(path):
     except FileNotFoundError:
         return False
 
-WARNED = []
-
-def old_name(path):
-# cuditor.toml / cuditor.lock were forge.toml / forge.lock before the rename (2026-11-16); still read for one release
-    for n in ["toml", "lock"]:
-        if path.endswith("cuditor." + n):
-            return path[:len(path) - len("cuditor." + n)] + "forge." + n
-    return path
-
 def readf(path):
+# (forge.toml / forge.lock, the names before the 2026-11-16 rename, were read until 0.22.0)
     if not exists(path):
-        if old_name(path) != path and exists(old_name(path)):
-            if old_name(path) not in WARNED:
-                WARNED.append(old_name(path))
-                sys.stderr.write("warning: " + old_name(path) + " is deprecated, use " + path + " (renamed 2026-11-16; the old name is removed in 0.22.0)\n")
-            return read_file(old_name(path))
         die("missing file " + path)
     return read_file(path)
 
@@ -353,7 +340,7 @@ def lock_text(reg, root, sel, mans):
 
 def read_lock(path):
 # -> (header dict, list of package dicts)
-    if not exists(path) and not exists(old_name(path)):
+    if not exists(path):
         die("no cuditor.lock (run `cuditor pkg lock`)")
     hdr = {}
     pk = []

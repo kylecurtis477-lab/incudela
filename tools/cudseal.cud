@@ -885,7 +885,6 @@ def main(sp: u64) -> u64:
     if tn < 0:
         return fail(src, ": cannot read source")
     caps: u64 = 0
-    warned = 0
     p = u64(addr(txt.b[0]))
     e = p + u64(tn)
     while p < e:
@@ -897,12 +896,8 @@ def main(sp: u64) -> u64:
             r += 1
             while r < q and is_ws(u64(pb(r)[0])):
                 r += 1
-            # "cuditor:", or "forge:" from before the Cuditor rename (accepted, with a warning, until 0.22.0)
-            old = 0
+            # "cuditor:" (the pre-rename "forge:" was read until 0.22.0)
             n1 = lit(r, q, "cuditor:")
-            if n1 == 0:
-                n1 = lit(r, q, "forge:")
-                old = 1
             if n1:
                 r += n1
                 while r < q and is_ws(u64(pb(r)[0])):
@@ -914,11 +909,6 @@ def main(sp: u64) -> u64:
                     while z > r and pb(z - 1)[0] != 41:
                         z -= 1
                     if z > r:
-                        if old and warned == 0:
-                            ws(2, "cudseal: ")
-                            wz(2, src)
-                            ws(2, ": warning: forge: caps lines are deprecated, use # cuditor: caps(...) (renamed 2026-11-16; the old name is removed in 0.22.0)\n")
-                            warned = 1
                         z -= 1
                         while r <= z:
                             ce = r

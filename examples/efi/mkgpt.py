@@ -8,14 +8,8 @@ usage: mkgpt.py out.img esp.fat [size_mib]
 INCUDELA_GUID_SEED=N (testing only): GUID k (k = 0..2 partitions, 3 disk) is bytes_le = pack('<QQ', N, k)
 instead of uuid4, so the image is reproducible (tests/mkgpt compares against examples/efi/mkgpt.cud)."""
 import os, sys, struct, zlib, uuid
-SEED_WARNED = []
 def newguid(k):
     seed = os.environ.get('INCUDELA_GUID_SEED')
-    if seed is None and 'FORGE_GUID_SEED' in os.environ:
-        seed = os.environ['FORGE_GUID_SEED']
-        if not SEED_WARNED:
-            SEED_WARNED.append(1)
-            print('warning: FORGE_GUID_SEED is deprecated, use INCUDELA_GUID_SEED (renamed 2026-11-16; the old name is removed in 0.22.0)', file=sys.stderr)
     if seed is None: return uuid.uuid4()
     return uuid.UUID(bytes_le=struct.pack('<QQ', int(seed), k))
 SEC = 512

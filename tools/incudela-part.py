@@ -15,14 +15,8 @@ import os, sys, struct, zlib, uuid
 SEC = 512
 FORGE = uuid.UUID('D0C2E3A1-6B7F-4F0A-9E11-466F72676546')
 
-SEED_WARNED = []
 def newguid(k):
     seed = os.environ.get('INCUDELA_GUID_SEED')
-    if seed is None and 'FORGE_GUID_SEED' in os.environ:
-        seed = os.environ['FORGE_GUID_SEED']
-        if not SEED_WARNED:
-            SEED_WARNED.append(1)
-            print('warning: FORGE_GUID_SEED is deprecated, use INCUDELA_GUID_SEED (renamed 2026-11-16; the old name is removed in 0.22.0)', file=sys.stderr)
     if seed is None: return uuid.uuid4()
     return uuid.UUID(bytes_le=struct.pack('<QQ', int(seed), k))
 

@@ -21,7 +21,7 @@ the cudseal.py docstring and docs/SYSTEMS.md.
   in `FILE:LINE` (the `\S*{f}:\d+ .*ops=(\d+)` regex, last `ops=` per line).
 - **Baseline.** It computes `relpath(dirname(abspath(SRC)), ROOT)` with Python's normpath rules and takes the last
   6-token line `REL FILE fn blk ops top`.
-- **Caps.** Every line that starts `#\s*cuditor:\s*caps(` (or the pre-rename `#\s*forge:\s*caps(`, accepted for one release) contributes its comma-separated names. The group runs to the
+- **Caps.** Every line that starts `#\s*cuditor:\s*caps(` (the pre-rename `#\s*forge:\s*caps(` was read until 0.22.0 and is now an ordinary comment) contributes its comma-separated names. The group runs to the
   line's *last* `)`, as the greedy regex does.
 - **Image.** The image is streamed: its length comes from fstat, the head and the last 384 bytes from pread (for the
   ELF/OSABI and already-sealed checks), and the SHA-256 is computed in 64 KiB reads. The trailer is then appended

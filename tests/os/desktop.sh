@@ -25,9 +25,9 @@ T=$(mktemp -d /tmp/forge-desktop.XXXXXX)
 trap 'rm -rf $T' EXIT
 [ -x $B ] && [ -f $L/vdisk.img ] || { echo "FAIL os/desktop (needs tests/os/run.sh outputs)"; exit 0; }
 cp -r build/kernel/iso $T/iso
-# the old key (`forge.desktop`, before the Incudela rename) on purpose: it must still be read for one release
-sed -i 's|multiboot2 /boot/kernel.elf$|multiboot2 /boot/kernel.elf forge.desktop|' $T/iso/boot/grub/grub.cfg
-grep -q 'forge.desktop' $T/iso/boot/grub/grub.cfg || { echo "FAIL os/desktop (grub.cfg edit)"; exit 0; }
+# the key (`forge.desktop` before the Incudela rename, read until 0.22.0)
+sed -i 's|multiboot2 /boot/kernel.elf$|multiboot2 /boot/kernel.elf incudela.desktop|' $T/iso/boot/grub/grub.cfg
+grep -q 'incudela.desktop' $T/iso/boot/grub/grub.cfg || { echo "FAIL os/desktop (grub.cfg edit)"; exit 0; }
 env -u SOURCE_DATE_EPOCH grub-mkrescue -o $T/desktop.iso $T/iso >/dev/null 2>&1 || { echo "FAIL os/desktop (grub-mkrescue)"; exit 0; }
 VD="-drive file=$L/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio-blk-pci,drive=vd"
 rm -f $L/desktop.ppm

@@ -1,6 +1,6 @@
 # Cuditor for systems / OS work (freestanding mode)
 
-The language was named Forge until 2026-11-16 (README, "Renamed"); `# forge:` pragmas are still read for one release. The OS built with it is Incudela (`incudela-kernel 0.2.6`; README, "Renamed from Forge"). Licences: Incudela Apache-2.0, Cuditor MIT (LICENSE, REUSE.toml).
+The language was named Forge until 2026-11-16 (README, "Renamed"); the old `# forge:` pragmas were read until 0.22.0. The OS built with it is Incudela (`incudela-kernel 0.2.6`; README, "Renamed from Forge"). Licences: Incudela Apache-2.0, Cuditor MIT (LICENSE, REUSE.toml).
 
 Enable with `# cuditor: no-runtime` at the top of the file or `cudc --freestanding in.cud out.s`.
 The output is plain GAS assembly for x86-64 that can be assembled with `as` and linked with `ld` and a linker script.

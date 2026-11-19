@@ -1,4 +1,0 @@
-#!/bin/sh
-# forge: the old name of ./cuditor (renamed 2026-11-16), kept for one release
-echo "warning: ./forge is deprecated, use ./cuditor (renamed 2026-11-16; the old name is removed in 0.22.0)" >&2
-exec "$(dirname "$0")/cuditor" "$@"

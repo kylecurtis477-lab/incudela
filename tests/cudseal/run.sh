@@ -49,18 +49,18 @@ chk "v3 hello" $T/u/hello.raw $U/hello.cud @ $T/k32 $BL
 chk "v3 cat --extra-key" $T/u/cat.raw --extra-key $T/k100 $U/cat.cud @ $T/k32 $BL
 chk "empty --extra-key" $T/u/cat.raw --extra-key $T/k0 $U/cat.cud @ $T/k32 $BL
 chk "v3 captest caps" $T/u/captest.raw $U/captest.cud @ $T/k1 $BL
-# the caps line is read, not only compared: cat.cud says `# cuditor: caps(fs)` (the new spelling) and a scratch copy
-# with the pre-rename `# forge: caps(fs)` must give the same mask (inv165: both tools read only `forge:`, so cat
-# was sealed with caps 0 and every boot panicked at its seal check)
+# the caps line is read, not only compared: cat.cud says `# cuditor: caps(fs)` and must give caps 0x1 (inv165: both
+# tools read only `forge:`, so cat was sealed with caps 0 and every boot panicked at its seal check); a scratch copy
+# with the pre-rename `# forge: caps(fs)` (read until 0.22.0) gives caps 0, with no warning
 cp $T/u/cat.raw $T/cat1.img; python3 tools/cudseal.py $U/cat.cud $T/cat1.img $T/k32 $BL > $T/c1.out 2>&1
 cp $T/u/cat.raw $T/cat2.img; $S $U/cat.cud $T/cat2.img $T/k32 $BL > $T/c2.out 2>&1
 { sed 's/^# cuditor: caps(/# forge: caps(/' $U/cat.cud > $T/catold.cud; } && grep -q '^# forge: caps(fs)' $T/catold.cud
 echo "$R catold.cud $(grep "^examples/user cat.cud " $BL | cut -d' ' -f3-)" >> $T/bl.txt
 cp $T/u/cat.raw $T/cat3.img; $S $T/catold.cud $T/cat3.img $T/k32 $T/bl.txt > $T/c3.out 2>&1
-# and the old spelling warns (once), the new one does not, and the sealed images are byte-identical
-if grep -q "caps 0x1$" $T/c1.out && grep -q "caps 0x1$" $T/c2.out && grep -q "caps 0x1$" $T/c3.out && cmp -s $T/cat2.img $T/cat3.img \
-  && ! grep -q deprecated $T/c2.out && [ "$(grep -c "warning: forge: caps lines are deprecated, use # cuditor: caps" $T/c3.out)" = 1 ]
-then echo "PASS cudseal caps-spellings (cuditor: and forge: both give caps 0x1, same image, forge: warns once)"
+cp $T/u/cat.raw $T/cat4.img; python3 tools/cudseal.py $T/catold.cud $T/cat4.img $T/k32 $T/bl.txt > $T/c4.out 2>&1
+if grep -q "caps 0x1$" $T/c1.out && grep -q "caps 0x1$" $T/c2.out && grep -q "caps 0x0$" $T/c3.out && grep -q "caps 0x0$" $T/c4.out \
+  && ! cmp -s $T/cat2.img $T/cat3.img && ! grep -q -e deprecated -e warning $T/c2.out $T/c3.out $T/c4.out
+then echo "PASS cudseal caps-spellings (cuditor: gives caps 0x1; forge: is not read, caps 0x0, no warning)"
 else echo "FAIL cudseal caps-spellings"; cat $T/c1.out $T/c2.out $T/c3.out | head -6; fail=1; fi
 chk "--v2" $T/u/hello.raw --v2 $U/hello.cud @ $T/k32 $BL
 chk "--alg-id 2" $T/u/hello.raw --alg-id 2 $U/hello.cud @ $T/k32 $BL

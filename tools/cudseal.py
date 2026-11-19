@@ -104,14 +104,10 @@ def main():
     else:
         sys.exit(f'cudseal: {src}: unsafe counts {cnt} are not in the audited baseline; refusing to seal')
     caps = 0
-    warned = False
     for l in open(src):
-        mm = re.match(r'#\s*(cuditor|forge):\s*caps\((.*)\)', l)  # forge: is the pre-rename spelling (until 0.22.0)
+        mm = re.match(r'#\s*cuditor:\s*caps\((.*)\)', l)  # the pre-rename forge: was read until 0.22.0
         if mm:
-            if mm.group(1) == 'forge' and not warned:
-                print(f'cudseal: {src}: warning: forge: caps lines are deprecated, use # cuditor: caps(...) (renamed 2026-11-16; the old name is removed in 0.22.0)', file=sys.stderr)
-                warned = True
-            for c in filter(None, (x.strip() for x in mm.group(2).split(','))):
+            for c in filter(None, (x.strip() for x in mm.group(1).split(','))):
                 if c not in CAPS:
                     sys.exit(f'cudseal: {src}: unknown capability {c!r}')
                 caps |= CAPS[c]

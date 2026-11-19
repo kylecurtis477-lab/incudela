@@ -78,15 +78,8 @@ def seed_le(s):
             die("INCUDELA_GUID_SEED out of range")
     return le(lo, 4) + le(hi, 4)
 
-SEED_WARNED = []
-
 def newguid(k):
-    seed = os.getenv("INCUDELA_GUID_SEED")
-    if seed is None:
-        seed = os.getenv("FORGE_GUID_SEED")  # the old name, honoured (with a warning) until 0.22.0
-        if seed is not None and len(SEED_WARNED) == 0:
-            SEED_WARNED.append(1)
-            eputs("warning: FORGE_GUID_SEED is deprecated, use INCUDELA_GUID_SEED (renamed 2026-11-16; the old name is removed in 0.22.0)")
+    seed = os.getenv("INCUDELA_GUID_SEED")  # FORGE_GUID_SEED before the rename, read until 0.22.0
     if seed is None:
     # uuid4 (as the Python tool): 16 bytes from getrandom(2), version 4 and RFC 4122 variant bits,
     # in GPT byte order (time_hi_and_version is little-endian at bytes 6..7)

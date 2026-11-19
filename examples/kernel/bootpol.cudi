@@ -68,7 +68,7 @@ def cmd_tok_pre(s: u64, n: u64, lit: ptr[u8]) -> u64:
     return 1
 
 def pol_cmdline() -> u64:
-# PCMD_* from bi.cmdline; the last incudela.iommu= (or old forge.iommu=) token wins; other tokens are ignored
+# PCMD_* from bi.cmdline; the last incudela.iommu= token wins; other tokens are ignored
     r = PCMD_NONE
     i: u64 = 0
     k: u64 = 0
@@ -79,12 +79,9 @@ def pol_cmdline() -> u64:
         while i < 255 and bi.cmdline[i] != 0 and bi.cmdline[i] != 32:
             i += 1
         n = i - s
-        # `forge.iommu=` is the key's name before the Incudela rename, still read for one release
         k = 0
         if n > 0 and cmd_tok_pre(s, n, "incudela.iommu="):
             k = 15
-        elif n > 0 and cmd_tok_pre(s, n, "forge.iommu="):
-            k = 12
         if k != 0:
             if cmd_tok_eq(s + k, n - k, "strict"):
                 r = PCMD_STRICT

@@ -11,11 +11,6 @@
 # tests/typeerrors/*.cud: static type errors; full diagnostic (line, col, source, caret) must match .expected
 # tests/bench/: tools/bench.cud regression-check logic on fixed records (bench timing never gates)
 cd "$(dirname "$0")"; fail=0; mkdir -p build
-# CUDC_FLAGS was FORGEC_FLAGS before the Cuditor rename (2026-11-16); the old name is honoured for one release
-if [ -z "${CUDC_FLAGS+x}" ] && [ -n "${FORGEC_FLAGS+x}" ]; then
-  echo "warning: FORGEC_FLAGS is deprecated, use CUDC_FLAGS (renamed 2026-11-16; the old name is removed in 0.22.0)" >&2
-  export CUDC_FLAGS="$FORGEC_FLAGS"
-fi
 for t in tests/*.cud; do
   case "$t" in tests/mod_*) continue;; esac
   ./cuditor "$t" -o build/t_bin && build/t_bin a b | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
@@ -74,7 +69,7 @@ tests/memimg/run.sh || fail=1
 tests/oslib/run.sh || fail=1
 tests/reseed/run.sh || fail=1
 tests/pkg/run.sh || fail=1
-# tests/oldnames: the pre-rename spellings kept until 0.22.0 warn and give the same output as the new ones
+# tests/oldnames: the pre-rename spellings removed in 0.22.0 have no effect any more
 tests/oldnames/run.sh || fail=1
 tests/lsp/run.sh || fail=1
 # tests/provenance: AI-provenance commit trailers (tools/provenance.cud, docs/PROVENANCE.md)
