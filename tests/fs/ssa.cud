@@ -243,7 +243,8 @@ def ssa_andmerge(a: i64, b: i64) -> i64:
 
 def ssa_brk(a: i64) -> i64:
 # step 4af: the `break` leaves `jmp .LFa; jmp .LFb` and the loop exit `jmp .LFr; xor %eax,%eax`; the second
-# line of each pair is never run and goes
+# line of each pair is never run and goes; step 4ag: the loop exit's `jmp .LFr` to the return label that then
+# follows it goes too
     i: i64 = 0
     while i < 100:
         if i == a:

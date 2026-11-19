@@ -21926,6 +21926,7 @@ def fs_ssa_run(s0):
         nf = fs_ssa_copy(n, ln, df, vi)
     nd = fs_ssa_dead(n, ln, vi, cnt)
     nd += fs_ssa_unreach(n, ln, vi)
+    nd += fs_ssa_jnext(n, ln)
     if nf == 0:
         mk = fs_ssa_buf(8, n, 0)
         nf = fs_ssa_retarget(n, ln, s1, s2, us, df, vi, cnt, mk)
@@ -23144,6 +23145,26 @@ def fs_ssa_unreach(n, ln, vi):
                 nd += 1
             else:
                 dead = starts(a, "    jmp ")
+        p += 1
+    return nd
+
+def fs_ssa_jnext(n, ln):
+# Step 4ag: `jmp .LFk` whose target is one of the labels straight after it (only `.LFn:` lines between, no
+# instruction, directive or other entry) goes where falling through goes, so it is deleted (left behind once an
+# else arm or a loop exit ends in a jump to the merge label that follows it, and once step 4af clears the code
+# between).
+    nd = 0
+    p = 0
+    while p < n:
+        a = out[ln[p]]
+        if starts(a, "    jmp .LF") and find_char(a, 10) == len(a) - 1:
+            want = concat(substr(a, 8, len(a) - 1), ":\n")
+            q = p + 1
+            while q < n and (len(out[ln[q]]) == 0 or (fs_lv_lab(out[ln[q]]) >= 0 and not str_eq(out[ln[q]], want))):
+                q += 1
+            if q < n and str_eq(out[ln[q]], want):
+                out[ln[p]] = ""
+                nd += 1
         p += 1
     return nd
 

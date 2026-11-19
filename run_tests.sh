@@ -222,6 +222,10 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^
 # step 4af: ssa_brk's `jmp; jmp` (break) and `jmp; xor` (loop exit) lose the never-run second line under --fs-ssa
 unr='p ~ /^    jmp / && $0 ~ /^    [a-z]/ {c++} {p=$0} END {print c+0}'
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_brk:/,/^ssa_leamov:/' build/t_ssa.s | awk "$unr")" -ge 2 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_brk:/,/^ssa_leamov:/' build/t_ssa.s | awk "$unr")" = 0 ] && echo "PASS fs-ssa-unreach-shape" || { echo "FAIL fs-ssa-unreach-shape"; fail=1; }
+# step 4ag: ssa_brk's loop exit jumps to the return label right after it under --fs-temps; under --fs-ssa that jmp is gone
+retj='{a[NR]=$0} END {for (i=2;i<=NR;i++) if (a[i]=="    leave" && a[i-1] ~ /^\.LF[0-9]+:$/) r=substr(a[i-1],1,length(a[i-1])-1); for (i=1;i<=NR;i++) if (a[i]=="    jmp " r) c++; print c+0}'
+jnx='/^    jmp \.LF/ {t=$2; while ((getline n) > 0 && n ~ /^\.LF[0-9]+:$/) { if (n == t ":") {c++; break} } } END {print c+0}'
+build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^ssa_brk:/,/^ssa_leamov:/' build/t_ssa.s | awk "$retj")" -ge 1 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_brk:/,/^ssa_leamov:/' build/t_ssa.s | awk "$retj")" = 0 ] && [ "$(awk "$jnx" build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-jnext-shape" || { echo "FAIL fs-ssa-jnext-shape"; fail=1; }
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs

@@ -474,6 +474,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    to MEM. Kernel instructions 92,421 to 91,805.
    Step 4af (2026-11-19, under `--fs-ssa`): lines straight after an unconditional `jmp`, with no label between,
    are never run and are deleted. Kernel instructions 90,924 to 89,193.
+   Step 4ag (2026-11-19, under `--fs-ssa`): a `jmp .LFk` with `.LFk:` among the labels straight after it is
+   deleted. Kernel instructions 89,193 to 87,642.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -1413,6 +1415,14 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      label), directive or multi-line entry ends the run, and only `jmp` starts one (code after `ud2` or `ret` is
      left alone). On the kernel: 90,924 to 89,193 instructions; compile about 2.31 s (base 2.40 s, under 3 s).
      Code built without `--fs-ssa` is byte-identical. Check fs-ssa-unreach-shape (ssa_brk).
+   - *Step 4ag, `jmp` to the next label (2026-11-19).* Re-measured after step 4af: 1,495 `jmp .LFk` on the kernel
+     have `.LFk:` among the labels straight after them (only `.LFn:` lines between; 968 before step 4af, which
+     clears the never-run lines that sat between many of them), mostly an else arm or loop exit jumping to the
+     merge or return label that follows. Falling through goes to the same place, so step 4ag deletes the jump.
+     A directive (`.p2align` padding), instruction or other entry in between keeps it. On the kernel: 89,193 to
+     87,642 instructions (90,924 to 87,642 for the batch); compile about 2.47 s (base 2.35 s, under 3 s). Code
+     built without `--fs-ssa` is byte-identical. Check fs-ssa-jnext-shape (ssa_brk's return-label jump goes;
+     no `jmp` to a following label anywhere in tests/fs/ssa.cud).
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in
