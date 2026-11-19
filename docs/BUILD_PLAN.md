@@ -472,6 +472,8 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    Step 4ac/4ad (2026-11-18, under `--fs-ssa`): retarget `imul $N,%rS,%rax` (and two-operand `imul $N,%rax`)
    into `%rD`, fold unread-flag `add`/`sub` through `%rax` into `lea` into `%rD`, and store `%rS` straight
    to MEM. Kernel instructions 92,421 to 91,805.
+   Step 4af (2026-11-19, under `--fs-ssa`): lines straight after an unconditional `jmp`, with no label between,
+   are never run and are deleted. Kernel instructions 90,924 to 89,193.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
@@ -566,6 +568,8 @@ least.
 | Nov 18 | SSA step 4aa: imm/zero through %rax into MEM/rD; step 4ab: lea/load into rD; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv197) |
 | Nov 18 | SSA step 4ac: imul/reg-store through %rax; step 4ad: add/sub→lea into rD; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv200) |
 | Nov 18 | SSA step 4ae: setCC through-merge stop; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 |
+| Nov 19 | stop-machine park race fix, irq-off watch split; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv206) |
+| Nov 19 | SSA step 4af: unreachable lines after `jmp`; step 4ag: `jmp` to the next label; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv207) |
 | Nov 17 | SSA form fix (a single-predecessor position gets no phi, copies in loops propagate), step 4o (push/pop round-trips across failure paths); CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv184) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
 | Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
@@ -1400,6 +1404,15 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      instructions; compile about 2.47 s (under 3 s). Code built without `--fs-ssa` is byte-identical.
      Check fs-ssa-through-shape (ssa_andmerge); fs-ssa-jcc-shape still requires setne/setl in ssa_cold.
      Landing rule: `optcov --check`; fsfuzz as for every optimizer commit.
+   - *Step 4af, unreachable lines after `jmp` (2026-11-19).* Re-measured after step 4ae against w222/cudc-base
+     (90,924 kernel instructions at 859634a): the largest remaining group is 1,733 instructions straight after an
+     unconditional `jmp` with no label in between (1,178 `jmp`, 555 `xor %eax,%eax`), left by the lowering of
+     `break`/`continue`/`return` inside a branch (`jmp .LFa; jmp .LFb`) and of the value after a loop exit
+     (`jmp .LFr; xor %eax,%eax`). Nothing can jump to such a line and nothing falls into it; step 4af deletes
+     it when the SSA form never reached it either. Any label (also a function name or an asm block's numeric
+     label), directive or multi-line entry ends the run, and only `jmp` starts one (code after `ud2` or `ret` is
+     left alone). On the kernel: 90,924 to 89,193 instructions; compile about 2.31 s (base 2.40 s, under 3 s).
+     Code built without `--fs-ssa` is byte-identical. Check fs-ssa-unreach-shape (ssa_brk).
    - *`--fs-ssa` compile time (2026-11-16).* Timed by phase (a `__clock` build of the compiler, not committed),
      the kernel's 3.2 s of the 4.5 s spent in fs_ssa went to fs_ssa_phis: its live-phi fixpoint swept every
      position and register until nothing changed, one sweep per link of a phi chain, and since step 4h values in
