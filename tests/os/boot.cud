@@ -72,18 +72,29 @@ def font(h):
     return out
 
 def read_ppm(path):
+# inv211: a missing or truncated dump (QEMU gone before it wrote one) raises, so screenshot() reports
+# "screendump failed" and the boot still gets a result line; indexing None used to segfault the harness
     d = read_file(path)
+    if d is None:
+        raise Exception(f"no screendump file {path}")
+    n: int = len(d)
     toks = []
     i: int = 0
     while len(toks) < 4:
-        while d[i] == " " or d[i] == "\n" or d[i] == "\t" or d[i] == "\r":
+        while i < n and (d[i] == " " or d[i] == "\n" or d[i] == "\t" or d[i] == "\r"):
             i += 1
         j: int = i
-        while not (d[j] == " " or d[j] == "\n" or d[j] == "\t" or d[j] == "\r"):
+        while j < n and not (d[j] == " " or d[j] == "\n" or d[j] == "\t" or d[j] == "\r"):
             j += 1
+        if j == i:
+            raise Exception(f"truncated screendump {path} ({n} bytes)")
         toks.append(d[i:j])
         i = j
-    return [int(toks[1]), int(toks[2]), d, i + 1]
+    w: int = int(toks[1])
+    hh: int = int(toks[2])
+    if toks[0] != "P6" or n < i + 1 + w * hh * 3:
+        raise Exception(f"truncated screendump {path} ({n} bytes for {w}x{hh})")
+    return [w, hh, d, i + 1]
 
 def decode_row(f, ppm, row: int):
     w: int = ppm[0]
