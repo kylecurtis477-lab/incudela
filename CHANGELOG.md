@@ -9,6 +9,13 @@
 
 ## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ae
 
+- `097fd12` Kernel CPU 0 interrupts-off watch (diagnostic only): one `rdtsc` per CPU 0 timer tick keeps the
+  longest gap between timer interrupts in the shell session, reported as `irq-off watch: ...` and in the hang
+  probe; `os/irq-off-watch` logs it and never judges it (inv203 hypothesis H1).
+- `f442570` OS hang dumps record the guest's input counters: each kernel prints a `hang probe:` line with the
+  slid addresses of `kbd_irqs`, the new `ps2_rd`, the input journal and tick counters, and tests/os/boot.cud
+  reads them on cpu 0 into `LOG.hangN`; `os/hang-probe-live` runs the reads at KERNEL OK (inv203: 99 IRQ1
+  against 115, the tail of a typed line lost).
 - `ad017f8` `--fs-ssa` folds `setCC; movzbl; test; je|jne L` through a same-sense `je|jne F` at L
   straight to F (step 4ae through-merge stop): kernel instructions 91,807 to 90,625; short-circuit
   merges that keep `setne` at L stay refused.
