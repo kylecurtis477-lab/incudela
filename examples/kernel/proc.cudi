@@ -445,6 +445,7 @@ tty_lines: u64
 tty_q: WaitQ
 kbd_irqs: u64
 com_irqs: u64
+ps2_rd: u64  # keyboard (non-aux) bytes read from port 0x60 by on_kbd; read by the boot harness at a hang (hang probe)
 
 # The line discipline is hot-swappable (Phase 2.4): v0 below is built in; tty1.ko / tty2.ko provide the
 # same three entry points. tty_fp_* are swapped together under rq_lock, and every call is made under
@@ -703,6 +704,7 @@ def on_kbd(frame: ptr[u64]):
             mouse_byte(sc)
             continue
         kbd_key_event(sc)
+        ps2_rd += 1
         if kb_svc:
             kbd_event(0, sc)
         else:

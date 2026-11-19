@@ -177,6 +177,54 @@ def irq_dump(h, cpus) -> str:
         i += 1
     return concat(out, "\n")
 
+def probe_addrs(buf):
+# [name, 0xaddr] pairs from the last "hang probe:" line of the serial output (each kernel prints its own at boot,
+# a kexec'd one too, so the last line names the running kernel's slid addresses)
+    line = ""
+    for l in splitlines(buf):
+        if startswith(l, "hang probe:"):
+            line = l
+    out = []
+    for tok in split(line[11:], " "):
+        a: int = find(tok, "@0x", 0)
+        if a > 0 and all_hex(tok[a + 3:]):
+            out.append([tok[0:a], tok[a + 1:]])
+    return out
+
+def hex_int(s) -> int:
+    v: int = 0
+    for c in lower(s):
+        d: int = find("0123456789abcdef", c, 0)
+        if d >= 0:
+            v = v * 16 + d
+    return v
+
+def probe_dump(h, buf) -> str:
+# the guest's input counters at a hang (inv203: the last 16 scancodes of a typed line never raised IRQ1, and the
+# dump could not show whether the guest read them): one monitor round trip, `x/1gx` per counter on cpu 0
+    pa = probe_addrs(buf)
+    hd = "---- guest input counters (hang probe, cpu 0) ----\n"
+    if len(pa) == 0:
+        return concat(hd, "[no hang probe line in the serial output]\n")
+    cmd = "cpu 0"
+    for p in pa:
+        cmd = concat(cmd, f"\nx/1gx {p[1]}")
+    got = {}
+    for wl in splitlines(monitor(h, cmd, 2.0)):
+        c: int = find(wl, ": ", 0)
+        if c > 0 and all_hex(wl[0:c]) and startswith(strip(wl[c + 2:]), "0x"):
+            got[lower(wl[0:c])] = str(hex_int(strip(wl[c + 2:])[2:]))
+    out = []
+    for p in pa:
+        k = lower(p[1][2:])
+        while len(k) < 16:
+            k = concat("0", k)
+        v = "?"
+        if k in got:
+            v = got[k]
+        out.append(f"{p[0]}={v}")
+    return concat(concat(hd, " ".join(out)), "\n")
+
 def ishex(c) -> bool:
     return isdigit(c) or (c >= "a" and c <= "f")
 
@@ -411,7 +459,7 @@ def boot(h, attempt):
                 host = host_capture(pid, concat(dump, ".host"))
                 regs = monitor(h, "info registers -a", 2.0)
                 cpus = monitor(h, "info cpus")
-                write_file(dump, concat(concat(concat(hdr, host), cpus), concat(concat("\n", regs), concat(concat("\n", stack_dump(h, regs)), concat("\n", irq_dump(h, cpus))))))
+                write_file(dump, concat(concat(concat(hdr, host), cpus), concat(concat("\n", regs), concat(concat("\n", stack_dump(h, regs)), concat(concat("\n", irq_dump(h, cpus)), probe_dump(h, buf))))))
                 break
         if now >= deadline:
             if now < t0 + 2 * h.tmo:
@@ -438,6 +486,9 @@ def boot(h, attempt):
             tprev = clk()
         if not shot_ok and "KERNEL OK\n" in buf:
             shot_ok = True
+            if os.getenv("FORGE_BOOT_PROBE", "") == "1":
+            # live check of the hang-dump probe path (os/hang-probe-live): same reads a HANG makes
+                buf = concat(buf, concat("\n", probe_dump(h, buf)))
             if FBTEXT[0] != "":
                 fbmsg = screenshot(h)
             try:
@@ -611,6 +662,12 @@ def self_test():
         print("PASS boot-harness monotonic-clock")
     else:
         print("FAIL boot-harness monotonic-clock")
+        fail = 1
+    pa = probe_addrs("x\nhang probe: kbd_irqs@0xffffffffa1f1a2c8 ps2_rd@0xFFFFFFFFA1F1A2D0\nhang probe: kbd_irqs@0xffffffff80319a58 bad@0xzz\nsh$ ")
+    if len(pa) == 1 and pa[0][0] == "kbd_irqs" and pa[0][1] == "0xffffffff80319a58" and hex_int("0000000000000063") == 99 and hex_int("FF") == 255 and len(probe_addrs("no probe")) == 0:
+        print("PASS boot-harness hang-probe-parse")
+    else:
+        print("FAIL boot-harness hang-probe-parse")
         fail = 1
     exit(fail)
 

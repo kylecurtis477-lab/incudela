@@ -476,6 +476,7 @@ def kmain_high():
 # now on the guarded kernel stack, identity map gone, physical memory via HHDM
     canary_init()
     kaslr_unmap()
+    hang_probe_line()
     if bi.fb_addr != 0:
         fb_attach(p2v(bi.fb_addr), bi.fb_width, bi.fb_height, bi.fb_pitch)
         puts("Incudela kernel: framebuffer console ")

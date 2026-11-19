@@ -34,7 +34,9 @@ cp build/efi/disk.img $L/vdisk.img && mdel -i $L/vdisk.img@@1048576 ::/EFI/BOOT/
 VD="-drive file=$L/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio-blk-pci,drive=vd"
 # FORGE_BOOT_KEXEC=3: this boot hands over 3 times (kernel -> next -> next -> next) with input at each prompt
 KXR=3
-FORGE_BOOT_KEXEC=$KXR $B kernel-bios $L/bios.log 200 "multiboot2 (BIOS)|$K|kexec: generation 3 kernel adopted" "$FB" -- $Q $VD -boot d -cdrom build/kernel/forge.iso
+FORGE_BOOT_PROBE=1 FORGE_BOOT_KEXEC=$KXR $B kernel-bios $L/bios.log 200 "multiboot2 (BIOS)|$K|kexec: generation 3 kernel adopted" "$FB" -- $Q $VD -boot d -cdrom build/kernel/forge.iso
+# the hang-dump probe read live at KERNEL OK: every counter read back (no ?), and the keyboard was seen (inv203)
+awk '/^---- guest input counters \(hang probe, cpu 0\) ----$/{getline; print; exit}' $L/bios.log | grep -Eq "^kbd_irqs=[1-9][0-9]* ps2_rd=[1-9][0-9]* " && ! awk '/^---- guest input counters/{getline; print; exit}' $L/bios.log | grep -q "=?" && echo "PASS os/hang-probe-live ($(awk '/^---- guest input counters/{getline; print; exit}' $L/bios.log | cut -c1-200))" || echo "FAIL os/hang-probe-live"
 # single CPU (-machine pc -smp 1): no APs, no IPIs; the kernel must still boot to KERNEL OK and kexec
 Q1=${Q/-smp 4/-smp 1}
 $B kernel-bios-smp1 $L/bios-smp1.log 200 "SMP: 1 cpus online|x2APIC: all cpus in x2APIC mode, IPIs sent via MSR 0x830: 0|stall checks: a 2000 ms clock jump between two checks not counted, 5 ms counted: yes|preemptive SMP scheduler OK|ring 3 + syscall/sysret + ELF loader OK|processes + VFS + keyboard/serial input + sh OK|KERNEL OK|kexec handoff OK|debug-exit |ms after KERNEL OK" "$FB" -- $Q1 -machine pc $VD -boot d -cdrom build/kernel/forge.iso
