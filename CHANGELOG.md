@@ -7,8 +7,12 @@
      (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ai
+## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ak
 
+- `f6890f1` `--fs-ssa` moves a constant index read once by a scaled address into its displacement (step 4ak,
+  `mov %rdi,24(%rax)`): kernel instructions 83,521 to 83,106.
+- `b449cc3` `--fs-ssa` lets `ud2` end a path, so a bounds check's pass label keeps the index register and the
+  `%rcx` copy goes (step 4aj): kernel instructions 84,336 to 83,521.
 - `174afe2` `--fs-ssa` folds a `lea ADDR,%rT` read only by the next mov, through `(%rT)`, into that mov
   (step 4ai, `mov (%rax,%rcx,8),%rax`, `mov %rsi,8(%rax)`): kernel instructions 86,168 to 84,336.
 - `dc50329` `--fs-ssa` puts a checked index's `imul $8` scale into the address it forms (step 4ah, `lea
