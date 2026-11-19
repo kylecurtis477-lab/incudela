@@ -106,6 +106,12 @@ scheduler-test worker whose `lapic_ticks` have not reached `work_until` 20 s lat
 and whether `lapic_ticks` moved over 300 ms) and panic, so a lost lock or a stalled cpu0 timer fails in
 seconds with its own evidence instead of a 60 s HANG and a single register snapshot. (inv134 kernel-bios
 gen-3 dump: all 4 CPUs in the scheduler test, two in `spin_lock` on `counter_lock`, two in `irq_save`.)
+Interrupts-off watch (`apic.cudi`, after inv203, diagnostic only): CPU 0 takes one `rdtsc` per LAPIC timer
+interrupt and keeps the longest gap between two of them for the shell session (the timer stays pending while
+IF=0, so the gap bounds the longest interrupts-off stretch on the only IRQ1 target), printed as `irq-off watch:
+cpu0 longest gap between timer interrupts N ms (at tick T), gaps over 250 ms: K` and carried by the hang probe.
+It never fails a boot and does not use `tsc_counted` (a box freeze shows as a gap and is not counted in
+`clock_jumps`); `os/irq-off-watch` logs the numbers.
 Both checks count only check-to-check TSC gaps up to 1 s (`tsc_counted`): the box running QEMU is itself a
 VM that is at times suspended whole (90-145 s), and the guest TSC jumps by the freeze on resume. Without this, a
 freeze during a lock wait or the worker window would raise a false PANIC-STALL. Skipped jumps are counted in

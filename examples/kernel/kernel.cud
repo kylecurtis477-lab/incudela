@@ -1718,6 +1718,7 @@ def tty_swapper(arg: u64):
 def shell_test():
 # the interactive shell from \EFI\Incudela\bin\sh; the boot test types its commands
     input_init()
+    i0_reset()
     # the block driver runs as a supervised ring-3 service for the whole shell session
     f0 = frames_free
     h0 = heap_live
@@ -1796,6 +1797,7 @@ def shell_test():
         panic("tty hot swap lost input")
     puts("tty hot-swap OK\n")
     kbd_report()
+    i0_report()
     blkd_supervised_stop()
     # slab pages grown at a new allocation peak, and kernel page tables, are kept by the
     # allocator by design (objects are checked by heap_live)

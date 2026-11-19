@@ -366,4 +366,7 @@ def hang_probe_line():
     probe_put("tty_pushed", addr(tty_pushed))
     probe_put("tty_popped", addr(tty_popped))
     probe_put("lapic_ticks", addr(lapic_ticks))
+    probe_put("i0_max", addr(i0_max))
+    probe_put("i0_max_tick", addr(i0_max_tick))
+    probe_put("i0_over", addr(i0_over))
     putc(10)

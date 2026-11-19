@@ -4,6 +4,7 @@ os/kernel-wx
 os/boot-harness-self-test
 os/kernel-bios
 os/hang-probe-live
+os/irq-off-watch
 os/kernel-bios-smp1
 os/kernel-iommu
 os/kernel-uefi
