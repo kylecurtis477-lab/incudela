@@ -3,12 +3,19 @@
      version-to-commit mapping comes from the project plan. There are no git tags: the versions are
      groupings of commits, not contiguous ranges of history (for example the 0.17.4 fixes 0bbe40c, 4ecde04,
      f5c66be and 2aba6e2 come before the 0.17.2 commits in the log). Newest version first. 0.18.1 is cut as
-     a grouping only; 0.19.0, 0.20.0 and 0.22.0 are open. Entries before 0.21.0 use the names of their time
-     (Forge, forgec, c2forge, `\EFI\Forge\`). -->
+     a grouping only; 0.19.0 and 0.20.0 are open; 0.22.0 is closed (2026-11-19). Entries before 0.21.0 use
+     the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ak
+## 0.22.0 (2026-11-19): SSA backend, Phase 12.1 steps 4d to 4ak; the pre-rename names removed
 
+- `9d48a9d` seed: cudc, fas and fld reseeded from this tree (last reseed 51f53b3); `./build.sh` prints SEED OK and
+  SEED TOOLS OK again. seed.sha256: cudc-seed `7928d08a`, fas-seed `caec69e9`, fld-seed `76b48299`.
+- `bc1a85f` the old spellings kept for 0.21.x are removed, as README "Renamed from Forge" promised: `./forge`,
+  `# forge:` pragmas and cudseal's `# forge: caps(...)` lines, `.forge` modules, `forge.toml`/`forge.lock`,
+  `FORGEC_FLAGS`, `FORGE_GUID_SEED` and the `forge.iommu=`/`forge.desktop` boot keys now have no effect
+  (tests/oldnames). The one-time `\EFI\Forge\` migration, the on-disk magics and the FS partition type GUID
+  stay. Kernel instructions 83,106 to 83,085.
 - `ddcedab` tests/os/forgefs.sh no longer counts box freezes against a boot's 180 s: a wall gap of 5 s or more
   between two 1 s polls is a freeze, not counted and logged as `box frozen Ns, not counted`
   (tests/os/frozen.sh); guest running time stays capped at 180 s. Check: `os/forgefs-freeze-accounting`
@@ -46,7 +53,7 @@
   reads them on cpu 0 into `LOG.hangN`; `os/hang-probe-live` runs the reads at KERNEL OK (inv203: 99 IRQ1
   against 115, the tail of a typed line lost).
 - `ad017f8` `--fs-ssa` folds `setCC; movzbl; test; je|jne L` through a same-sense `je|jne F` at L
-  straight to F (step 4ae through-merge stop): kernel instructions 91,807 to 90,625; short-circuit
+  straight to F (step 4ae through-merge stop): kernel instructions 91,805 to 90,623; short-circuit
   merges that keep `setne` at L stay refused.
 - `cc90ae0` `--fs-ssa` retargets `imul $N,…,%rax` and stores `%rS` straight to MEM (step 4ac) and turns
   unread-flag `add`/`sub` through `%rax` into `lea` into `%rD` (step 4ad): kernel instructions 92,421 to
