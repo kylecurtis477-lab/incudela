@@ -35,17 +35,28 @@ print('outside=%s %s'%(hashlib.sha256(d[:lo]+d[hi:]).hexdigest()[:16],' '.join(o
 P
 }
 KEY=forge-test-passphrase-uid1000
+. tests/os/frozen.sh
+frz_self_test
 boot() {  # boot [userkey]: the user key reaches the kernel as QEMU fw_cfg file opt/forge/userkey
   rm -f $T/s.log
   K=(); [ -n "${1:-}" ] && K=(-fw_cfg "name=opt/forge/userkey,string=$1")
-  timeout 180 qemu-system-x86_64 -machine q35 -cpu max -display none -no-reboot -m 256 -smp 4 -net none \
+  qemu-system-x86_64 -machine q35 -cpu max -display none -no-reboot -m 256 -smp 4 -net none \
     -serial file:$T/s.log -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     -drive file=$T/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio-blk-pci,drive=vd \
     -boot d -cdrom build/kernel/forge.iso \
     -drive file=$T/nv.img,format=raw,if=none,id=nv,cache=writethrough -device nvme,drive=nv,serial=forge-nv0 "${K[@]}" >/dev/null 2>&1 &
   Q=$!
-  for i in $(seq 180); do grep -aqE '^(Incudela FS OK|Incudela FS: not mounted|PANIC|panic)' $T/s.log 2>/dev/null && break; sleep 1; done
-  sleep 1; kill $Q 2>/dev/null; wait $Q 2>/dev/null
+  # at most 180 s of guest running time; box freezes are not counted (tests/os/frozen.sh, inv211: a fixed
+  # `timeout 180` killed boot 0 after a 12-minute freeze in os211b)
+  frz_start 180; capped=""
+  until grep -aqE '^(Incudela FS OK|Incudela FS: not mounted|PANIC|panic)' $T/s.log 2>/dev/null; do
+    frz_tick || { capped=1; break; }
+    sleep 1
+  done
+  [ -n "$capped" ] || sleep 1
+  kill $Q 2>/dev/null; wait $Q 2>/dev/null
+  printf '%s' "$FRZ_LOG" >> $T/s.log
+  [ -z "$capped" ] || echo "[forgefs: stopped at the 180 s guest-time cap, $((FRZ_FROZEN / 1000)) s frozen not counted]" >> $T/s.log
 }
 S0=$(snap $T/nv.img); D0=$(sha256sum < $T/nv.img)
 boot
