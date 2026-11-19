@@ -9,6 +9,13 @@
 
 ## 0.22.0 (open): SSA backend, Phase 12.1 steps 4d to 4ae
 
+- `f2ffc23` Kernel irq-off watch counts CPU 0 timer gaps of 5 s or more apart as "guest not running" (a box
+  freeze: the guest TSC follows host time), keeping them out of the longest gap and the over-250-ms count;
+  diagnostic only (kbs-s1 stress: 126 s, 304 s and 140 s gaps were box freezes).
+- `9a49dc7` Kernel stop-machine fix: a CPU parked for one round that answers the next round from its park
+  loop stays parked for it instead of running again (kbs-s1 boot 30: `#UD` in `sys_getppid` while livepatch
+  rewrote it). `stop_machine stress` now checks that no other CPU runs inside each of its 3000 rounds
+  (without the fix 40 of 40 loaded boots failed, with it 40 of 40 passed).
 - `097fd12` Kernel CPU 0 interrupts-off watch (diagnostic only): one `rdtsc` per CPU 0 timer tick keeps the
   longest gap between timer interrupts in the shell session, reported as `irq-off watch: ...` and in the hang
   probe; `os/irq-off-watch` logs it and never judges it (inv203 hypothesis H1).
