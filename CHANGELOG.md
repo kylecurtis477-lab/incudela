@@ -3,9 +3,17 @@
      version-to-commit mapping comes from the project plan. There are no git tags: the versions are
      groupings of commits, not contiguous ranges of history (for example the 0.17.4 fixes 0bbe40c, 4ecde04,
      f5c66be and 2aba6e2 come before the 0.17.2 commits in the log). Newest version first. 0.18.1 is cut as
-     a grouping only; 0.19.0 and 0.20.0 are open; 0.22.0 is closed (2026-11-19). Entries before 0.21.0 use
+     a grouping only; 0.19.0, 0.20.0 and 0.23.0 are open; 0.22.0 is closed (2026-11-19). Entries before 0.21.0 use
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
+
+## 0.23.0 (open): test/debug and release kernels
+
+- `83256b0` The hang probe and the KASLR test/debug hooks (the `KASLR: kernel image at`/`KASLR: big heap at` lines
+  and the unslid `.text` check) are test/debug only: they live in examples/kernel/kdebug.cudi, and
+  `build/kernel-build --release` builds build/kernel-release/kernel.elf with the empty hooks of krelease.cudi.
+  The OS tests still boot the test/debug kernel; KASLR itself and the `ktest_hooks` gate on syscalls 408/409
+  are in both. Kernel instructions: test/debug 83,085 to 83,106, release 82,971. Check: tests/kernel-release.
 
 ## 0.22.0 (2026-11-19): SSA backend, Phase 12.1 steps 4d to 4ak; the pre-rename names removed
 
