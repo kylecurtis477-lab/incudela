@@ -10,83 +10,298 @@
 # tests/diag/*.cud: --diagnostics=json output must match the golden .json (one object per error, schema v1)
 # tests/typeerrors/*.cud: static type errors; full diagnostic (line, col, source, caret) must match .expected
 # tests/bench/: tools/bench.cud regression-check logic on fixed records (bench timing never gates)
+# Parallel (default): the blocks below are items; each lane of the table runs as one background job,
+#   its items in order, lane S (builds or reads the shared OS artifacts) in the foreground, lane alone
+#   (bounds timing) after every lane has finished; each item writes build/par/NN.log, printed in item order,
+#   so the output is the serial output. RUN_TESTS_SERIAL=1: every item in order, streaming, nothing in
+#   parallel. tests/os (QEMU) always runs after all items, alone (README.md, Tests)
 cd "$(dirname "$0")"; fail=0; mkdir -p build
+t_cases() {
+fail=0
 for t in tests/*.cud; do
   case "$t" in tests/mod_*) continue;; esac
   ./cuditor "$t" -o build/t_bin && build/t_bin a b | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
 done
+return $fail
+}
+t_runtime() {
+fail=0
 for t in tests/runtime/*.cud; do
   ./cuditor "$t" -o build/t_bin && (build/t_bin 2>&1; echo "exit $?") | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
 done
+return $fail
+}
+t_errors() {
+fail=0
 for t in tests/errors/*.cud; do
   m=$(timeout 20 build/cudc "$t" build/t_err.s 2>&1) && { echo "FAIL $t (no error)"; fail=1; } || { echo "$m" | grep -q "error: line" && echo "PASS $t: $m" || { echo "FAIL $t"; fail=1; }; }
 done
+return $fail
+}
+t_typeerrors() {
+fail=0
 for t in tests/typeerrors/*.cud; do
   build/cudc "$t" build/t_err.s > build/t_err.txt 2>&1 && { echo "FAIL $t (no error)"; fail=1; } || { diff -q build/t_err.txt "${t%.cud}.expected" >/dev/null && echo "PASS $t: $(head -1 build/t_err.txt)" || { echo "FAIL $t"; fail=1; }; }
 done
+return $fail
+}
+t_diag() {
+fail=0
 for t in tests/diag/*.cud; do
   build/cudc "$t" build/t_err.s --diagnostics=json > build/t_diag.json 2>&1 && { echo "FAIL $t (no error)"; fail=1; } || { diff -q build/t_diag.json "${t%.cud}.json" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }; }
 done
+return $fail
+}
+t_diag_schema() {
+fail=0
 if command -v python3 >/dev/null; then
   python3 -c 'import json,sys,glob
 for f in glob.glob("tests/diag/*.json"):
     for l in open(f):
         d=json.loads(l); assert d["version"]==1 and d["code"][0]=="E" and d["line"]>0 and d["col"]>0 and isinstance(d["fixits"],list), f' && echo "PASS diag-json-schema" || { echo "FAIL diag-json-schema"; fail=1; }
 fi
+return $fail
+}
+t_diag_input() {
+fail=0
 build/cudc build/no_such_input.cud build/t_inc.s --diagnostics=json 2>&1 | grep -q '"code":"E0001"' && echo "PASS diag-json-input-missing" || { echo "FAIL diag-json-input-missing"; fail=1; }
+return $fail
+}
+t_ast_roundtrip() {
+fail=0
 tests/ast/roundtrip.sh selfhost/compiler.cud selfhost/prelude.cud tools/*.cud tests/*.cud tests/runtime/*.cud tests/fs/*.cud tests/unit/*.cud tests/testblocks/*.cud tests/bounds/*.cud tests/nonnull/*.cud tests/unsafe/*.cud tests/own/*.cud tests/defer/*.cud tests/generic/*.cud tests/atomic/*.cud std/*.cudi examples/*/*.cud examples/*/*.cudi || fail=1
+return $fail
+}
+t_ast_semantic() {
+fail=0
 tests/ast/semantic.sh || fail=1
+return $fail
+}
+t_grammar() {
+fail=0
 tests/grammar/run.sh || fail=1
+return $fail
+}
+t_fmt() {
+fail=0
 tests/fmt/run.sh || fail=1
+return $fail
+}
+t_os_artifacts() {
+fail=0
 # tests/fas and tests/fld check every OS artifact (user programs, modules, EFI loader, kernel); build them
 # first so a clean tree (e.g. straight from the seed) runs the same checks instead of skipping them
 { ./cuditor examples/kernel/build.cud -o build/kernel-build && build/kernel-build && ./cuditor examples/efi/build.cud -o build/efi-build && build/efi-build; } >/dev/null 2>&1 || { echo "FAIL os-artifacts-build (fas/fld artifact checks would be skipped)"; fail=1; }
 # the boot harness asm is one of the fas artifacts; build it here so every run checks the same file set
 # (before, build/os/boot.s existed only after an earlier OS run, so O2 and O0 counted 638 vs 639)
 mkdir -p build/os && build/cudc tests/os/boot.cud build/os/boot.s || { echo "FAIL os-boot-harness-asm"; fail=1; }
+return $fail
+}
+t_fas() {
+fail=0
 tests/fas/run.sh || fail=1
+return $fail
+}
+t_fld() {
+fail=0
 tests/fld/run.sh || fail=1
+return $fail
+}
+t_krel() {
+fail=0
 tests/krel/run.sh || fail=1
+return $fail
+}
+t_incudela_part() {
+fail=0
 tests/incudela-part/run.sh || fail=1
+return $fail
+}
+t_mkgpt() {
+fail=0
 tests/mkgpt/run.sh || fail=1
+return $fail
+}
+t_espmigrate() {
+fail=0
 tests/espmigrate/run.sh || fail=1
+return $fail
+}
+t_ed25519_tool() {
+fail=0
 tests/ed25519-tool/run.sh || fail=1
+return $fail
+}
+t_grammar_fuzz() {
+fail=0
 tests/grammar-fuzz/run.sh || fail=1
+return $fail
+}
+t_mkfont() {
+fail=0
 tests/mkfont/run.sh || fail=1
+return $fail
+}
+t_c2cud() {
+fail=0
 tests/c2cud/run.sh || fail=1
+return $fail
+}
+t_cudseal() {
+fail=0
 tests/cudseal/run.sh || fail=1
+return $fail
+}
+t_modules_build() {
+fail=0
 tests/modules-build/run.sh || fail=1
+return $fail
+}
+t_user_build() {
+fail=0
 tests/user-build/run.sh || fail=1
+return $fail
+}
+t_busybox_build() {
+fail=0
 tests/busybox-build/run.sh || fail=1
+return $fail
+}
+t_bzip2() {
+fail=0
 tests/bzip2/run.sh || fail=1
+return $fail
+}
+t_cpython_build() {
+fail=0
 tests/cpython-build/run.sh || fail=1
+return $fail
+}
+t_cpython_embed() {
+fail=0
 tests/cpython-embed/run.sh || fail=1
+return $fail
+}
+t_efi_build() {
+fail=0
 tests/efi-build/run.sh || fail=1
+return $fail
+}
+t_kernel_build() {
+fail=0
 tests/kernel-build/run.sh || fail=1
+return $fail
+}
+t_kernel_release() {
+fail=0
 tests/kernel-release/run.sh || fail=1
+return $fail
+}
+t_rtport() {
+fail=0
 tests/rtport/run.sh || fail=1
+return $fail
+}
+t_pecheck() {
+fail=0
 tests/pecheck/run.sh || fail=1
+return $fail
+}
+t_memimg() {
+fail=0
 tests/memimg/run.sh || fail=1
+return $fail
+}
+t_oslib() {
+fail=0
 tests/oslib/run.sh || fail=1
+return $fail
+}
+t_reseed() {
+fail=0
 tests/reseed/run.sh || fail=1
+return $fail
+}
+t_pkg() {
+fail=0
 tests/pkg/run.sh || fail=1
+return $fail
+}
+t_oldnames() {
+fail=0
 # tests/oldnames: the pre-rename spellings removed in 0.22.0 have no effect any more
 tests/oldnames/run.sh || fail=1
+return $fail
+}
+t_lsp() {
+fail=0
 tests/lsp/run.sh || fail=1
+return $fail
+}
+t_provenance() {
+fail=0
 # tests/provenance: AI-provenance commit trailers (tools/provenance.cud, docs/PROVENANCE.md)
 tests/provenance/run.sh || fail=1
+return $fail
+}
+t_testblocks() {
+fail=0
 tests/testblocks/run.sh || fail=1
+return $fail
+}
+t_bounds() {
+fail=0
 tests/bounds/run.sh || fail=1
+return $fail
+}
+t_nonnull() {
+fail=0
 tests/nonnull/run.sh || fail=1
+return $fail
+}
+t_unsafe() {
+fail=0
 tests/unsafe/run.sh || fail=1
+return $fail
+}
+t_own() {
+fail=0
 tests/own/run.sh || fail=1
+return $fail
+}
+t_limits() {
+fail=0
 # tests/limits: compiler table limits end in a diagnostic (4096 locals per fs function)
 tests/limits/run.sh || fail=1
+return $fail
+}
+t_defer() {
+fail=0
 tests/defer/run.sh || fail=1
+return $fail
+}
+t_generic() {
+fail=0
 tests/generic/run.sh || fail=1
+return $fail
+}
+t_ed25519() {
+fail=0
 tests/ed25519/run.sh || fail=1
+return $fail
+}
+t_atomic() {
+fail=0
 tests/atomic/run.sh || fail=1
+return $fail
+}
+t_ast_selfpp() {
+fail=0
 tests/ast/selfpp.sh || fail=1
+return $fail
+}
+t_bench() {
+fail=0
 # tests/bench: tools/bench.cud record parser and regression logic on fixed records (timing itself never gates)
 ./cuditor tools/bench.cud -o build/bench >/dev/null 2>&1 || { echo "FAIL bench-build"; fail=1; }
 for c in ok slow ratio window; do
@@ -95,9 +310,21 @@ done
 (build/bench check --history tests/bench/window.tsv --baseline tests/bench/base.tsv --window 1; echo "exit $?") | diff -q - tests/bench/window1.expected >/dev/null && echo "PASS bench-check-window1" || { echo "FAIL bench-check-window1"; fail=1; }
 # record integrity: full sha, dirty-tree refusal (scratch git repo, no timing)
 tests/bench/tree.sh build/bench || fail=1
+return $fail
+}
+t_asm_audit() {
+fail=0
 # --fs-opt asm discipline: every asm routine in examples/ must be checked off in docs/SYSTEMS.md (no build, no QEMU)
 tests/asm-audit/run.sh || fail=1
+return $fail
+}
+t_ast_json() {
+fail=0
 build/cudc tests/tuples.cud build/t_ast.json --emit=ast-json && python3 -c 'import json;d=json.load(open("build/t_ast.json"));assert d["forge_ast"]==1 and d["root"]["k"]=="Module"' && echo "PASS ast-json-schema" || { echo "FAIL ast-json-schema"; fail=1; }
+return $fail
+}
+t_fs_shapes() {
+fail=0
 for t in tests/fs/*.cud; do
   c=""; [ -f "${t%.cud}.c" ] && gcc -O1 -ffreestanding -fno-pic -fno-stack-protector -c -o build/t_fsc.o "${t%.cud}.c" && c=build/t_fsc.o
   build/cudc "$t" build/t_fs.s $CUDC_FLAGS && build/fas -o build/t_fs.o build/t_fs.s && build/fld -o build/t_fs build/t_fs.o $c && build/t_fs | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS $t" || { echo "FAIL $t"; fail=1; }
@@ -239,30 +466,142 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^
 # load of element 3 address 24(%rax). --no-bounds: at -O0 the kept bounds checks also compare the constant
 # index, a second read that keeps it in %rcx
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --no-bounds --fs-temps && [ "$(awk '/^ssa_cidx:/,/^show:/' build/t_ssa.s | grep -cE '^    (mov \$3,%rcx|xor %ecx,%ecx)$')" -ge 2 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --no-bounds --fs-ssa && [ "$(awk '/^ssa_cidx:/,/^show:/' build/t_ssa.s | grep -cE '^    (mov \$[0-9]+,%rcx|xor %ecx,%ecx)$')" = 0 ] && [ "$(awk '/^ssa_cidx:/,/^show:/' build/t_ssa.s | grep -cE ',[1248]\)')" = 0 ] && [ "$(awk '/^ssa_cidx:/,/^show:/' build/t_ssa.s | grep -c '24(%rax)')" = 2 ] && echo "PASS fs-ssa-cidx-shape" || { echo "FAIL fs-ssa-cidx-shape"; fail=1; }
+return $fail
+}
+t_fsfuzz() {
+fail=0
 # --fs-opt differential fuzz: 20 random programs (fixed seed), each built O2 / -O0 / --fs-opt / -O0 --fs-opt / --fs-live / -O0 --fs-live / --fs-temps / -O0 --fs-temps / --fs-ssa / -O0 --fs-ssa; any output diff fails
 ./cuditor tools/fsfuzz.cud -o build/fsfuzz-tool >/dev/null 2>&1 && build/fsfuzz-tool --seed 1 --n 20 > build/t_fsfuzz.log 2>&1 && echo "PASS fs-opt-fuzz" || { echo "FAIL fs-opt-fuzz"; cat build/t_fsfuzz.log; fail=1; }
 # build-plan item 3 (b, d): every optimizer flag combination (56 flag sets x plain/stack-protector), 3 programs
 build/fsfuzz-tool --combos --seed 7 --n 3 > build/t_fscombos.log 2>&1 && echo "PASS fs-opt-combos" || { echo "FAIL fs-opt-combos"; cat build/t_fscombos.log; fail=1; }
+return $fail
+}
+t_optgate() {
+fail=0
 # build-plan item 3 (c): optimizer-gate programs (tests/optgate) give the same output under every fs optimizer level
 for t in tests/optgate/*.cud; do
   for f in "" --fs-opt --fs-live --fs-temps --fs-ssa; do
     build/cudc "$t" build/t_og.s $CUDC_FLAGS $f && build/fas -o build/t_og.o build/t_og.s && build/fld -o build/t_og build/t_og.o && build/t_og | diff -q - "${t%.cud}.expected" >/dev/null && echo "PASS optgate$f $t" || { echo "FAIL optgate$f $t"; fail=1; }
   done
 done
+return $fail
+}
+t_optcov() {
+fail=0
 # build-plan item 3 (a, c): block coverage of the fs optimizer passes; --check fails on any never-hit block not in
 # tools/optcov-allow.txt and on any stale allow-list entry (docs/tools-optcov.md, ~45 s)
 ./cuditor tools/optcov.cud -o build/optcov-tool >/dev/null 2>&1 && build/optcov-tool --check > build/t_optcov.log 2>&1 && echo "PASS optimizer-coverage" || { echo "FAIL optimizer-coverage"; cat build/t_optcov.log; fail=1; }
+return $fail
+}
+t_cdiv() {
+fail=0
 # constant division: in c_i64_7 and c_u64_641 only the three divisions by a variable keep div/idiv
 build/cudc tests/fs/cdiv.cud build/t_cd.s $CUDC_FLAGS --fs-opt && [ "$(awk '/^c_i64_7:/,/ret$/' build/t_cd.s | grep -c '    idiv ')" = 3 ] && [ "$(awk '/^c_u64_641:/,/ret$/' build/t_cd.s | grep -c '    div ')" = 3 ] && echo "PASS fs-opt-cdiv-shape" || { echo "FAIL fs-opt-cdiv-shape"; fail=1; }
+return $fail
+}
+t_float_global() {
+fail=0
 # float globals take float or integer literals only (tests/fs/fglobals.cud checks the bits)
 printf '# cuditor: no-runtime\nK = 3\nx: f64 = K\n' > build/t_fgk.cud
 build/cudc build/t_fgk.cud build/t_fgk.s 2>&1 | grep -q "a float global's initializer must be a float or integer literal" && echo "PASS fs-float-global-literal-only" || { echo "FAIL fs-float-global-literal-only"; fail=1; }
+return $fail
+}
+t_input_missing() {
+fail=0
 # missing input / include files: clean diagnostic, exit 1, no crash
 printf 'include "no_such_file.cudi"\n' > build/t_inc.cud
 build/cudc build/t_inc.cud build/t_inc.s --freestanding > build/t_inc.txt 2>&1; rc=$?
 [ $rc = 1 ] && grep -q "^error: cannot read include file .*no_such_file.cudi" build/t_inc.txt && echo "PASS include-missing" || { echo "FAIL include-missing (rc=$rc)"; fail=1; }
 build/cudc build/no_such_input.cud build/t_inc.s > build/t_inc.txt 2>&1; rc=$?
 [ $rc = 1 ] && grep -q "^error: cannot read input file" build/t_inc.txt && echo "PASS input-missing" || { echo "FAIL input-missing (rc=$rc)"; fail=1; }
+return $fail
+}
+# NN lane item, in serial order. Lanes: S = everything that writes or reads build/kernel, build/user,
+# build/efi, build/modules, build/fas or the busybox/cpython trees (one at a time, in this order); alone =
+# timing-sensitive (tests/bounds compares run times); the others only touch their own scratch files, and
+# items sharing a scratch file or a lazily rebuilt tool (build/t_bin, build/t_err.s, build/grammar-fuzz,
+# build/fmt, build/pkg, ...) share a lane
+ITEMS='01 A t_cases
+02 A t_runtime
+03 E t_errors
+04 E t_typeerrors
+05 E t_diag
+06 E t_diag_schema
+07 E t_diag_input
+08 R t_ast_roundtrip
+09 M t_ast_semantic
+10 G t_grammar
+11 F t_fmt
+12 S t_os_artifacts
+13 S t_fas
+14 S t_fld
+15 S t_krel
+16 X t_incudela_part
+17 X t_mkgpt
+18 S t_espmigrate
+19 X t_ed25519_tool
+20 G t_grammar_fuzz
+21 X t_mkfont
+22 X t_c2cud
+23 X t_cudseal
+24 S t_modules_build
+25 S t_user_build
+26 S t_busybox_build
+27 S t_bzip2
+28 S t_cpython_build
+29 S t_cpython_embed
+30 S t_efi_build
+31 S t_kernel_build
+32 S t_kernel_release
+33 S t_rtport
+34 S t_pecheck
+35 S t_memimg
+36 S t_oslib
+37 S t_reseed
+38 S t_pkg
+39 S t_oldnames
+40 B t_lsp
+41 B t_provenance
+42 F t_testblocks
+43 alone t_bounds
+44 X t_nonnull
+45 M t_unsafe
+46 M t_own
+47 X t_limits
+48 X t_defer
+49 X t_generic
+50 X t_ed25519
+51 X t_atomic
+52 M t_ast_selfpp
+53 B t_bench
+54 B t_asm_audit
+55 E t_ast_json
+56 FS t_fs_shapes
+57 Z t_fsfuzz
+58 Z t_optgate
+59 C t_optcov
+60 E t_cdiv
+61 E t_float_global
+62 E t_input_missing'
+P=build/par; rm -rf $P; mkdir -p $P
+if [ -n "$RUN_TESTS_SERIAL" ]; then
+  echo "$ITEMS" | while read n l f; do ( $f ) < /dev/null || : > $P/fail; done
+else
+  # one lane's items in order, each item's output and exit status in build/par
+  run_lane() { echo "$ITEMS" | while read n l f; do [ "$l" = "$1" ] && { ( $f ) > $P/$n.log 2>&1 < /dev/null; echo $? > $P/$n.rc; }; done; }
+  for l in $(echo "$ITEMS" | awk '$2 != "S" && $2 != "alone" {print $2}' | sort -u); do run_lane $l & done
+  run_lane S
+  wait
+  run_lane alone
+  # every item's output in item order; a failed item keeps its whole log in place plus a pointer to the file,
+  # and an item with no exit status (killed, never run) is a FAIL of its own
+  echo "$ITEMS" | while read n l f; do
+    cat $P/$n.log 2>/dev/null; rc=$(cat $P/$n.rc 2>/dev/null)
+    if [ -z "$rc" ]; then echo "FAIL run-tests/$f (no exit status; log: $P/$n.log)"; : > $P/fail
+    elif [ "$rc" != 0 ]; then echo "# $f (lane $l) exited $rc, log: $P/$n.log"; : > $P/fail; fi
+  done
+fi
+[ -f $P/fail ] && fail=1
 # tests/os: boot the Incudela kernel (BIOS + UEFI via GRUB multiboot2) and the native EFI app in headless QEMU
 if [ -z "$SKIP_OS" ] && command -v qemu-system-x86_64 >/dev/null && command -v grub-mkrescue >/dev/null; then
   # capture through a regular file, not $(...): a child that sets O_NONBLOCK on the shared pipe made later

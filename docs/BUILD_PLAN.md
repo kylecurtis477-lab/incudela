@@ -584,7 +584,7 @@ least.
 | Nov 19 | SSA step 4aj: `ud2` ends a path; step 4ak: constant index into the displacement; CHANGELOG | 1 batch | QEMU boot suite at O2 and O0 (inv210) |
 | Nov 19 | cut 0.22.0: old-name aliases removed, reseed, CHANGELOG 0.22.0 closed | 1 batch | QEMU boot suite at O2 and O0 (inv211) |
 | Nov 17 | ownership model write-up: the place/state rules for own, nown, ref, mut, take, replace, swap, including why the syntactic prefix check in `fs_plpre` is sound for differently rooted places | 1 item | ChatGPT shortcoming 1 |
-| Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | gate about 61 min today; the bounds bench stays alone |
+| Nov 17 | gate speed: run the non-QEMU groups of run_tests.sh in parallel, QEMU group alone | 1 batch | done (0.23.0, inv214): 62 items in lanes, lane S (OS artifacts) serial, bounds alone after the lanes, tests/os alone last; `RUN_TESTS_SERIAL=1` keeps the serial run |
 | Nov 17 | public CI: .github/workflows that builds, runs run_tests.sh with the OS tests on ubuntu-latest (x86 runners expose /dev/kvm after a udev rule; QEMU from apt) and publishes logs | 1 batch | first push of a workflow is visible on GitHub |
 | Nov 17 | kernel O0 variant: one boot test of a kernel built without the `--fs-*` passes | 1 item | today -O0 still names `--fs-ssa` for the kernel (documented) |
 | Nov 18 | data-at-rest keys: RDRAND/RDSEED mixed into the data key, a salted iterated KDF for the passphrase key, key rotation | 2 batches | objd.cudi; TPM sealing stays open (no TPM in QEMU tests) |
