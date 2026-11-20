@@ -1,0 +1,62 @@
+# kdebug.cudi: boot diagnostics only the test/debug kernel carries (inv213, docs/kernel-core.md "Test/debug and
+# release kernels"). kernel.cud includes this file; `build/kernel-build --release` (examples/kernel/build.sh
+# --release) compiles it with krelease.cudi instead, whose kdbg_* hooks do nothing, so the release kernel has no
+# hang probe and never prints its KASLR layout. The kernel the OS tests boot (build/kernel/kernel.elf, the ISO's)
+# is always this test/debug build. The KASLR itself (slide, relocation, alias unmap, heap/stack slots) is the
+# same in both builds; only the lines that report it and the unslid-alias self-check are here.
+
+def kdbg_kaslr_image():
+# after kaslr_unmap dropped the link-address alias (tests/os/run.sh os/kaslr, tests/dwarf read the slide)
+    puts("KASLR: kernel image at ")
+    put_hex(ksym(0))
+    puts(" (slide ")
+    put_hex(kslide)
+    puts(", ")
+    put_u64(krel_count)
+    puts(" relocations applied), link-address alias unmapped\n")
+
+def kdbg_kaslr_dyn():
+# the big heap and thread stack slots canary_init picked (os/kaslr counts distinct layouts)
+    puts("KASLR: big heap at ")
+    put_hex(heap_big_next)
+    puts(", thread stacks at ")
+    put_hex(kstack_next)
+    putc(10)
+
+def kdbg_kaslr_unslid():
+# self-check: the image is no longer mapped at its link address once it slid (os/kaslr "unslid .text")
+    check_mapping("unslid .text", ksym(0) - kslide, u64(kslide == 0))
+
+def probe_put(n: ptr[u8], p: ptr[u64]):
+    puts(" ")
+    puts(n)
+    puts("@0x")
+    put_hexn(u64(p), 16)
+
+def kdbg_hang_probe():
+# (hang_probe_line before inv213)
+# one boot line with the runtime (slid) addresses of the input counters; at a HANG the boot harness reads them
+# with the monitor (x/1gx on cpu 0) from the last such line, so a kexec'd kernel reports its own. Diagnostic only:
+# nothing reads it in the kernel (inv203: was a typed line lost before or after the guest read it?)
+    puts("hang probe:")
+    probe_put("kbd_irqs", addr(kbd_irqs))
+    probe_put("ps2_rd", addr(ps2_rd))
+    probe_put("com_irqs", addr(com_irqs))
+    probe_put("kb_in", addr(kb_in))
+    probe_put("kb_head", addr(kb_head))
+    probe_put("kb_ack", addr(kb_ack))
+    probe_put("kb_take", addr(kb_take))
+    probe_put("kb_commits", addr(kb_commits))
+    probe_put("kb_restarts", addr(kb_restarts))
+    probe_put("kb_dropped", addr(kb_dropped))
+    probe_put("kb_up", addr(kb_up))
+    probe_put("kb_ready", addr(kb_ready))
+    probe_put("kb_quit", addr(kb_quit))
+    probe_put("tty_pushed", addr(tty_pushed))
+    probe_put("tty_popped", addr(tty_popped))
+    probe_put("lapic_ticks", addr(lapic_ticks))
+    probe_put("i0_max", addr(i0_max))
+    probe_put("i0_max_tick", addr(i0_max_tick))
+    probe_put("i0_over", addr(i0_over))
+    probe_put("i0_stalls", addr(i0_stalls))
+    putc(10)

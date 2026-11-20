@@ -48,6 +48,7 @@ Linux personality's `uname` strings, and internal symbol names such as `forge_al
 ./build.sh                 # seed compiler -> stage2..stage4, checks fixpoint, installs build/cudc
 ./cuditor prog.cud -o prog # compile with self-hosted cudc + as + ld
 ./run_tests.sh
+build/kernel-build --release  # release kernel only (build/kernel-release): no hang probe, no KASLR layout lines
 bench/run_bench.py         # Forge vs Rust vs CPython (reference; tools/bench.cud is the Forge tracker)
 ```
 Optional bootstrap: `target/release/cuditor-bootstrap file.cud [-o out] [-S]`, or `-e 'src'`.
@@ -218,7 +219,7 @@ Policy: every tool that can be written in Cuditor is written in Cuditor (one lan
 | tools/busybox/build.sh (BusyBox from pinned source, musl static, EI_OSABI 3, sealed --foreign) | `tools/busybox/build.cud` | ported; examples/user/build.cud runs it; `build.sh` kept as the reference | `tests/busybox-build/run.sh` |
 | tools/busybox/bzip2 (stdin/stdout bz2 filter for `tar -xjf` on the BusyBox build PATH) | `tools/busybox/bzip2.cud` | ported; build/busybox-build puts `build/bzip2` on PATH; Python shim kept as the reference | `tests/bzip2/run.sh` |
 | examples/efi/build.sh (UEFI loader, FAT32 ESP under \EFI\Incudela\, GPT test disk) | `examples/efi/build.cud` | ported; run_tests.sh and tests/os run it; `build.sh` kept as the reference | `tests/efi-build/run.sh` |
-| examples/kernel/build.sh (multiboot2 kernel, kernel-next, GRUB ISO; runs user/modules/BusyBox builds) | `examples/kernel/build.cud` | ported; run_tests.sh, tests/os and efi/build.cud run it; `build.sh` kept as the reference | `tests/kernel-build/run.sh` |
+| examples/kernel/build.sh (multiboot2 kernel, kernel-next, GRUB ISO; runs user/modules/BusyBox builds; `--release`: the release kernel) | `examples/kernel/build.cud` | ported; run_tests.sh, tests/os and efi/build.cud run it; `build.sh` kept as the reference | `tests/kernel-build/run.sh`, `tests/kernel-release/run.sh` |
 | optcov (fs optimizer block coverage) | `tools/optcov.cud` | written in Cuditor (build-plan item 3) | run_tests.sh `optimizer-coverage` (`--check`: registry of fs options and gated passes, then every never-hit block must be on tools/optcov-allow.txt with a reason) and `optgate*` (tests/optgate); see [docs/tools-optcov.md](docs/tools-optcov.md) |
 | ostools (OS-test toolchain preflight: QEMU, GRUB, xorriso, mtools, OVMF) | `tools/ostools.cud` | written in Cuditor (after the 2026-11-13 box reset) | run by the gate harness before every gate, followed by a whole-repo `build/fmt --check` preflight ([docs/tools-ostools.md](docs/tools-ostools.md)) |
 | fsfuzz (`--fs-opt` differential fuzzer) | `tools/fsfuzz.cud` | written in Cuditor (Phase 12.1, gate before further step 4 work) | run_tests.sh `fs-opt-fuzz`, seed 1, 20 programs × 10 builds, and `fs-opt-combos`, 3 programs × 144 builds (every optimizer flag combination, `--combos`) ([docs/tools-fsfuzz.md](docs/tools-fsfuzz.md)) |

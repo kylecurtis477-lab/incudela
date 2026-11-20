@@ -294,6 +294,12 @@ not imply that device DMA was translated.
   The tests do not attack the firmware or the emulator.
 - The kernel under test is the one built by `examples/kernel/build.cud` / `examples/efi/build.cud`
   with the self-hosted compiler (build.sh `FIXPOINT OK`, `SEED OK`, `TOOLS OK`, `SEED TOOLS OK`).
+- The kernel the tests boot is the test/debug build (`examples/kernel/kdebug.cudi` included): it prints the
+  `hang probe:` line the boot harness reads at a HANG and the KASLR layout lines (`KASLR: kernel image at`,
+  `KASLR: big heap at`) and checks the unslid `.text` alias is unmapped. `build/kernel-build --release` builds
+  the release kernel with `krelease.cudi` instead, whose `kdbg_*` hooks are empty; image and region KASLR
+  themselves are identical in both. The release kernel is checked by `tests/kernel-release/run.sh` (no probe or
+  layout strings, empty hooks, `kaslr_pick`/`kaslr_unmap` and every `ktest_hooks` reference kept) but not booted.
 - `ktest_hooks` (syscalls 408/409) is armed only for the boot self-test session. Recording in the
   nondeterminism hook is off by default.
 - Claims are about the functional behaviour those tests observe (including "0 frames leaked" and

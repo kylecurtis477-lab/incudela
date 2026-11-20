@@ -63,6 +63,7 @@ tests/cpython-build/run.sh || fail=1
 tests/cpython-embed/run.sh || fail=1
 tests/efi-build/run.sh || fail=1
 tests/kernel-build/run.sh || fail=1
+tests/kernel-release/run.sh || fail=1
 tests/rtport/run.sh || fail=1
 tests/pecheck/run.sh || fail=1
 tests/memimg/run.sh || fail=1

@@ -1,0 +1,15 @@
+# krelease.cudi: the release kernel's stand-ins for kdebug.cudi (inv213). `build/kernel-build --release`
+# compiles kernel.cud with this file in place of kdebug.cudi: no hang probe, no KASLR layout lines and no
+# unslid-alias self-check, so a release kernel never prints its addresses for them. KASLR itself is unchanged.
+
+def kdbg_kaslr_image():
+    return
+
+def kdbg_kaslr_dyn():
+    return
+
+def kdbg_kaslr_unslid():
+    return
+
+def kdbg_hang_probe():
+    return

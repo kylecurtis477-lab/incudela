@@ -5,8 +5,11 @@
 # (build/user-build, examples/user/build.cud, which builds BusyBox via build/busybox-build), the test modules
 # (build/modules-build), a second kernel with another version string for the kexec test (kernel-next.elf, must
 # differ from kernel.elf) and a BIOS+UEFI hybrid GRUB ISO. The script's sed/grep/cmp steps are done in Forge.
-# usage: build/kernel-build  (the binary lives in build/, so the repo is the parent of its directory; it runs
+# usage: build/kernel-build [--release]  (the binary lives in build/, so the repo is the parent of its directory; it runs
 # from examples/kernel like the script). Stops at the first failing step with that step's exit code (sh -e).
+# --release (inv213) builds only the release kernel, build/kernel-release/kernel.elf: kernel.cud with
+# krelease.cudi in place of kdebug.cudi (no hang probe, no KASLR layout lines). build/kernel (the test/debug kernel
+# the OS tests boot) keeps its files.
 # $CUDC_FLAGS is passed to cudc for both kernels (and inherited by the user and module builds).
 import os
 import sys
@@ -48,6 +51,32 @@ def cp_file(a, b):
 def klink(p):
     step(["../../build/fld", "--format", "kernel", "-o", p + ".elf", p + ".o"])
 
+def build_release(flags):
+# the release kernel: the script's sed 's/^include "kdebug.cudi"$/include "krelease.cudi"/' and grep -q check
+    r = "../../build/kernel-release"
+    mkdirs(r)
+    old = "include \"kdebug.cudi\""
+    lines = []
+    for l in need("kernel.cud").split("\n"):
+        if l == old:
+            l = "include \"krelease.cudi\""
+        lines.append(l)
+    rs = "\n".join(lines)
+    write_file(".kernel_release.cud", rs)
+    if rs.find("\ninclude \"krelease.cudi\"\n") < 0:
+        exit(1)
+    p = os.run(["../../build/cudc", ".kernel_release.cud", r + "/kernel.s"] + flags)
+    os.write(1, p[1])
+    os.write(2, p[2])
+    if p[0] != 0:
+        exit(p[0])
+    os.remove(".kernel_release.cud")
+    step(["../../build/fas", "-I", "../../build/user", "-o", r + "/kernel.o", r + "/kernel.s"])
+    klink(r + "/kernel")
+    step(["grub-file", "--is-x86-multiboot2", r + "/kernel.elf"])
+    os.write(1, "built " + r + "/kernel.elf (release)\n")
+    return 0
+
 def main():
     me = sys.argv[0]
     root = os.path.dirname(me) + "/.." if me.find("/") >= 0 else ".."
@@ -71,6 +100,8 @@ def main():
     # the test modules (examples/modules/build.cud)
     step(["../../cuditor", "../modules/build.cud", "-o", "../../build/modules-build"])
     step(["../../build/modules-build"])
+    if len(sys.argv) > 1 and sys.argv[1] == "--release":
+        return build_release(flags)
     step(["../../build/cudc", "kernel.cud", b + "/kernel.s"] + flags)
     step(["../../build/fas", "-I", "../../build/user", "-o", b + "/kernel.o", b + "/kernel.s"])
     klink(b + "/kernel")

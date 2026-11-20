@@ -1,5 +1,6 @@
 #!/bin/sh
 # Build the Incudela kernel (ELF64 multiboot2) and a BIOS+UEFI hybrid GRUB ISO.
+# --release: only the release kernel, build/kernel-release/kernel.elf (kdebug.cudi swapped for krelease.cudi)
 set -e
 cd "$(dirname "$0")"
 B=../../build/kernel; mkdir -p $B/iso/boot/grub
@@ -17,6 +18,18 @@ klink() {
 # tests/modules-build checks they produce identical artifacts)
 ../../cuditor ../modules/build.cud -o ../../build/modules-build
 ../../build/modules-build
+if [ "${1:-}" = --release ]; then
+    # inv213: only the release kernel (krelease.cudi for kdebug.cudi: no hang probe, no KASLR layout lines)
+    R=../../build/kernel-release; mkdir -p $R
+    sed 's/^include "kdebug.cudi"$/include "krelease.cudi"/' kernel.cud > .kernel_release.cud
+    grep -q '^include "krelease.cudi"$' .kernel_release.cud
+    ../../build/cudc .kernel_release.cud $R/kernel.s --fs-ssa $CUDC_FLAGS; rm -f .kernel_release.cud
+    ../../build/fas -I ../../build/user -o $R/kernel.o $R/kernel.s
+    klink $R/kernel
+    grub-file --is-x86-multiboot2 $R/kernel.elf
+    echo "built $R/kernel.elf (release)"
+    exit 0
+fi
 ../../build/cudc kernel.cud $B/kernel.s --fs-ssa $CUDC_FLAGS
 ../../build/fas -I ../../build/user -o $B/kernel.o $B/kernel.s
 klink $B/kernel

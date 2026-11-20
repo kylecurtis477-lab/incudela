@@ -61,6 +61,8 @@ include "wm.cudi"
 include "panel.cudi"
 include "appwin.cudi"
 include "linux.cudi"
+# test/debug-only boot diagnostics; the release build swaps in krelease.cudi (examples/kernel/build.cud --release)
+include "kdebug.cudi"
 include "../../std/vec.cudi"
 include "../../std/map.cudi"
 
@@ -269,13 +271,7 @@ def kaslr_unmap():
     while va < ksym(9) - kslide:
         unmap_page(kernel_pml4, va)
         va += PAGE
-    puts("KASLR: kernel image at ")
-    put_hex(ksym(0))
-    puts(" (slide ")
-    put_hex(kslide)
-    puts(", ")
-    put_u64(krel_count)
-    puts(" relocations applied), link-address alias unmapped\n")
+    kdbg_kaslr_image()
 
 def check_mapping(name: ptr[u8], va: u64, expect_mapped: u64):
     pa = virt_to_phys(kernel_pml4, va)
@@ -476,7 +472,7 @@ def kmain_high():
 # now on the guarded kernel stack, identity map gone, physical memory via HHDM
     canary_init()
     kaslr_unmap()
-    hang_probe_line()
+    kdbg_hang_probe()
     if bi.fb_addr != 0:
         fb_attach(p2v(bi.fb_addr), bi.fb_width, bi.fb_height, bi.fb_pitch)
         puts("Incudela kernel: framebuffer console ")
@@ -494,7 +490,7 @@ def kmain_high():
     check_mapping("identity", 0x100000, 0)
     check_mapping("hhdm", HHDM + 0x100000, 1)
     check_mapping("kernel .text", ksym(0), 1)
-    check_mapping("unslid .text", ksym(0) - kslide, u64(kslide == 0))
+    kdbg_kaslr_unslid()
     check_mapping("stack guard", KSTACK_TOP - (KSTACK_PAGES + 1) * PAGE, 0)
     gdt_init()
     idt_init()
@@ -876,11 +872,7 @@ def canary_init():
         heap_big_next = HEAP_BIG_BASE + ((r >> 11) & 0xFFFF) * 0x200000
     if kstack_next == 0:
         kstack_next = KSTACKS_BASE + ((r >> 37) & 0xFFFF) * 0x200000
-    puts("KASLR: big heap at ")
-    put_hex(heap_big_next)
-    puts(", thread stacks at ")
-    put_hex(kstack_next)
-    putc(10)
+    kdbg_kaslr_dyn()
 
 @export
 def stack_smashed():
