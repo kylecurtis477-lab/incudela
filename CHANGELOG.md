@@ -7,8 +7,14 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh
 
+- `c96256e` run_tests.sh runs its non-QEMU blocks as 62 items in lanes: lane S (the OS artifacts in build/kernel,
+  build/user, build/efi, ... and their tools) in order in the foreground, the other lanes as background jobs,
+  tests/bounds alone after them, and tests/os (QEMU) alone after everything. Output is printed in item order and
+  is the serial output; a failed item's log is printed in place with a pointer to build/par/NN.log.
+  `RUN_TESTS_SERIAL=1` keeps the serial run. Non-QEMU wall time on the box (O2): 1173 s to 589 s, same 1106
+  results.
 - `83256b0` The hang probe and the KASLR test/debug hooks (the `KASLR: kernel image at`/`KASLR: big heap at` lines
   and the unslid `.text` check) are test/debug only: they live in examples/kernel/kdebug.cudi, and
   `build/kernel-build --release` builds build/kernel-release/kernel.elf with the empty hooks of krelease.cudi.
