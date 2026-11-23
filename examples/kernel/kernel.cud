@@ -852,6 +852,110 @@ def sched_test():
         puts("x2APIC: not offered, xAPIC MMIO\n")
     guard_test()
 
+# ---- scheduler benchmark (`incudela.schedbench` on the boot command line; tests/os/schedbench.sh, never gates) ----
+SB_TICKS = 200
+sb_stop: u64
+sb_yields: u64
+sb_m: Mutex[8]
+sb_c: CondVar[8]
+sb_turn: u64[8]
+sb_pp: u64[8]
+
+def schedbench_wanted() -> u64:
+    i: u64 = 0
+    while i < 255 and bi.cmdline[i] != 0:
+        while i < 255 and bi.cmdline[i] == 32:
+            i += 1
+        s = i
+        while i < 255 and bi.cmdline[i] != 0 and bi.cmdline[i] != 32:
+            i += 1
+        if i > s and cmd_tok_eq(s, i - s, "incudela.schedbench"):
+            return 1
+    return 0
+
+def sb_yielder(arg: u64):
+# switch-heavy load: every yield goes through the run queues
+    n: u64 = 0
+    while atomic_load(addr(sb_stop), acquire) == 0:
+        yield_cpu()
+        n += 1
+    atomic_fetch_add(addr(sb_yields), n, acq_rel)
+
+def sb_pinger(arg: u64):
+# wait-queue load: pair arg >> 1, side arg & 1, hand the turn back and forth through a mutex and a condvar
+    k = arg >> 1
+    side = arg & 1
+    mutex_lock(addr(sb_m[k]))
+    while 1:
+        while sb_turn[k] != side and atomic_load(addr(sb_stop), acquire) == 0:
+            cond_wait(addr(sb_c[k]), addr(sb_m[k]))
+        if atomic_load(addr(sb_stop), acquire) != 0:
+            break
+        sb_turn[k] = 1 - side
+        sb_pp[k] += 1
+        cond_broadcast(addr(sb_c[k]))
+    mutex_unlock(addr(sb_m[k]))
+
+def sched_bench():
+# for SB_TICKS LAPIC ticks: 2 yielders and one ping-pong pair per CPU, all unpinned; prints one line
+    n = ncpu_online
+    if n == 0 or n > 8:
+        n = 1
+    ths: u64[24]
+    nt: u64 = 0
+    atomic_store(addr(sb_stop), 0, seq_cst)
+    sw0 = atomic_load(addr(ctx_switches), acquire)
+    st0 = atomic_load(addr(rq_steals), acquire)
+    k: u64 = 0
+    while k < n:
+        sb_turn[k] = 0
+        sb_pp[k] = 0
+        ths[nt] = u64(thread_spawn(u64(sb_yielder), 0))
+        ths[nt + 1] = u64(thread_spawn(u64(sb_yielder), 1))
+        ths[nt + 2] = u64(thread_spawn(u64(sb_pinger), k * 2))
+        ths[nt + 3] = u64(thread_spawn(u64(sb_pinger), k * 2 + 1))
+        nt += 4
+        k += 1
+    t0 = lapic_ticks
+    sleep_ticks(SB_TICKS)
+    t1 = lapic_ticks
+    atomic_store(addr(sb_stop), 1, seq_cst)
+    k = 0
+    while k < n:
+        mutex_lock(addr(sb_m[k]))
+        cond_broadcast(addr(sb_c[k]))
+        mutex_unlock(addr(sb_m[k]))
+        k += 1
+    i: u64 = 0
+    while i < nt:
+        thread_reap(as_thread(ths[i]))
+        i += 1
+    pp: u64 = 0
+    k = 0
+    while k < n:
+        pp += sb_pp[k]
+        k += 1
+    dt = t1 - t0
+    if dt == 0:
+        dt = 1
+    puts("schedbench: ")
+    put_u64(ncpu_online)
+    puts(" cpus, ")
+    put_u64(dt * 10)
+    puts(" ms: yields ")
+    put_u64(sb_yields)
+    puts(" (")
+    put_u64(sb_yields * 100 / dt)
+    puts("/s), ping-pongs ")
+    put_u64(pp)
+    puts(" (")
+    put_u64(pp * 100 / dt)
+    puts("/s), switches ")
+    put_u64(atomic_load(addr(ctx_switches), acquire) - sw0)
+    puts(", steals ")
+    put_u64(atomic_load(addr(rq_steals), acquire) - st0)
+    putc(10)
+
 def deep(arg: u64):
     recurse(0)
 
@@ -1977,6 +2081,8 @@ def after_overflow():
     sched_on = 1
     sti()
     sched_test()
+    if schedbench_wanted() != 0:
+        sched_bench()
     tlb_test()
     reap_test()
     sync_test()

@@ -66,6 +66,14 @@ kexec handoff (SYSTEMS.md "Process-state format", `pstate.cudi`), the nondetermi
 
 There is no priority and no fairness guarantee beyond FIFO wait queues and round-robin run queues.
 
+### Benchmark
+`incudela.schedbench` on the boot command line runs `sched_bench` (kernel.cud) right after the scheduler
+self-test: for 200 LAPIC ticks (2 s) 2 yielding threads and one mutex/condvar ping-pong pair per CPU, all
+unpinned, then one line `schedbench: N cpus, 2000 ms: yields Y (Y/s), ping-pongs P (P/s), switches S,
+steals K`. `tests/os/schedbench.sh [CPUS...]` boots it in QEMU with `-smp 1`, `2` and `4` (multi-threaded
+TCG, KVM when usable) and prints one `BENCH` line per run. It is a measurement, not a test: tests/os/run.sh
+does not call it and its numbers never gate.
+
 ## 2. Capabilities
 Two independent layers; a call must pass both.
 
