@@ -3,6 +3,13 @@
 # verified field/group/SHA-512 code from examples/kernel/ed25519.cudi (TweetNaCl crypto_sign).
 #   ed25519 public SEEDFILE          32-byte public key on stdout   (= ed25519.public(seed))
 #   ed25519 sign SEEDFILE MSGFILE    64-byte signature on stdout    (= ed25519.sign(seed, msg))
+#   ed25519 hexpublic SEEDFILE       the public key as 64 hex digits and a newline
+#   ed25519 hexsign SEEDFILE MSGFILE the signature as 128 hex digits and a newline
+#   ed25519 verify PUBHEX SIGHEX MSGFILE
+#                                    exit 0 if SIGHEX is a valid signature by PUBHEX over the message
+#                                    (at most 96 bytes, the kernel verifier's limit), 1 if not, 2 on bad
+#                                    usage, hex or message; verification is examples/kernel/ed25519.cudi
+#                                    (ed25519_verify), the same code the kernel uses for sealed images
 # The seed is hashed as-is (any length, like the Python). Freestanding Linux program: its own
 # _start, raw syscalls; the message file is streamed twice instead of being held in memory.
 include "../examples/kernel/ed25519.cudi"
@@ -78,15 +85,97 @@ def write_all(p: u64, n: u64):
 
 
 @export
+def hexval(c: u64) -> i64:
+    if c >= 48 and c <= 57:
+        return i64(c - 48)
+    if c >= 97 and c <= 102:
+        return i64(c - 87)
+    return 0 - 1
+
+@unsafe
+def unhex(a: u64, out: ptr[u8], n: u64, total: u64) -> u64:
+# the first 2n lowercase hex digits of C string a (exactly total digits long) into out[0..n); 0 if not
+    p = ptr[u8](a)
+    i: u64 = 0
+    while i < n:
+        hi = hexval(u64(p[2 * i]))
+        if hi < 0:
+            return 0
+        lo = hexval(u64(p[2 * i + 1]))
+        if lo < 0:
+            return 0
+        out[i] = u8(u64(hi) * 16 + u64(lo))
+        i += 1
+    i = 2 * n
+    while i < total:
+        if p[i] == 0:
+            return 0
+        i += 1
+    if p[total] != 0:
+        return 0
+    return 1
+
+@unsafe
+def write_hex(b: ptr[u8], n: u64):
+    hx = "0123456789abcdef"
+    i: u64 = 0
+    while i < n:
+        iob.b[2 * i] = hx[u64(b[i]) >> 4]
+        iob.b[2 * i + 1] = hx[u64(b[i]) & 15]
+        i += 1
+    iob.b[2 * n] = 10
+    write_all(u64(addr(iob.b[0])), 2 * n + 1)
+
+msgb: EdMsg
+
+def verify(sp: u64) -> u64:
+    pk: B32
+    sig: EdSig
+    if unhex(arg(sp, 2), addr(pk.b[0]), 32, 64) == 0 or unhex(arg(sp, 3), addr(sig.r.b[0]), 32, 128) == 0:
+        return die("ed25519: PUBHEX must be 64 and SIGHEX 128 lowercase hex digits\n", 63, 2)
+    if unhex(arg(sp, 3) + 64, addr(sig.s.b[0]), 32, 64) == 0:
+        return die("ed25519: PUBHEX must be 64 and SIGHEX 128 lowercase hex digits\n", 63, 2)
+    fd = sys3(2, arg(sp, 4), 0, 0)
+    if fd < 0:
+        return die("ed25519: cannot read message file\n", 34, 2)
+    n: u64 = 0
+    while 1:
+        k = sys3(0, u64(fd), u64(addr(iob.b[0])), 65536)
+        if k < 0:
+            sys3(3, u64(fd), 0, 0)
+            return die("ed25519: cannot read message file\n", 34, 2)
+        if k == 0:
+            break
+        i: u64 = 0
+        while i < u64(k):
+            if n >= 96:
+                sys3(3, u64(fd), 0, 0)
+                return die("ed25519: message longer than 96 bytes\n", 38, 2)
+            msgb.b[n] = iob.b[i]
+            n += 1
+            i += 1
+    sys3(3, u64(fd), 0, 0)
+    if ed25519_verify(addr(sig), addr(pk), addr(msgb), n) == 1:
+        return 0
+    return 1
+
 def main(sp: u64) -> u64:
     argc = arg(sp, 0 - 1)
     signing: u64 = 0
+    hex: u64 = 0
     if argc == 3 and cstr_eq(arg(sp, 1), "public"):
         signing = 0
     elif argc == 4 and cstr_eq(arg(sp, 1), "sign"):
         signing = 1
+    elif argc == 3 and cstr_eq(arg(sp, 1), "hexpublic"):
+        hex = 1
+    elif argc == 4 and cstr_eq(arg(sp, 1), "hexsign"):
+        signing = 1
+        hex = 1
+    elif argc == 5 and cstr_eq(arg(sp, 1), "verify"):
+        return verify(sp)
     else:
-        return die("usage: ed25519 public SEEDFILE | ed25519 sign SEEDFILE MSGFILE\n", 63, 2)
+        return die("usage: ed25519 public|hexpublic SEEDFILE | ed25519 sign|hexsign SEEDFILE MSGFILE | ed25519 verify PUBHEX SIGHEX MSGFILE\n", 120, 2)
     # keypair: h = sha512(seed); a = clamp(h[0:32]); prefix = h[32:64]; A = enc(a * B)
     st: Sha5
     s5_init(addr(st))
@@ -101,7 +190,10 @@ def main(sp: u64) -> u64:
     pt: Ge
     i: u64 = 0
     if signing == 0:
-        write_all(u64(addr(pk.b[0])), 32)
+        if hex == 1:
+            write_hex(addr(pk.b[0]), 32)
+        else:
+            write_all(u64(addr(pk.b[0])), 32)
         return 0
     # r = H(prefix + m) mod L; R = enc(r * B)
     s5_init(addr(st))
@@ -132,5 +224,8 @@ def main(sp: u64) -> u64:
         sig.b[i] = rr.b[i]
         sig.b[i + 32] = s.b[i]
         i += 1
-    write_all(u64(addr(sig.b[0])), 64)
+    if hex == 1:
+        write_hex(addr(sig.b[0]), 64)
+    else:
+        write_all(u64(addr(sig.b[0])), 64)
     return 0
