@@ -476,8 +476,10 @@ Each package has a signed index, `<name>/index` (format v1): after the header `#
 **Trust on first use.** `cuditor pkg` checks every index signature against the `[registry] key` in cuditor.toml,
 but it cannot tell whether that key is the registry's real key: whoever first writes it into cuditor.toml decides
 what the first `cuditor pkg lock` trusts (the lock records it as `registry_key`). Get the key from the registry's
-operator out of band and review changes to that line like any other code change. Today `build` and `vendor` check
-the indexes against the key in cuditor.toml; the `registry_key` recorded in the lock is not yet compared with it.
+operator out of band and review changes to that line like any other code change. `build`, `stage` and `vendor`
+compare the lock's `registry_key` with cuditor.toml's `[registry] key` before reading any index and refuse a
+mismatch ("cuditor.lock was made with registry key ... but cuditor.toml has [registry] key ... (a registry key
+change needs `cuditor pkg lock`)"), so changing the key always takes a deliberate relock.
 
 **Key rotation (a manual process; there is no rotate command).** (1) The operator makes a new Ed25519 seed and
 re-signs every `<name>/index` with it (`build/edsig hexsign` with the new seed, over the same `cuditor-index-v1 ` message
@@ -485,7 +487,8 @@ that publish signs), replacing each `index.sig`; the index text and publish time
 protection is unaffected. (2) The operator publishes the new public key out of band. (3) Each project changes
 `[registry] key` and runs `cuditor pkg lock` once, which records the new key. A registry has one `index.sig` per
 package, so it cannot serve the old and the new key at once: projects that have not switched fail with "not
-signed by the registry key" until they do. (4) The old seed is destroyed. Threshold-signed roles and a
+signed by the registry key" until they do, and a project that changed the key without relocking gets the
+registry-key mismatch above. (4) The old seed is destroyed. Threshold-signed roles and a
 transparency log are planned later (Master Plan V2).
 
 **Migration to lock_version 2 (0.23.0).** cuditor.lock is now `lock_version = "2"` (rollback protection records

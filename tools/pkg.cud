@@ -583,6 +583,10 @@ def check_lock(reg):
     hdr, pk = read_lock("cuditor.lock")
     if hdr.get("lock_version", "") != "2":
         die("cuditor.lock is lock_version " + hdr.get("lock_version", "?") + "; this cuditor pkg writes 2 (rollback protection): run `cuditor pkg lock`")
+    # a key change needs a relock: refuse before reading any index (build, stage and vendor all come here)
+    lk = hdr.get("registry_key", "")
+    if lk != KEY[0]:
+        die("cuditor.lock was made with registry key " + lk[:16] + "... but cuditor.toml has [registry] key " + KEY[0][:16] + "... (a registry key change needs `cuditor pkg lock`)")
     ds = ""
     for dn in sorted(root["deps"]):
         ds += dn + " " + root["dependencies." + dn] + ";"

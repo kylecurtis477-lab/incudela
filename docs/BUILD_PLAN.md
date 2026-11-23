@@ -568,6 +568,14 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    - *Item 6 status: done (2026-11-23, 4 batches).* Resolution, signed index with publish time and yank flag
      (quarantine), cooldowns, rollback protection and vendored reproducible builds. Left for later (not in this
      item): fetching from a remote registry over the network, key rotation, and dev-dependencies/features.
+   - *Fix (2026-11-23, inv227): registry key change needs a relock — status: done.* `build`, `stage` and `vendor`
+     compare cuditor.lock's `registry_key` with cuditor.toml's `[registry] key` before reading any index and
+     refuse a mismatch with a message naming both keys. A mismatch was already refused, but only indirectly (the
+     whole-lock comparison at the end of the check, "cuditor.lock was edited or is stale", after every index had
+     been read), which the inv226 trust note wrongly described as unchecked. tests/pkg/run.sh 52 to 57 checks
+     (a registry re-signed with a second generated test key: build, stage and vendor refused with nothing staged
+     or vendored, a relock records the new key and builds the same hash; a lock whose registry_key was edited
+     refused); the four refusal checks fail without the fix.
 7. **Sustained adversarial testing**: multi-hour soak runs, syscall and capability fuzzing, and fault injection,
    with the results recorded.
    - *Batch 1 done (2026-11-23, inv225):* `examples/user/sysfuzz.cud`, a ring-3 syscall and capability fuzzer

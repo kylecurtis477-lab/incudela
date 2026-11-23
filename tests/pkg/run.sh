@@ -138,6 +138,23 @@ rm -rf target; hv=$("$F" pkg --registry $T/v build 2>&1 | sed -n 's/.*sha256 //p
 cp $T/lockn cuditor.lock; "$F" pkg --registry $R vendor $T/v2 > $T/e 2>&1; [ $? != 0 ] && grep -q "rolled-back index" $T/e && [ ! -e $T/v2 ] && ok vendor-checks-first || bad vendor-checks-first
 cp $T/lock1 cuditor.lock; cp -r $T/v $T/v3; echo "# changed" >> $T/v3/strutil/1.1.0/strutil.cud
 "$F" pkg --registry $T/v3 build > $T/e 2>&1; [ $? != 0 ] && grep -q "hash mismatch for strutil 1.1.0" $T/e && ok vendor-tamper-refused || bad vendor-tamper-refused
+# a registry key change needs a relock: the registry re-signed with a second (test-only, generated
+# here) key and cuditor.toml switched to it; build, stage and vendor refuse the old lock before
+# reading any index, and a relock records the new key and builds the same program
+printf 'cuditor pkg test-only second key (key rotation test)\n' > $T/k2; PK2=$("$ED" hexpublic $T/k2); RK=$T/rk; mkdir $RK
+for p in "mathx/1.0.0 1700000000" "strutil/1.0.0 1700000100" "clash/1.0.0 1700000200" "mathx/1.2.0 1700100000" "strutil/1.1.0 1700100100" "mathx/2.0.0 1700200000"; do
+  set -- $p; "$F" pkg --registry $RK publish --key $T/k2 --time $2 "$S/$1" > /dev/null 2>&1 || bad "publish-second-key $1"
+done
+KM="cuditor.lock was made with registry key ${PK:0:16}... but cuditor.toml has \[registry\] key ${PK2:0:16}... (a registry key change needs \`cuditor pkg lock\`)"
+sed -i "s/^key = \"$PK\"$/key = \"$PK2\"/" cuditor.toml
+"$F" pkg --registry $RK build > $T/e 2>&1; [ $? != 0 ] && grep -q "$KM" $T/e && ok key-change-refused-build || bad key-change-refused-build
+mkdir $T/st; "$D/build/pkg" --ed "$ED" stage $RK $T/st > $T/e 2>&1; [ $? != 0 ] && grep -q "$KM" $T/e && [ -z "$(ls $T/st)" ] && ok key-change-refused-stage || bad key-change-refused-stage
+"$F" pkg --registry $RK vendor $T/vk > $T/e 2>&1; [ $? != 0 ] && grep -q "$KM" $T/e && [ ! -e $T/vk ] && ok key-change-refused-vendor || bad key-change-refused-vendor
+"$F" pkg --registry $RK lock > /dev/null 2>&1 && grep -q "^registry_key = \"$PK2\"$" cuditor.lock && rm -rf target && hk=$("$F" pkg --registry $RK build 2>&1 | sed -n 's/.*sha256 //p') && [ "$hk" = "$h1" ] && ok "key-change-relock-builds-same" || bad "key-change-relock-builds-same ($hk)"
+# the converse: the lock's registry_key edited to match a key cuditor.toml does not have
+cp "$D/tests/pkg/app/cuditor.toml" cuditor.toml; sed "s/^registry_key = \".*\"$/registry_key = \"$PK2\"/" $T/lock1 > cuditor.lock
+"$F" pkg --registry $R build > $T/e 2>&1; [ $? != 0 ] && grep -q "cuditor.lock was made with registry key ${PK2:0:16}... but cuditor.toml has \[registry\] key ${PK:0:16}..." $T/e && ok lock-key-edit-refused || bad lock-key-edit-refused
+cp $T/lock1 cuditor.lock
 # cuditor.toml changed without relocking
 sed -i 's/mathx = "\^1"/mathx = "^1.2"/' cuditor.toml
 "$F" pkg --registry $R build > $T/e 2>&1; [ $? != 0 ] && grep -q "out of date" $T/e && ok stale-lock-refused || bad stale-lock-refused
