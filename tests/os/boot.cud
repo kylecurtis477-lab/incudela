@@ -318,6 +318,13 @@ def freeze_gap(tprev, tn):
         return tn - tprev - 0.05
     return 0.0
 
+def step_gap(tp, tq, wait):
+# the input injection (FORGE_BOOT_INPUT) sends one HMP command at a time and waits up to `wait` seconds for its
+# echo; a step that took over 3 s more than that means the harness was not running (inv224 os/desktop: a box
+# stall inside the injection let the guest's 30 s input window run out with 6 of 36 commands unsent, and no
+# freeze was reported because the loop never checked)
+    return freeze_gap(tp + wait, tq)
+
 def stall_expired(now, tlast, stall) -> i64:
 # 1 if serial has been silent for `stall` seconds (FORGE_BOOT_STALL, default 60; never raised here)
     if now - tlast >= stall:
@@ -439,6 +446,8 @@ def boot(h, attempt):
         inp_mark = ip[0]
         inp_cmds = split(ip[1], ";")
     inp_sent = False
+    # harness notes that must not land inside a serial line (the input injection starts mid-line): logged at the end
+    notes = ""
     while rc is None:
     # Box suspensions never reach clk() (see clk); a pass over 3 s on clk() means the harness itself was not
     # scheduled (freeze_gap), so that time is not counted as guest silence, run time or timeout either.
@@ -503,8 +512,20 @@ def boot(h, attempt):
                 break
         if inp_mark != "" and not inp_sent and inp_mark in buf:
             inp_sent = True
+            ti = clk()
+            tp = ti
             for ic in inp_cmds:
                 monitor(h, ic, 0.3)
+                tq = clk()
+                g = step_gap(tp, tq, 0.3)
+                if g > 0.0:
+                    frozen += g
+                    tlast += g
+                    t0 += g
+                    deadline += g
+                    notes = concat(notes, f"[harness: box frozen {fix(g)}s during input injection, not counted]\n")
+                tp = tq
+            notes = concat(notes, f"[harness: {len(inp_cmds)} input commands sent in {fix(clk() - ti)}s]\n")
             tprev = clk()
         if nocount(buf, "sh$ ") > sent and sent < len(sc) and (len(sc[sent]) < 3 or sc[sent][2] in buf):
             how = sc[sent][0]
@@ -556,7 +577,11 @@ def boot(h, attempt):
         why = f"HANG: killed after {fix(el)}s, no serial output after +{fix(tlast - t0)}s, last line \"{last_line(buf)}\", vCPU dump {dump}"
     elif rc == -9:
         why = f"SLOW: killed at the 2x limit ({fix(el)}s of {TMO[0]}s), output still arriving"
-    write_file(h.log, f"{buf}\n[fb] {fbmsg}\nrc={rc}\n[harness] {fix1(el)}s {why}\n")
+    write_file(h.log, f"{buf}\n{notes}[fb] {fbmsg}\nrc={rc}\n[harness] {fix1(el)}s {why}\n")
+    # any freeze shows on the result line too, so the gate's freeze count (grep 'box frozen' in the suite log) sees it
+    fz = ""
+    if frozen > 0.0:
+        fz = f"; box frozen {fix(frozen)}s, not counted"
     if kind == "hang":
         old = read_file(dump)
         write_file(dump, concat(concat(old, "\n---- serial output of the hung boot ----\n"), buf))
@@ -566,14 +591,14 @@ def boot(h, attempt):
         wy = concat("; ", why)
     for m in split(MARKERS[0], "|"):
         if m != "" and res == "" and not (m in buf):
-            res = f"FAIL os/{h.name} (missing: {m}, qemu rc={rc}; {fix(el)}s{wy})"
+            res = f"FAIL os/{h.name} (missing: {m}, qemu rc={rc}; {fix(el)}s{wy}{fz})"
     fbt = FBTEXT[0]
     if res == "" and fbt != "":
         parts = split(fbt, "^")
         if not (f"=\"{parts[len(parts) - 1]}\"" in fbmsg):
             res = f"FAIL os/{h.name} (framebuffer: {fbmsg})"
     if res == "" and rc != 33:
-        res = f"FAIL os/{h.name} (qemu rc={rc}; {fix(el)}s{wy})"
+        res = f"FAIL os/{h.name} (qemu rc={rc}; {fix(el)}s{wy}{fz})"
     if res == "":
         slow = f"{fix(el)}s"
         if el > h.tmo:
@@ -581,7 +606,7 @@ def boot(h, attempt):
         fbp = ""
         if fbt != "":
             fbp = f" [fb {fbmsg}]"
-        res = f"PASS os/{h.name}{fbp} [{slow}]"
+        res = f"PASS os/{h.name}{fbp} [{slow}{fz}]"
     return [res, kind, why]
 
 def fix1(x):
@@ -699,6 +724,12 @@ def self_test():
         print("PASS boot-harness monotonic-clock")
     else:
         print("FAIL boot-harness monotonic-clock")
+        fail = 1
+    # input injection steps (0.3 s echo wait): 0.31 s and 3.3 s are no freeze; 4.3 s counts 3.95 s, as freeze_gap does
+    if step_gap(10.0, 10.31, 0.3) == 0.0 and step_gap(10.0, 13.3, 0.3) == 0.0 and step_gap(10.0, 14.3, 0.3) > 3.94 and step_gap(10.0, 14.3, 0.3) < 3.96:
+        print("PASS boot-harness input-freeze")
+    else:
+        print("FAIL boot-harness input-freeze")
         fail = 1
     pa = probe_addrs("x\nhang probe: kbd_irqs@0xffffffffa1f1a2c8 ps2_rd@0xFFFFFFFFA1F1A2D0\nhang probe: kbd_irqs@0xffffffff80319a58 bad@0xzz\nsh$ ")
     if len(pa) == 1 and pa[0][0] == "kbd_irqs" and pa[0][1] == "0xffffffff80319a58" and hex_int("0000000000000063") == 99 and hex_int("FF") == 255 and len(probe_addrs("no probe")) == 0:

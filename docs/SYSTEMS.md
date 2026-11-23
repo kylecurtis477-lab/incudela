@@ -87,6 +87,14 @@ being reported as a bare `qemu rc=-9` (which was just the harness's own SIGKILL)
   due to virtual machine fork"), and QEMU stops with it. The harness counts a loop pass over 3 s as such a
   freeze: that time is not guest silence, run time or timeout, and the log gets "[harness: box frozen Ns, not
   counted]". Before this, every freeze longer than the 60 s silence limit was reported as a guest HANG.
+  The `FORGE_BOOT_INPUT` injection (os/desktop: 36 HMP mouse and key commands, about 11 s of the guest's 30 s
+  input window) is checked the same way, step by step: a command that took over 3 s more than its 0.3 s echo
+  wait is a freeze, logged as "[harness: box frozen Ns during input injection, not counted]" next to
+  "[harness: 36 input commands sent in Ns]". Any freeze also shows on the result line ("; box frozen Ns, not
+  counted"), so a gate's `grep 'box frozen'` over the suite log sees it. Before this (inv224) the injection
+  loop never checked: a box stall inside it let the guest's input window run out with the last 6 commands
+  unsent, and os/desktop failed with no freeze reported. The result still fails: a freeze is reported, never
+  excused.
 The kills seen so far (g11 bios, g52 bios-smp1, g64 uefi) were all of this second kind: the serial log
 stops mid-boot at different points (after the blkd restart, after the Linux personality line, inside the
 module load/unload cycles) and nothing follows for minutes, while the same boot alone takes 65-85 s and
