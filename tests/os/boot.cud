@@ -27,7 +27,7 @@ def script():
     s += [["s", "run busybox expr 6 + 7"], ["s", "run busybox uname -s -m"], ["s", "run busybox wc -c /efi/incudela/docs/big.bin"], ["s", "run busybox sha256sum /efi/incudela/docs/big.bin"], ["s", "run busybox cat /efi/incudela/bin/cat"]]
     s += [["s", "run busybox ls /efi/incudela/bin"], ["s", "run busybox ls /efi/incudela/docs"], ["s", "run busybox printf %d-%s 42 ok"], ["s", "run busybox pwd"], ["s", "run busybox sleep 1"], ["s", "run busybox sh -c exit${IFS}3"]]
     s += [["s", "run busybox sh -c exit${IFS}4</efi/incudela/docs/big.bin"], ["s", "run busybox tail -n 2 /efi/incudela/docs/hello.sh"], ["s", "run busybox sh /efi/incudela/docs/hello.sh"], ["s", "run busybox grep -c echo /efi/incudela/docs/hello.sh"]]
-    s += [["s", "capdeny"], ["s", "badptr"], ["s", "crash k 4"], ["k", "hello Swap OK"], ["s", "exit"], ["s", "hello x"], ["s", "bg 1 &"], ["s", "hello z &"], ["s", "kexec next"], ["k", "hello after kexec"], ["s", "wait"]]
+    s += [["s", "capdeny"], ["s", "badptr"], ["s", "sysfuzz 7 3000"], ["s", "crash k 4"], ["k", "hello Swap OK"], ["s", "exit"], ["s", "hello x"], ["s", "bg 1 &"], ["s", "hello z &"], ["s", "kexec next"], ["k", "hello after kexec"], ["s", "wait"]]
     # FORGE_BOOT_KEXEC=N: N handoffs in one boot, each next line sent the moment the new prompt appears
     # (regression for the inv80 hang: kernel lines interleaved with the post-kexec prompt)
     i: int = 1

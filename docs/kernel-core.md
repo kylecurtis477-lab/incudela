@@ -170,6 +170,11 @@ and demand paging print `buddy allocator OK`, `vmalloc VA reuse OK` and `demand 
 SMEP/SMAP and `copy_user` are checked by the uaccess self-test (`SMAP blocks kernel read`,
 `SMEP blocks kernel exec`, `uaccess:`) and by `examples/user/badptr.cud` (every pointer-taking
 syscall, four bad addresses, all `EFAULT`).
+`examples/user/sysfuzz.cud` (the plan's item 7) is a seeded syscall and capability fuzzer run as
+`sysfuzz 7 3000` on every boot path: each syscall gated by a capability it does not declare must return
+`EACCES`, numbers outside the native table (including the Linux-only 15, 56, 158 and 322) `ENOSYS`, and then
+3000 calls with random arguments (huge lengths, kernel, non-canonical and straddling pointers, random path
+bytes) must leave its canary, pid and console intact (`sysfuzz: PASS`).
 
 **Scheduler, IPC and capabilities (§§1–4).** The legal thread states, wait queues, mutexes and
 condvars are exercised by the kernel sync self-test (`wait queues + sleeping mutexes + condvars OK`,

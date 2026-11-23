@@ -1,0 +1,393 @@
+# cuditor: safe
+# cuditor: no-runtime
+# cuditor: caps(fs, ipc)
+# Item 7 (sustained adversarial testing): a seeded ring-3 syscall and capability fuzzer.
+#   sysfuzz [SEED [N]]   (defaults 1 and 3000)
+# Phase 1, capability sweep: every syscall number gated by a capability this program does not declare
+# (spawn, drv, ktest, kexec, probe, grant, gfx) must return EACCES, and a sample of numbers outside the
+# table must return ENOSYS. Phase 2: N calls drawn from the base, fs and ipc syscalls with arguments from
+# a seeded xorshift64*: small and huge integers, kernel, straddling and non-canonical pointers, pointers
+# into a scratch buffer, paths and random bytes. Calls that would only end or wedge this process are
+# shaped away: no exit/exec/fork, nothing reads, writes, closes, dups or restricts fds 0-3 (console and
+# the root capability), sends and receives use only channels it tracks (a full queue or an empty one
+# would block forever), munmap only touches its own mappings and mmap/brk stay small. Afterwards a
+# canary buffer that no call was given must be intact, getpid unchanged and the console still writable.
+include "ulib.cudi"
+
+EACCES_ = 0xFFFFFFFFFFFFFFF3
+ENOSYS_ = 0xFFFFFFFFFFFFFFDA
+
+rng: u64
+calls: u64
+errs: u64
+oks: u64
+seen: u8[512]
+scr: u8[8192]
+canary: u64[256]
+maps: u64[16]
+mlen: u64[16]
+nmaps: u64
+chs: u64[2]
+chq: u64
+chok: u64
+capbad: u64
+capn: u64
+nsbad: u64
+nsn: u64
+gated: u64[29] = [57, 59, 61, 426, 400, 401, 402, 403, 404, 405, 406, 407, 411, 412, 413, 414, 415, 416, 417, 418,
+                  408, 409, 200, 428, 429, 430, 431, 432, 433]
+# numbers outside the native table, including the Linux-personality-only 15, 56, 158 and 322
+unknown: u64[20] = [5, 6, 7, 8, 10, 13, 15, 56, 158, 322, 100, 199, 201, 299, 301, 399, 419, 434, 0xFFFFFFFF,
+                    0xFFFFFFFFFFFFFFFF]
+
+def rnd() -> u64:
+    x = rng
+    x = x ^ (x >> 12)
+    x = x ^ (x << 25)
+    x = x ^ (x >> 27)
+    rng = x
+    return x * 0x2545F4914F6CDD1D
+
+def below(n: u64) -> u64:
+    return rnd() % n
+
+def scrp() -> u64:
+# into the first half of scratch; with slen() every in-range copy stays inside scr
+    return u64(addr(scr[0])) + below(4096)
+
+def badp() -> u64:
+    k = below(8)
+    if k == 0:
+        return 0
+    if k == 1:
+        return 0xFFFF800000001000  # HHDM
+    if k == 2:
+        return 0xFFFFFFFF80000000  # kernel text
+    if k == 3:
+        return 0x00007FFFFFFFF000  # straddles USER_TOP
+    if k == 4:
+        return 0x0000800000000000  # USER_TOP
+    if k == 5:
+        return 0x8000000000000000  # non-canonical
+    if k == 6:
+        return 0x00007FFFFFFFFFFF  # last user byte
+    return rnd() | 0x8000000000000000
+
+pn: u64
+heap_base0: u64
+
+def ptrarg() -> u64:
+# a pointer, and in pn a length to go with it: any length for a bad pointer; for a scratch pointer a
+# length that ends inside scr or wraps past the top of the address space (never one that would let a
+# correct kernel copy over this program's other globals)
+    if below(3) == 0:
+        pn = lenarg()
+        return badp()
+    k = below(4)
+    if k == 0:
+        pn = 0
+    elif k == 1:
+        pn = 0x8000000000000000 | rnd()
+    else:
+        pn = below(4096)
+    return scrp()
+
+def pathp() -> u64:
+    k = below(9)
+    if k == 0:
+        return u64("/efi/incudela/docs/big.bin")
+    if k == 1:
+        return u64("/efi/incudela")
+    if k == 2:
+        return u64("/efi/incudela/docs")
+    if k == 3:
+        return u64("/nonexistent/x")
+    if k == 4:
+        return u64("../../efi")
+    if k == 5:
+        return u64("")
+    if k == 6:
+    # random bytes in scratch, NUL-terminated at a random length (sometimes over 255)
+        p = below(7000)
+        n = below(300)
+        i: u64 = 0
+        while i < n:
+            scr[p + i] = u8(1 + below(255))
+            i += 1
+        scr[p + n] = 0
+        return u64(addr(scr[p]))
+    return ptrarg()
+
+def lenarg() -> u64:
+    k = below(6)
+    if k == 0:
+        return 0
+    if k == 1:
+        return below(64)
+    if k == 2:
+        return below(4096)
+    if k == 3:
+        return 0xFFFFFFFFFFFFFFF0
+    if k == 4:
+        return 0x100000000
+    return rnd()
+
+def fdarg() -> u64:
+# a handle number that is never 0-3 (console, root capability)
+    k = below(4)
+    if k == 0:
+        return rnd()
+    if k == 1:
+        return 16 + below(48)
+    return 4 + below(12)
+
+def is_ch(fd: u64) -> u64:
+    return chok != 0 and (fd == chs[0] or fd == chs[1])
+
+def anyfd() -> u64:
+# fdarg, but never a tracked channel end (a dup or move of one could let a send block)
+    f = fdarg()
+    if is_ch(f):
+        return 99
+    return f
+
+def call(nr: u64, a: u64, b: u64, c: u64, d: u64) -> u64:
+    calls += 1
+    if nr < 512:
+        seen[nr] = 1
+    r = syscall4(nr, a, b, c, d)
+    if r >= 0xFFFFFFFFFFFFF000:
+        errs += 1
+    else:
+        oks += 1
+    return r
+
+def closeall():
+    i: u64 = 4
+    while i < 16:
+        call(SYS_CLOSE, i, 0, 0, 0)
+        i += 1
+    chok = 0
+
+def one():
+    k = below(24)
+    if k == 0:
+        f = anyfd()
+        q = ptrarg()
+        call(SYS_READ, f, q, pn, 0)
+    elif k == 1:
+        f = anyfd()
+        q = ptrarg()
+        call(SYS_WRITE, f, q, pn, 0)
+    elif k == 2 or k == 3:
+        call(SYS_OPEN, pathp(), 0, 0, 0)
+    elif k == 4:
+        f = anyfd()
+        call(SYS_CLOSE, f, 0, 0, 0)
+    elif k == 5:
+        call(SYS_STAT, pathp(), ptrarg(), 0, 0)
+    elif k == 6:
+        n = below(65536)
+        if below(4) == 0:
+            n = 0x40000001 + below(1000)
+        r = call(SYS_MMAP, 0, n, 0, 0)
+        if r < 0xFFFFFFFFFFFFF000:
+            if nmaps == 16:
+                call(SYS_MUNMAP, maps[0], mlen[0], 0, 0)
+                j: u64 = 1
+                while j < 16:
+                    maps[j - 1] = maps[j]
+                    mlen[j - 1] = mlen[j]
+                    j += 1
+                nmaps = 15
+            maps[nmaps] = r
+            mlen[nmaps] = (n + 4095) & 0xFFFFFFFFFFFFF000
+            nmaps += 1
+    elif k == 7:
+        if nmaps > 0 and below(2) == 0:
+            i = nmaps - 1
+            call(SYS_MUNMAP, maps[i], mlen[i], 0, 0)
+            nmaps = i
+        else:
+        # never a page that could be ours: misaligned, kernel, wrapping or below MMAP_BASE
+            call(SYS_MUNMAP, badp() | 1, lenarg(), 0, 0)
+    elif k == 8:
+        b0 = call(SYS_BRK, 0, 0, 0, 0)
+        if below(2) == 0:
+            call(SYS_BRK, b0 + below(65536), 0, 0, 0)
+        else:
+        # out of range only: below the heap base, past BRK_MAX or in the kernel half
+            v = rnd() | 0x0000100000000001
+            if below(2) == 0:
+                v = below(heap_base0)
+            call(SYS_BRK, v, 0, 0, 0)
+    elif k == 9:
+        call(SYS_YIELD, 0, 0, 0, 0)
+    elif k == 10:
+        f = anyfd()
+        q = ptrarg()
+        call(SYS_GETDENTS, f, q, pn, 0)
+    elif k == 11:
+        q = ptrarg()
+        call(SYS_GETARGS, q, pn, 0, 0)
+    elif k == 12:
+        call(SYS_DUP, anyfd(), rnd() & 31, 0, 0)
+    elif k == 13:
+        call(SYS_OPENAT, anyfd(), pathp(), 0, 0)
+    elif k == 14:
+        call(SYS_RIGHTS, rnd() & 31, 0, 0, 0)
+    elif k == 15:
+        call(SYS_RESTRICT, anyfd(), rnd() & 31, 0, 0)
+    elif k == 16:
+    # a channel: only through the tracked pair (or a bad pointer, which creates nothing)
+        if chok == 0 and below(2) == 0:
+            fds: u64[2]
+            if call(SYS_CHAN, u64(addr(fds[0])), 0, 0, 0) == 0:
+                chs[0] = fds[0]
+                chs[1] = fds[1]
+                chq = 0
+                chok = 1
+        else:
+            call(SYS_CHAN, badp(), 0, 0, 0)
+    elif k == 17:
+        if chok != 0 and chq < 16:
+            r = call(SYS_SEND, chs[0], ptrarg(), 1 + below(80), NO_HANDLE)
+            if r < 0xFFFFFFFFFFFFF000:
+                chq += 1
+        else:
+            f = anyfd()
+            q = ptrarg()
+            call(SYS_SEND, f, q, pn, NO_HANDLE)
+    elif k == 18:
+        if chok != 0 and chq > 0:
+            h: u64 = 0
+            q = ptrarg()
+            r = call(SYS_RECV, chs[1], q, pn, u64(addr(h)))
+            if r < 0xFFFFFFFFFFFFF000:
+                chq -= 1
+        else:
+            q = ptrarg()
+            call(SYS_RECV, 99, q, pn, badp())
+    elif k == 19:
+        call(SYS_GETPID + below(2) * (SYS_GETPPID - SYS_GETPID), 0, 0, 0, 0)
+    elif k == 20:
+        call(SYS_TICKS + below(2), 0, 0, 0, 0)
+    elif k == 21:
+        call(410, 0, 0, 0, 0)  # kexec generation (read-only)
+    elif k == 22:
+    # numbers outside the table
+        n = 434 + below(600)
+        r = call(n, rnd(), rnd(), rnd(), rnd())
+        nsn += 1
+        if r != ENOSYS_:
+            nsbad += 1
+    else:
+        if below(4) == 0:
+            closeall()
+        else:
+            call(SYS_YIELD, 0, 0, 0, 0)
+
+def need_deny(nr: u64):
+    capn += 1
+    r = call(nr, 0, 0, 0, 0)
+    if r != EACCES_:
+        capbad += 1
+        out("sysfuzz: syscall ")
+        out_u64(nr)
+        out(" without its capability returned ")
+        out_u64(r)
+        out("\n")
+        flush()
+
+def num(p: ptr[u8], i: ptr[u64]) -> u64:
+    v: u64 = 0
+    while mem_get8(u64(p) + i[0]) == 32:
+        i[0] += 1
+    while mem_get8(u64(p) + i[0]) >= 48 and mem_get8(u64(p) + i[0]) <= 57:
+        v = v * 10 + mem_get8(u64(p) + i[0]) - 48
+        i[0] += 1
+    return v
+
+@export
+def _start():
+    ab: u8[128]
+    ab[0] = 0
+    sys_getargs(u64(addr(ab[0])), 128)
+    pos: u64 = 0
+    seed = num(addr(ab[0]), addr(pos))
+    n = num(addr(ab[0]), addr(pos))
+    if seed == 0:
+        seed = 1
+    if n == 0:
+        n = 3000
+    rng = seed * 0x9E3779B97F4A7C15 + 0x1234567
+    i: u64 = 0
+    while i < 256:
+        canary[i] = i * 0x0101010101010101 + seed
+        i += 1
+    pid = sys_getpid()
+    heap_base0 = sys_brk(0)
+    # phase 1: capabilities this program does not declare (it has fs and ipc)
+    i = 0
+    while i < 29:
+        need_deny(gated[i])
+        i += 1
+    i = 0
+    while i < 20:
+        nsn += 1
+        if call(unknown[i], 0, 0, 0, 0) != ENOSYS_:
+            nsbad += 1
+        i += 1
+    # phase 2: N random calls
+    i = 0
+    while i < n:
+        one()
+        i += 1
+    closeall()
+    while nmaps > 0:
+        nmaps -= 1
+        call(SYS_MUNMAP, maps[nmaps], mlen[nmaps], 0, 0)
+    intact: u64 = 1
+    i = 0
+    while i < 256:
+        if canary[i] != i * 0x0101010101010101 + seed:
+            intact = 0
+        i += 1
+    d: u64 = 0
+    i = 0
+    while i < 512:
+        d += u64(seen[i])
+        i += 1
+    out("sysfuzz: seed ")
+    out_u64(seed)
+    out(", ")
+    out_u64(calls)
+    out(" calls over ")
+    out_u64(d)
+    out(" syscall numbers (")
+    out_u64(errs)
+    out(" errors); ")
+    out_u64(capn - capbad)
+    out("/")
+    out_u64(capn)
+    out(" undeclared-capability calls EACCES, ")
+    out_u64(nsn - nsbad)
+    out("/")
+    out_u64(nsn)
+    out(" unknown numbers ENOSYS")
+    out("\n")
+    flush()
+    ok = capbad == 0 and nsbad == 0 and intact == 1 and sys_getpid() == pid
+    out("sysfuzz: canary intact ")
+    out_u64(intact)
+    out(", pid unchanged ")
+    out_u64(u64(sys_getpid() == pid))
+    out("\n")
+    flush()
+    if ok:
+        out("sysfuzz: PASS\n")
+        flush()
+        sys_exit(0)
+    out("sysfuzz: FAIL\n")
+    flush()
+    sys_exit(1)
