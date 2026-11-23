@@ -7,8 +7,12 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns
 
+- `f6b38a7` Dependency cooldowns (the plan's item 6, batch 2; no index format change): with `[registry]`
+  `cooldown_days = "N"` in cuditor.toml, `cuditor pkg lock [--now UNIX]` does not newly select a version whose
+  signed publish time is less than N days old; `cooldown_exempt = ["name", ...]` exempts packages. Existing locks
+  keep building and the lock does not record the time. tests/pkg/run.sh 29 to 39 checks.
 - `14a931a` Signed package index (the plan's item 6, batch 1): each registry package has `<name>/index` (v1: version,
   publish time, yank flag and package hash per line) and `<name>/index.sig`, an Ed25519 signature over
   `cuditor-index-v1 ` + sha256(name, newline, index); it replaces `<name>/versions`. cuditor.toml pins the registry
