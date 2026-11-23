@@ -17,7 +17,9 @@
 # Freestanding sources: names resolve through `include` files (and, for a .cudi, through the .cud that
 # includes it); a .cudi is checked by compiling that root with the include chain written as hidden siblings.
 # An edit that changes only blank or comment lines is parsed again but not compiled again: the last full
-# compile's diagnostics move to the new line numbers (forge/stats `reused`).
+# compile's diagnostics move to the new line numbers (forge/stats `reused`). References, rename and
+# completion take in the .cudi files next to a document and the names its includes define; `p.f` resolves
+# struct fields when p is annotated with a struct or a pointer to one (ptr/own/ref/mut/nown).
 
 import sys
 
@@ -27,6 +29,7 @@ PID = [0]
 MODS = {}
 INCS = {}
 FULL = {}
+CLOS = {}
 STATS = {"compiles": 0, "parses": 0, "reused": 0}
 
 # ---------------- JSON ----------------
@@ -519,7 +522,10 @@ def inc_line(text, name):
     return 0
 
 def inc_closure(path):
-# [file, includer] for every file reached through include lines from path, breadth first (path excluded)
+# [file, includer] for every file reached through include lines from path, breadth first (path excluded);
+# memoised for the current request (CLOS is cleared by handle)
+    if path in CLOS:
+        return CLOS[path]
     out = []
     seen = [path]
     q = [path]
@@ -533,6 +539,7 @@ def inc_closure(path):
                 seen.append(p)
                 q.append(p)
                 out.append([p, f])
+    CLOS[path] = out
     return out
 
 def fs_root(path):
@@ -963,12 +970,27 @@ def class_member(cls, word):
     return None
 
 def class_name_of(n):
-# the class named by a type annotation or a constructor call target: Name C or Attr m.C
+# the class named by a type annotation or a constructor call target: Name C or Attr m.C; a pointer
+# type (ptr[S], own[S], ref[S], mut[S], nown[S]) names its struct
+    if n["k"] == "Sub" and len(kids(n)) == 2 and kids(n)[0]["k"] == "Name" and kids(n)[0]["v"] in ["ptr", "own", "ref", "mut", "nown"]:
+        return class_name_of(kids(n)[1])
     if n["k"] == "Name":
         return ["", n["v"]]
     if n["k"] == "Attr" and kids(n)[0]["k"] == "Name":
         return [kids(n)[0]["v"], n["v"]]
     return None
+
+def ast_of(p):
+# the tree of another file: an include (.cudi) or a sibling module
+    if p.endswith(".cudi"):
+        a = inc_ast(p)
+        if a == None:
+            return None
+        return a[1]
+    m = module_ast(dirname(p), basename(p)[:len(basename(p)) - 4])
+    if m == None:
+        return None
+    return m[1]
 
 def class_of(path, ast, text, line, qual, depth):
 # the class a qualifier refers to: `self` in a method, a parameter annotated with a class, a
@@ -987,7 +1009,7 @@ def class_of(path, ast, text, line, qual, depth):
     r = find_def(path, ast, text, line, qual, "", depth + 1)
     if r == None:
         return None
-    if r[2] == "Class":
+    if r[2] == "Class" or r[2] == "Struct":
         return r
     cn = None
     if r[2] == "Param":
@@ -996,7 +1018,9 @@ def class_of(path, ast, text, line, qual, depth):
             cn = class_name_of(ann)
     elif r[2] == "Var":
         st = r[3]
-        if (st["k"] == "Assign" or st["k"] == "AnnAssign") and len(kids(st)) > 1:
+        if st["k"] == "AnnAssign" and len(kids(st)) > 1 and kids(st)[1]["k"] != "Empty":
+            cn = class_name_of(kids(st)[1])
+        if cn == None and (st["k"] == "Assign" or st["k"] == "AnnAssign") and len(kids(st)) > 1:
             v = kids(st)[len(kids(st)) - 1]
             if v["k"] == "Call":
                 cn = class_name_of(kids(v)[0])
@@ -1004,12 +1028,11 @@ def class_of(path, ast, text, line, qual, depth):
         return None
     a2 = ast
     if r[0] != path:
-        m = module_ast(dirname(r[0]), basename(r[0])[:len(basename(r[0])) - 4])
-        if m == None:
+        a2 = ast_of(r[0])
+        if a2 == None:
             return None
-        a2 = m[1]
     c = find_def(r[0], a2, r[1], r[4], cn[1], cn[0], depth + 1)
-    if c != None and c[2] == "Class":
+    if c != None and (c[2] == "Class" or c[2] == "Struct"):
         return c
     return None
 
@@ -1049,7 +1072,9 @@ def occurrences(text, word):
     return r
 
 def doc_for(path):
-# [text, ast] of an open document or a cached sibling module
+# [text, ast] of an open document, a cached sibling module or an include file
+    if path.endswith(".cudi"):
+        return inc_ast(path)
     for u in DOCS:
         if uri_path(u) == path and "ast" in DOCS[u]:
             return [DOCS[u]["text"], DOCS[u]["ast"]]
@@ -1059,7 +1084,7 @@ def doc_for(path):
     return [m[2], m[1]]
 
 def project_files(path):
-# the .cud files next to path (open documents first), excluding hidden files
+# the .cud and .cudi files next to path (open documents first), excluding hidden files
     r = [path]
     for u in DOCS:
         p = uri_path(u)
@@ -1071,7 +1096,7 @@ def project_files(path):
     run_sh("rm -f " + T)
     if l != None:
         for f in l.split("\n"):
-            if f.endswith(".cud") and not f.startswith("."):
+            if (f.endswith(".cud") or f.endswith(".cudi")) and not f.startswith("."):
                 p = dirname(path) + "/" + f
                 if not (p in r):
                     r.append(p)
@@ -1103,7 +1128,7 @@ def all_names(stmts, out):
 # [name, kind] for every binding among statements (blocks included, nested defs excluded)
     for st in stmts:
         k = st["k"]
-        if k == "Def" or k == "Class":
+        if k == "Def" or k == "Class" or k == "Struct" or k == "ExternDef":
             out.append([st["v"], k])
         elif k == "Assign" or k == "AnnAssign" or k == "AugAssign" or k == "For":
             ts = []
@@ -1125,7 +1150,7 @@ def all_names(stmts, out):
                 elif c["k"] in ["If", "Elif", "Else", "Except", "Finally", "Try", "While", "With"]:
                     all_names([c], out)
 
-KIND = {"Def": 3, "Class": 7, "Var": 6, "Module": 9, "Param": 6, "Method": 2, "Field": 5, "Builtin": 14}
+KIND = {"Def": 3, "ExternDef": 3, "Struct": 22, "Class": 7, "Var": 6, "Module": 9, "Param": 6, "Method": 2, "Field": 5, "Builtin": 14}
 
 def completions(path, ast, text, line, ch):
 # items for the identifier prefix before byte column ch on 0-based line
@@ -1175,6 +1200,10 @@ def completions(path, ast, text, line, ch):
                 all_names(def_block(d), cand)
             i -= 1
         all_names(kids(ast), cand)
+        for f in fs_scope(path):
+            a = inc_ast(f)
+            if a != None:
+                all_names(kids(a[1]), cand)
         for b in BUILTINS:
             cand.append([b, "Builtin"])
     items = []
@@ -1238,6 +1267,8 @@ def hover_text(r, word):
 
 # ---------------- dispatch ----------------
 def handle(m):
+    for k in list(CLOS.keys()):
+        CLOS.pop(k)
     meth = m.get("method", "")
     mid = m.get("id", None)
     p = m.get("params", {})

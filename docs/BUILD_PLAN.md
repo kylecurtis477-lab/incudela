@@ -510,6 +510,16 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
      fs-include-change-not-reused covers it). `forge/stats` reports `reused`. On the kernel (sched.cudi): about
      90 ms per comment-only edit against about 290 ms per code edit. Tests: 7 more lsp/fs-* checks (77 in
      tests/lsp/run.sh). Next (batch 3): references, rename and completion through includes, and struct fields.
+   - *Status, batch 3 of 3: done (2026-11-23, 0.23.0, inv220); item 5 done.* References and rename take in the
+     .cudi files next to a document as well as the .cud files (each occurrence still kept only if it resolves to
+     the same definition), completion offers the top-level names of the includes (defs, `extern def`s, structs,
+     globals), and `p.f` resolves to a struct field when `p` is annotated with a struct or `ptr`/`own`/`ref`/
+     `mut`/`nown` of one (definition, hover, references, completion after `p.`). A fix found on the way, its own
+     commit (4c7daf9): a struct's field names counted as top-level names of the file (scope_defs and all_names
+     descended into struct bodies), so a bare `a` could resolve to field `a`. Include closures are memoised per request. On the kernel:
+     references of `cur_proc` from sched.cudi find 61 of its 62 textual hits (the other does not resolve to the
+     same definition), about 5.2 s for the first request (every include parsed once) and about 0.5 s after that.
+     Tests: 10 more lsp/fs-* checks, plus 1 for the fix (88 in tests/lsp/run.sh).
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
    signed packages and reproducible builds.
    - *Index format rule (2026-11-13, from the Forge Strategist roadmap review):* from the very first index
@@ -615,7 +625,7 @@ least.
 | Nov 18 | per-CPU run-queue locks plus an SMP scaling benchmark (1/2/4 CPUs) | 1 batch | done (0.23.0, inv216): `rql[q]` per run queue, no lock across `ctx_switch` (`Thread.on_cpu` handshake); `incudela.schedbench` and tests/os/schedbench.sh; yields/s on 1/2/4 CPUs (TCG) about 280k/140k/53k before, 270k/395k/205k after |
 | Nov 18 | early USB smoke image and checklist | 1 item | done (0.23.0, inv217): `tools/usb-image.sh` makes build/usb/incudela-usb.img, a reproducible BIOS+UEFI hybrid image with `incudela.smoke` (device-free self-tests only); tests/os/usb.sh boots it as USB mass storage under OVMF and SeaBIOS; docs/usb.md has the write steps and the checklist. *Kyle* boots it once |
 | Nov 19-21 | 4: SSA backend for fs/kernel mode, gated by optcov and fsfuzz --combos | 8-10 batches | also a `sqrt` intrinsic (benchmarks need asm today) |
-| Nov 22 | 5: language server: incremental checks, diagnostics, definition | 3 batches | batches 1-2 done (0.23.0, inv218, inv219): include files and `.cudi` diagnostics; comment-only edits not recompiled; 77 checks |
+| Nov 22 | 5: language server: incremental checks, diagnostics, definition | 3 batches | done (0.23.0, inv218-inv220): include files and `.cudi` diagnostics; comment-only edits not recompiled; references, rename, completion and struct fields through includes; 87 checks |
 | Nov 23-24 | 6: package manager: resolution, signed index with publish time and yank flag, reproducible builds | 4 batches | tools/pkg.cud exists (12 checks) |
 | Nov 25-26 | 7: sustained adversarial testing: a soak harness (there is none today), a syscall and capability fuzzer, fault injection, multi-hour runs | 4 batches + runs | |
 | Nov 27- | 8: real-hardware boot | open | *Kyle*: needs his PC |

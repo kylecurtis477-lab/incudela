@@ -594,6 +594,48 @@ def fs_session(proj):
     check("fs-hover-struct", "struct Pair" in h, h)
     check("fs-include-ast-cached", parses() == n0, [n0, parses()])
 
+    # struct fields, completion, references and rename through include files
+    r = defn(MAIN, text, "p.a", 0, 2)
+    check("fs-definition-struct-field", at(r, uri(BASE), pos_of(bt, "a: i64")), r)
+    h = hover(MAIN, text, "p.a", 0, 2)
+    check("fs-hover-struct-field", "a: i64" in h, h)
+
+    def comp(needle, off):
+        r = res(request("textDocument/completion", {"textDocument": {"uri": uri(MAIN)}, "position": pos_of(text, needle, 0, off)}))
+        out = {}
+        if r is not None:
+            for i in r.get("items", []):
+                out[i["label"]] = i["kind"]
+        return out
+    c = comp("p.a", 2)
+    check("fs-completion-struct-fields", "a" in c and "b" in c and not ("twice" in c), c)
+    c = comp("twice(LIMIT", 2)
+    check("fs-completion-include-function", c.get("twice") == 3, c)
+    c = comp("read_cycles()", 4)
+    check("fs-completion-include-extern", c.get("read_cycles") == 3, c)
+    c = comp("Pair]", 1)
+    check("fs-completion-include-struct", c.get("Pair") == 22, c)
+    c = comp("LIMIT)", 1)
+    check("fs-completion-include-global", "LIMIT" in c, c)
+    r = res(request("textDocument/references", {"textDocument": {"uri": uri(MAIN)}, "position": pos_of(text, "twice(LIMIT", 0, 1), "context": {"includeDeclaration": True}}))
+    got = keyed(r or [], True)
+    want = sorted([pkey(uri(UTIL), pos_of(ut, "twice(x"), True), pkey(uri(MAIN), pos_of(text, "twice(LIMIT"), True), pkey(uri(BASE), pos_of(bt, "twice(x)"), True)])
+    check("fs-references-across-includes", ",".join(got) == ",".join(want), r)
+    r = res(request("textDocument/references", {"textDocument": {"uri": uri(MAIN)}, "position": pos_of(text, "p.a", 0, 2), "context": {"includeDeclaration": True}}))
+    got = keyed(r or [], True)
+    want = sorted([pkey(uri(BASE), pos_of(bt, "a: i64"), True), pkey(uri(MAIN), pos_of(text, "p.a", 0, 2), True)])
+    check("fs-references-struct-field", ",".join(got) == ",".join(want), r)
+    r = res(request("textDocument/rename", {"textDocument": {"uri": uri(MAIN)}, "position": pos_of(text, "twice(LIMIT", 0, 1), "newName": "double"}))
+    ch = {}
+    if r is not None and "changes" in r:
+        ch = r["changes"]
+    ok = len(ch.get(uri(MAIN), [])) == 1 and len(ch.get(uri(UTIL), [])) == 1 and len(ch.get(uri(BASE), [])) == 1
+    for u in ch:
+        for e in ch[u]:
+            if e["newText"] != "double":
+                ok = False
+    check("fs-rename-across-includes", ok, r)
+
     # a .cudi on its own is checked through main.cud, which includes it
     notify("textDocument/didOpen", {"textDocument": {"uri": uri(UTIL), "languageId": "cuditor", "version": 1, "text": ut}})
     d = diags_for(uri(UTIL))
