@@ -583,6 +583,8 @@ def fs_session(proj):
     check("fs-definition-struct", at(r, uri(BASE), pos_of(bt, "Pair:")), r)
     r = defn(MAIN, text, "read_cycles()")
     check("fs-definition-extern", at(r, uri(BASE), pos_of(bt, "read_cycles()")), r)
+    r = defn(MAIN, text, "# a and", 0, 2)
+    check("fs-struct-field-not-top-level", r is None, r)
     n0 = parses()
     h = hover(MAIN, text, "twice(LIMIT")
     check("fs-hover-include-def", "def twice(x: i64) -> i64" in h and "Double x." in h and "util.cudi:4" in h, h)

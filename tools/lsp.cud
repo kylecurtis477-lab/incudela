@@ -799,7 +799,7 @@ def scope_defs(stmts, name, out, deep):
             for a in kids(s):
                 if a["k"] == "Alias" and a["v"] == name:
                     out.append([k, s, s["l"]])
-        if k != "Def" and k != "Class" and deep:
+        if k != "Def" and k != "Class" and k != "Struct" and deep:
             for c in kids(s):
                 if c["k"] == "Block":
                     scope_defs(kids(c), name, out, deep)
@@ -1118,7 +1118,7 @@ def all_names(stmts, out):
             for a in kids(st):
                 if a["k"] == "Alias":
                     out.append([a["v"], "Var"])
-        if k != "Def" and k != "Class":
+        if k != "Def" and k != "Class" and k != "Struct":
             for c in kids(st):
                 if c["k"] == "Block":
                     all_names(kids(c), out)

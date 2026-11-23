@@ -1,6 +1,7 @@
 # cuditor: no-runtime
 # tests/lsp fixture: a freestanding program whose definitions live in include files
 include "util.cudi"
+# a and b are the fields of Pair, not names of this file
 
 def first(p: ptr[Pair]) -> i64:
     return p.a
