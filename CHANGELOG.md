@@ -7,8 +7,12 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks
 
+- `ca69031` Incremental language-server checks: an edit that changes only blank or comment lines is parsed again but
+  not compiled again, and the last compile's diagnostics move to the new line numbers; any code line, or any change to
+  a file the compile reaches through include or import (open buffer or disk), compiles again. On the kernel about
+  90 ms per comment-only edit instead of about 290 ms. `forge/stats` reports `reused`; tests/lsp/run.sh 70 to 77 checks.
 - `ccda869` Language server through include files: `cuditor lsp` resolves definitions and hover in freestanding
   sources (kernel, EFI loader, modules) through `include`, including structs, `extern def`s and globals, and a
   `.cudi` sees the names of the `.cud` that includes it. A `.cudi` is checked through that root, with the unsaved
