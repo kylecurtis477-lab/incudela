@@ -9,6 +9,16 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `63c4d7f` Release kernel hardening (the plan's 0.23.1 items): the release kernel is booted on the BIOS path from
+  its own GRUB ISO (`os/kernel-release-bios`, KERNEL OK and one kexec) and its generation prints no test/debug line
+  (`os/kernel-release-quiet`); tests/os expected results 50 to 52. `page tables built: pml4 at`, `higher half:
+  rip ..., rsp ...` (it gave away the image slide) and the CPU 0 irq-off watch (`i0_watch`, one `rdtsc` per tick,
+  moved from apic.cudi to kdebug.cudi) are test/debug only, behind `kdbg_paging`, `kdbg_higher_half`, `kdbg_tick0`,
+  `kdbg_watch_reset` and `kdbg_watch_report`. tests/kernel-release checks they are absent from the release kernel.
+- `394fa68` `cuditor pkg` `build`, `stage` and `vendor` refuse a cuditor.lock whose `registry_key` differs from
+  cuditor.toml's `[registry] key` before reading any index, naming both keys (fix: a mismatch was refused only
+  by the final whole-lock comparison, as "edited or is stale"; the c2347c9 note that it was not compared was
+  wrong). tests/pkg/run.sh 52 to 57 checks.
 - Migration (0.23.0): cuditor.lock is now lock_version 2 (`b4e1b88`); `build`, `stage` and `vendor` refuse a version 1
   lock, so run `cuditor pkg lock` once per project and review the new lock. docs/SYSTEMS.md also describes the trust
   on first use of the `[registry] key` and the manual key-rotation process (`c2347c9`).
