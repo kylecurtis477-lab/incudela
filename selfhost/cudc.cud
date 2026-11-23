@@ -5560,7 +5560,7 @@ def top_def_at(p):
     return -1
 
 def prescan():
-    global ntops, nglobs, nmainloc, fmain, nfuncs
+    global ntops, nglobs, nmainloc, fmain, nfuncs, pos
     p = 0
     while tk[p] != K_EOF:
         if tok_is_id(p, "class"):
@@ -5601,11 +5601,25 @@ def prescan():
                 j += 1
         i += 1
     # top-level names: globals if used inside some function, else locals of main
+    # a module-level `NAME: T` declaration may appear once (inv226: a second one was silently ignored here
+    # and, in freestanding mode, became a duplicate assembler symbol)
+    gdn = list(ntops + 1)
+    ngd = 0
     nm = list(20000)
     ty = list(20000)
     n = 0
     i = 0
     while i < ntops:
+        q = tops[i]
+        if q >= PRETOK and tk[q] == K_ID and tok_is_op(q + 1, ":") and not is_kw(tv[q]):
+            j = 0
+            while j < ngd:
+                if str_eq(gdn[j], tv[q]):
+                    pos = q
+                    die(tl[q], concat("redeclared global ", tv[q]))
+                j += 1
+            gdn[ngd] = tv[q]
+            ngd += 1
         n = scan_more(tops[i], skip_stmt(tops[i]), nm, ty, n)
         i += 1
     used = list(n + 1)
@@ -20213,6 +20227,8 @@ def fs_prescan():
             fs_eol()
         elif tk[fp] == K_ID and fs_isop2(fp + 1, ":"):
             nm = tv[fp]
+            if fs_glob(nm) >= 0:
+                fs_die(concat("redeclared global ", nm))
             fp += 2
             g = nfsg
             nfsg += 1

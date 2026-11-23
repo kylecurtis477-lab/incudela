@@ -148,6 +148,14 @@ compiler: `skip_arg` stops at a mismatched closer at depth 0, and the argument l
 `run_tests.sh` also runs every error test under `timeout 20`, so a future hang fails the test instead of
 stalling the suite.
 
+## Diagnostics note: a module-level declaration appears once
+A module-level `NAME: T` declaration (with or without `= value`) may appear only once per program. A second one
+is `error: line N: redeclared global NAME`, in hosted mode (it used to be ignored silently, keeping the first
+type) and in freestanding mode (it used to be accepted and then fail in fas as `symbol redefined: NAME`,
+found while wiring sysfuzz in inv225). Assignments (`NAME = value`) and annotations inside top-level `if`/`for`
+bodies are unchanged, as are function locals (freestanding mode already reports `redeclared local`).
+Regression tests: `tests/errors/dup_global.cud` (hosted) and `tests/errors/dup_global_fs.cud` (freestanding).
+
 ## Reserved: effects (v1.2)
 
 `def f(...) [-> T] uses fs, ipc:` declares the capabilities (Phase 6 names: fs, spawn, ipc, drv,

@@ -1,0 +1,5 @@
+# a module-level NAME: T declaration may appear once: the second is "redeclared global count" (inv226)
+count: int = 0
+name: str = "a"
+count: int = 1
+print(count)

@@ -1,0 +1,9 @@
+# cuditor: no-runtime
+# freestanding: a second NAME: T declaration is "redeclared global seen", not a duplicate assembler symbol (inv226)
+seen: u64
+buf: u8[16]
+seen: u64 = 3
+
+@export
+def _start():
+    seen = 1
