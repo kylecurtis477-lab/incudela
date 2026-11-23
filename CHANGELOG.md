@@ -7,8 +7,20 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags
 
+- `14a931a` Signed package index (the plan's item 6, batch 1): each registry package has `<name>/index` (v1: version,
+  publish time, yank flag and package hash per line) and `<name>/index.sig`, an Ed25519 signature over
+  `cuditor-index-v1 ` + sha256(name, newline, index); it replaces `<name>/versions`. cuditor.toml pins the registry
+  key (`[registry] key`, also recorded in cuditor.lock); `lock` and `build` refuse an unsigned, edited, wrongly
+  keyed or renamed index and package files that differ from the index hash. New `cuditor pkg publish` (versions
+  are immutable, publish times never go back, only the current key holder appends) and `cuditor pkg yank`: a
+  yanked version is never newly selected but still builds, with a warning, from a lock that has it. Fixture
+  packages moved to tests/pkg/packages and are published with the test-only key tests/pkg/test-key.seed;
+  tests/pkg/run.sh 12 to 29 checks.
+- `25d0ecc` tools/ed25519.cud: `hexpublic`, `hexsign` and `verify PUBHEX SIGHEX MSGFILE` (the kernel's
+  `ed25519_verify`, messages up to 96 bytes; exit 0 valid, 1 invalid, 2 bad input). The usage line lists the new
+  verbs. tests/ed25519-tool 10 to 22 checks.
 - `479ee13` Language server, last slice of the plan's item 5: references and rename take in the `.cudi` files next to a
   document, completion offers the names the includes define (functions, `extern def`s, structs, globals), and `p.f`
   resolves to a struct field when `p` is annotated with a struct or a pointer to one (definition, hover, references,
