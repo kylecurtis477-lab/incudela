@@ -7,8 +7,14 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files
 
+- `ccda869` Language server through include files: `cuditor lsp` resolves definitions and hover in freestanding
+  sources (kernel, EFI loader, modules) through `include`, including structs, `extern def`s and globals, and a
+  `.cudi` sees the names of the `.cud` that includes it. A `.cudi` is checked through that root, with the unsaved
+  buffer compiled in place via hidden siblings that are removed afterwards; errors cudc reports inside an include
+  appear in that file, with one diagnostic on the `include` line of the files above it, and a missing include is
+  shown on the line that names it. tests/lsp/run.sh 45 to 70 checks (tests/lsp/fsproj).
 - `594dfd7` USB smoke image: `tools/usb-image.sh` writes build/usb/incudela-usb.img, a reproducible BIOS+UEFI hybrid
   raw image (the kernel ISO tree with `incudela.smoke`, packed by tools/repro-mkrescue from distro GRUB, xorriso and
   mtools). Its EFI system partition holds only the removable-media `\EFI\BOOT\BOOTX64.EFI`, as forge.iso does. The
