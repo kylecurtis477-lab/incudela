@@ -7,8 +7,15 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields
 
+- `479ee13` Language server, last slice of the plan's item 5: references and rename take in the `.cudi` files next to a
+  document, completion offers the names the includes define (functions, `extern def`s, structs, globals), and `p.f`
+  resolves to a struct field when `p` is annotated with a struct or a pointer to one (definition, hover, references,
+  completion after `p.`). On the kernel the first references request takes about 5 s, later ones about 0.5 s.
+  tests/lsp/run.sh 78 to 88 checks.
+- `4c7daf9` Fix: a struct's field names no longer count as top-level names of its file; through the include lookup
+  of `ccda869`, a bare `a` resolved to a field `a`.
 - `ca69031` Incremental language-server checks: an edit that changes only blank or comment lines is parsed again but
   not compiled again, and the last compile's diagnostics move to the new line numbers; any code line, or any change to
   a file the compile reaches through include or import (open buffer or disk), compiles again. On the kernel about
