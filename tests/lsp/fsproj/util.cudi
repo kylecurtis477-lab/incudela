@@ -1,0 +1,6 @@
+# helpers for main.cud
+include "base.cudi"
+
+def twice(x: i64) -> i64:
+    "Double x."
+    return add1(x) + x - 1

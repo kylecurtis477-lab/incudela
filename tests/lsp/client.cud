@@ -4,7 +4,8 @@
 # same PASS/FAIL lines in the same order as the Python client; exit 1 on any failure. The JSON reader and
 # writer are copied from tools/lsp.cud. There is no receive timeout: tests/lsp/run.sh runs the client
 # under timeout(1) instead, and a stalled session fails as a whole.
-# usage: client ROOT   (ROOT = the repo, whose ./cuditor starts the server)
+# usage: client ROOT [fs]   (ROOT = the repo, whose ./cuditor starts the server; `fs` runs the session on
+# tests/lsp/fsproj instead: freestanding sources and include files, which client.py does not cover)
 import os
 import sys
 
@@ -540,15 +541,143 @@ def session(proj, MAIN, UTIL):
     rc = os.waitstatus_to_exitcode(w[1])
     check("exit-code-0", rc == 0, str(rc))
 
+def parses():
+    return request("forge/stats", None)["result"]["parses"]
+
+def fs_session(proj):
+# freestanding sources: definitions and hover through include files, a .cudi checked through the .cud
+# that includes it, and errors inside an include reported in the right file
+    MAIN = proj + "/main.cud"
+    UTIL = proj + "/util.cudi"
+    BASE = proj + "/base.cudi"
+    r = request("initialize", {"processId": None, "rootUri": uri(proj), "capabilities": {}})
+    check("fs-initialize", r.get("result", {}).get("capabilities", {}).get("definitionProvider"), r)
+    notify("initialized", {})
+    text = read_file(MAIN)
+    ut = read_file(UTIL)
+    bt = read_file(BASE)
+    notify("textDocument/didOpen", {"textDocument": {"uri": uri(MAIN), "languageId": "cuditor", "version": 1, "text": text}})
+    d = diags_for(uri(MAIN))
+    check("fs-clean-root-no-diagnostics", len(d) == 0, d)
+
+    def defn(u, t, needle, nth=0, off=1):
+        return res(request("textDocument/definition", {"textDocument": {"uri": uri(u)}, "position": pos_of(t, needle, nth, off)}))
+
+    def hover(u, t, needle, nth=0, off=1):
+        r = res(request("textDocument/hover", {"textDocument": {"uri": uri(u)}, "position": pos_of(t, needle, nth, off)}))
+        if r is None:
+            return ""
+        return r["contents"]["value"]
+
+    def at(r, u, p):
+        return r is not None and r["uri"] == u and deq(r["range"]["start"], p)
+
+    r = defn(MAIN, text, "twice(LIMIT")
+    check("fs-definition-through-include", at(r, uri(UTIL), pos_of(ut, "twice(x")), r)
+    r = defn(MAIN, text, "LIMIT)")
+    check("fs-definition-nested-include", at(r, uri(BASE), pos_of(bt, "LIMIT:")), r)
+    r = defn(MAIN, text, "Pair]")
+    check("fs-definition-struct", at(r, uri(BASE), pos_of(bt, "Pair:")), r)
+    r = defn(MAIN, text, "read_cycles()")
+    check("fs-definition-extern", at(r, uri(BASE), pos_of(bt, "read_cycles()")), r)
+    n0 = parses()
+    h = hover(MAIN, text, "twice(LIMIT")
+    check("fs-hover-include-def", "def twice(x: i64) -> i64" in h and "Double x." in h and "util.cudi:4" in h, h)
+    h = hover(MAIN, text, "read_cycles()")
+    check("fs-hover-extern", "extern def read_cycles() -> i64" in h and "base.cudi:7" in h, h)
+    h = hover(MAIN, text, "Pair]")
+    check("fs-hover-struct", "struct Pair" in h, h)
+    check("fs-include-ast-cached", parses() == n0, [n0, parses()])
+
+    # a .cudi on its own is checked through main.cud, which includes it
+    notify("textDocument/didOpen", {"textDocument": {"uri": uri(UTIL), "languageId": "cuditor", "version": 1, "text": ut}})
+    d = diags_for(uri(UTIL))
+    check("fs-cudi-clean-no-diagnostics", len(d) == 0, d)
+    r = defn(UTIL, ut, "add1(x")
+    check("fs-cudi-definition-own-include", at(r, uri(BASE), pos_of(bt, "add1(x")), r)
+    notify("textDocument/didOpen", {"textDocument": {"uri": uri(BASE), "languageId": "cuditor", "version": 1, "text": bt}})
+    d = diags_for(uri(BASE))
+    check("fs-cudi-nested-clean", len(d) == 0, d)
+    r = defn(BASE, bt, "twice(x)")
+    check("fs-cudi-definition-root-scope", at(r, uri(UTIL), pos_of(ut, "twice(x")), r)
+
+    # an error in the unsaved .cudi buffer: reported in that file, without the compiler's file prefix
+    bad = ut.replace("x - 1", "y - 1")
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(UTIL), "version": 2}, "contentChanges": [{"text": bad}]})
+    d = diags_for(uri(UTIL))
+    check("fs-cudi-error-in-buffer", len(d) == 1 and d[0]["range"]["start"]["line"] == pos_of(bad, "y - 1")["line"] and d[0]["message"] == "unknown name y", d)
+    check("fs-no-temp-files-left", ",".join(sorted(os.listdir(proj))) == "base.cudi,main.cud,util.cudi", os.listdir(proj))
+    check("fs-disk-file-untouched", read_file(UTIL) == ut)
+
+    # saved to disk: the root is rechecked and shows the error on its include line
+    write_file(UTIL, bad)
+    notify("textDocument/didSave", {"textDocument": {"uri": uri(UTIL)}, "text": bad})
+    seen = {}
+    while len(seen) < 3:
+        m = recv()
+        if m.get("method") == "textDocument/publishDiagnostics":
+            seen[m["params"]["uri"]] = m["params"]["diagnostics"]
+    d = seen.get(uri(MAIN), [])
+    check("fs-root-error-on-include-line", len(d) == 1 and d[0]["range"]["start"]["line"] == pos_of(text, "include \"util")["line"] and "in util.cudi line 6: unknown name y" in d[0]["message"], seen)
+    d = seen.get(uri(BASE), [])
+    check("fs-error-elsewhere-not-in-other-cudi", len(d) == 0, d)
+    write_file(UTIL, ut)
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(UTIL), "version": 3}, "contentChanges": [{"text": ut}]})
+    d = diags_for(uri(UTIL))
+    notify("textDocument/didSave", {"textDocument": {"uri": uri(UTIL)}, "text": ut})
+    seen = {}
+    while len(seen) < 3:
+        m = recv()
+        if m.get("method") == "textDocument/publishDiagnostics":
+            seen[m["params"]["uri"]] = m["params"]["diagnostics"]
+    check("fs-fixed-clears-root", len(seen.get(uri(MAIN), [1])) == 0 and len(seen.get(uri(UTIL), [1])) == 0, seen)
+
+    # an error two includes down: the .cudi in between shows it on its own include line
+    bb = bt.replace("x + 1", "z + 1")
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(BASE), "version": 2}, "contentChanges": [{"text": bb}]})
+    d = diags_for(uri(BASE))
+    check("fs-nested-cudi-error-in-buffer", len(d) == 1 and d[0]["range"]["start"]["line"] == pos_of(bb, "z + 1")["line"], d)
+    write_file(BASE, bb)
+    notify("textDocument/didSave", {"textDocument": {"uri": uri(BASE)}, "text": bb})
+    seen = {}
+    while len(seen) < 3:
+        m = recv()
+        if m.get("method") == "textDocument/publishDiagnostics":
+            seen[m["params"]["uri"]] = m["params"]["diagnostics"]
+    d = seen.get(uri(UTIL), [])
+    check("fs-nested-error-on-include-line", len(d) == 1 and d[0]["range"]["start"]["line"] == pos_of(ut, "include \"base")["line"] and "in base.cudi line 10" in d[0]["message"], seen)
+    write_file(BASE, bt)
+
+    # a missing include file: on the line that names it
+    t2 = text.replace("include \"util.cudi\"", "include \"util.cudi\"\ninclude \"nope.cudi\"")
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(MAIN), "version": 2}, "contentChanges": [{"text": t2}]})
+    d = diags_for(uri(MAIN))
+    check("fs-missing-include-line", len(d) == 1 and d[0]["code"] == "E0002" and d[0]["range"]["start"]["line"] == pos_of(t2, "include \"nope")["line"], d)
+
+    r = request("shutdown", None)
+    check("fs-shutdown", "result" in r and r["result"] is None, r)
+    notify("exit", None)
+    w = os.waitpid(S["pid"], 0)
+    S["pid"] = 0
+    rc = os.waitstatus_to_exitcode(w[1])
+    check("fs-exit-code-0", rc == 0, str(rc))
+
 def main():
     root = sys.argv[1]
     tmp = "/tmp/forge-lsp-client." + str(os.getpid())
     os.mkdir(tmp)
+    fsmode = len(sys.argv) > 2 and sys.argv[2] == "fs"
     proj = tmp + "/proj"
-    copy_tree(root + "/tests/lsp/proj", proj)
+    if fsmode:
+        copy_tree(root + "/tests/lsp/fsproj", proj)
+    else:
+        copy_tree(root + "/tests/lsp/proj", proj)
     start(root)
     try:
-        session(proj, proj + "/main.cud", proj + "/util.cud")
+        if fsmode:
+            fs_session(proj)
+        else:
+            session(proj, proj + "/main.cud", proj + "/util.cud")
     except Exception as e:
         check("session", False, repr(e))
         if S["pid"] != 0:

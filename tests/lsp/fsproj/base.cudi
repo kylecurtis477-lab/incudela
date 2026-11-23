@@ -1,0 +1,13 @@
+LIMIT: i64 = 20
+
+struct Pair:
+    a: i64
+    b: i64
+
+extern def read_cycles() -> i64
+
+def add1(x: i64) -> i64:
+    return x + 1
+
+def add2(x: i64) -> i64:
+    return twice(x) - x + 2

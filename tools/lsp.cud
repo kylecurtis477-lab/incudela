@@ -14,6 +14,8 @@
 # Incremental re-check: a document is recompiled only when its text changed since its last check
 # (or a module it imports was saved); sibling modules are parsed once per on-disk text and cached.
 # Positions on the wire are UTF-16 code units, converted to and from the byte offsets used inside.
+# Freestanding sources: names resolve through `include` files (and, for a .cudi, through the .cud that
+# includes it); a .cudi is checked by compiling that root with the include chain written as hidden siblings.
 
 import sys
 
@@ -21,7 +23,8 @@ CUDC = [""]
 DOCS = {}
 PID = [0]
 MODS = {}
-STATS = {"compiles": 0}
+INCS = {}
+STATS = {"compiles": 0, "parses": 0}
 
 # ---------------- JSON ----------------
 def jskip(s, i):
@@ -281,41 +284,240 @@ def write_text(path, text):
     f.write(text)
     f.close()
 
+def tmp_name(p):
+# the hidden sibling an unsaved buffer is compiled from: .<name>.lsp<pid>.cud (or .cudi)
+    ext = ".cud"
+    if p.endswith(".cudi"):
+        ext = ".cudi"
+    return dirname(p) + "/." + basename(p) + ".lsp" + str(PID[0]) + ext
+
+def unhide(n):
+# a hidden sibling's name back to the file it stands for
+    b = basename(n)
+    k = b.find(".lsp" + str(PID[0]) + ".")
+    if b.startswith(".") and k > 0:
+        return n[:len(n) - len(b)] + b[1:k]
+    return n
+
+def inc_prefix(msg):
+# cudc reports an error inside an included file as "NAME.cudi: message" (line and column in that file)
+    k = msg.find(": ")
+    if k > 0 and msg[:k].endswith(".cudi") and msg[:k].find(" ") < 0:
+        return msg[:k]
+    return ""
+
+def rel_to(name, path):
+# a file name as seen from path's directory
+    if name.startswith(dirname(path) + "/"):
+        return name[len(dirname(path)) + 1:]
+    return name
+
+def inc_via(path, text, name):
+# 1-based line of the include in text through which `name` (a file name) is reached, or 0
+    for n in inc_names(text):
+        if basename(n) == basename(name):
+            return inc_line(text, n)
+    for n in inc_names(text):
+        for e in inc_closure(dirname(path) + "/" + n):
+            if basename(e[0]) == basename(name):
+                return inc_line(text, n)
+    return 0
+
 def compile_doc(path, text):
 # -> [ast or None, list of diagnostic dicts]
+# A .cudi file is checked through the .cud next to it that includes it (fs_root): the chain of includes
+# from that root down to the file is written as hidden siblings that point at each other, so the
+# unsaved buffer is what the root compiles. Errors cudc reports inside an include ("NAME.cudi: ...")
+# go to that file; a document gets one diagnostic on the include line for an error further down.
     src = path
-    tmp = ""
+    tmps = []
     if file_text(path) != text:
-        tmp = dirname(path) + "/." + basename(path) + ".lsp" + str(PID[0]) + ".cud"
-        write_text(tmp, text)
-        src = tmp
+        src = tmp_name(path)
+        write_text(src, text)
+        tmps.append(src)
     T = "/tmp/forge-lsp-" + str(PID[0])
     STATS["compiles"] = STATS["compiles"] + 1
     run_sh(shq(CUDC[0]) + " " + shq(src) + " " + T + ".ast --emit=ast-json --diagnostics=json > " + T + ".d1 2>&1")
     d = file_text(T + ".d1")
     ast = None
+    fsdoc = path.endswith(".cudi")
+    main = src
     if d != None and len(d.strip()) == 0:
         a = file_text(T + ".ast")
         if a != None and a.startswith("{"):
             ast = jparse(a, 0)[0]["root"]
+        if fsdoc:
+            main = ""
+            r = fs_root(path)
+            if r != None:
+                ch = r[1]
+                prev = path
+                ptmp = tmp_name(path)
+                if src != ptmp:
+                    write_text(ptmp, text)
+                    tmps.append(ptmp)
+                i = len(ch) - 2
+                while i >= 0:
+                    f = ch[i]
+                    t = doc_text(f)
+                    rel = prev[len(dirname(f)) + 1:]
+                    t = t.replace("include \"" + rel + "\"", "include \"" + rel[:len(rel) - len(basename(prev))] + basename(ptmp) + "\"")
+                    prev = f
+                    ptmp = tmp_name(f)
+                    write_text(ptmp, t)
+                    tmps.append(ptmp)
+                    i -= 1
+                main = ptmp
+        if main != "":
         # syntax is fine: a full compile reports name and type errors
-        run_sh("cd " + shq(dirname(src)) + " && " + shq(CUDC[0]) + " " + shq(src) + " " + T + ".s --diagnostics=json > " + T + ".d1 2>&1")
-        d = file_text(T + ".d1")
+            run_sh("cd " + shq(dirname(main)) + " && " + shq(CUDC[0]) + " " + shq(main) + " " + T + ".s --diagnostics=json > " + T + ".d1 2>&1")
+            d = file_text(T + ".d1")
+        else:
+            d = ""
     run_sh("rm -f " + T + ".ast " + T + ".s " + T + ".d1")
-    if tmp != "":
-        run_sh("rm -f " + shq(tmp))
+    for t in tmps:
+        run_sh("rm -f " + shq(t))
     diags = []
     if d == None:
         return [ast, diags]
+    parsed = main != src
     for l in d.split("\n"):
         l = l.strip()
         if l.startswith("{\"version\""):
             j = jparse(l, 0)[0]
-            if j["file"] == src or basename(j["file"]) == basename(src):
-                diags.append(j)
+            pre = inc_prefix(j["message"])
+            if pre != "":
+                name = unhide(pre)
+                if fsdoc and basename(name) == basename(path):
+                    j["message"] = j["message"][len(pre) + 2:]
+                    diags.append(j)
+                else:
+                    k = inc_via(path, text, name)
+                    if k > 0:
+                        w = len(line_of(text, k - 1)) + 1
+                        diags.append({"line": k, "col": 1, "end_line": k, "end_col": w, "code": j["code"], "severity": j["severity"], "message": "in " + rel_to(name, path) + " line " + str(j["line"]) + ": " + j["message"][len(pre) + 2:]})
+            elif j["line"] < 1:
+            # no position (a missing include file): the include line that names it, if it is in this document
+                k = 0
+                for n in inc_names(text):
+                    if j["message"].endswith(" " + n) or j["message"].endswith("/" + n):
+                        k = inc_line(text, n)
+                if k == 0 and not fsdoc:
+                    k = 1
+                if k > 0:
+                    j["line"] = k
+                    j["col"] = 1
+                    j["end_line"] = k
+                    j["end_col"] = len(line_of(text, k - 1)) + 1
+                    diags.append(j)
+            elif not fsdoc or not parsed:
+                if j["file"] == src or basename(j["file"]) == basename(src) or parsed:
+                    diags.append(j)
         elif l.startswith("error:"):
             diags.append({"line": 1, "col": 1, "end_line": 1, "end_col": 1, "code": "E0000", "message": "compiler failed: " + l, "severity": "error"})
     return [ast, diags]
+
+# ---------------- include files (freestanding Forge sources) ----------------
+def doc_text(path):
+# text of an open document, else the file on disk
+    for u in DOCS:
+        if uri_path(u) == path:
+            return DOCS[u]["text"]
+    return file_text(path)
+
+def inc_names(text):
+# the files named by top-level `include "x"` lines
+    r = []
+    if text == None:
+        return r
+    for l in text.split("\n"):
+        if l.startswith("include \""):
+            e = l.find("\"", 9)
+            if e > 9:
+                r.append(l[9:e])
+    return r
+
+def inc_line(text, name):
+# 1-based line of `include "name"`, or 0
+    i = 1
+    for l in text.split("\n"):
+        if l.startswith("include \"" + name + "\""):
+            return i
+        i += 1
+    return 0
+
+def inc_closure(path):
+# [file, includer] for every file reached through include lines from path, breadth first (path excluded)
+    out = []
+    seen = [path]
+    q = [path]
+    k = 0
+    while k < len(q) and len(seen) < 512:
+        f = q[k]
+        k += 1
+        for n in inc_names(doc_text(f)):
+            p = dirname(f) + "/" + n
+            if not (p in seen):
+                seen.append(p)
+                q.append(p)
+                out.append([p, f])
+    return out
+
+def fs_root(path):
+# -> [root, [root, ..., path]] for a .cudi: the first .cud next to it (open documents first) whose
+# includes reach it, or None
+    for f in project_files(path):
+        if f.endswith(".cud"):
+            par = {}
+            for e in inc_closure(f):
+                par[e[0]] = e[1]
+            if path in par:
+                rev = [path]
+                while rev[len(rev) - 1] != f:
+                    rev.append(par[rev[len(rev) - 1]])
+                ch = []
+                i = len(rev) - 1
+                while i >= 0:
+                    ch.append(rev[i])
+                    i -= 1
+                return [f, ch]
+    return None
+
+def fs_scope(path):
+# files whose top-level names a document sees through include: its own includes, and for a .cudi
+# also its root and everything the root includes
+    r = []
+    for e in inc_closure(path):
+        r.append(e[0])
+    if path.endswith(".cudi"):
+        rt = fs_root(path)
+        if rt != None:
+            if not (rt[0] in r):
+                r.append(rt[0])
+            for e in inc_closure(rt[0]):
+                if e[0] != path and not (e[0] in r):
+                    r.append(e[0])
+    return r
+
+def inc_ast(f):
+# -> [text, ast] of an included file (open document, cache, or a parse-only cudc run), or None
+    for u in DOCS:
+        if uri_path(u) == f and "ast" in DOCS[u]:
+            return [DOCS[u]["text"], DOCS[u]["ast"]]
+    t = file_text(f)
+    if t == None:
+        return None
+    if f in INCS and INCS[f][0] == t:
+        return INCS[f]
+    T = "/tmp/forge-lsp-" + str(PID[0]) + ".inc"
+    STATS["parses"] = STATS["parses"] + 1
+    run_sh(shq(CUDC[0]) + " " + shq(f) + " " + T + ".ast --emit=ast-json --diagnostics=json > " + T + ".d1 2>&1")
+    a = file_text(T + ".ast")
+    run_sh("rm -f " + T + ".ast " + T + ".d1")
+    if a == None or not a.startswith("{"):
+        return None
+    INCS[f] = [t, jparse(a, 0)[0]["root"]]
+    return INCS[f]
 
 # ---------------- positions: UTF-16 on the wire, bytes inside ----------------
 def u16_to_b(s, ch):
@@ -407,7 +609,15 @@ def recheck_dependents(uri):
     if mod.endswith(".cud"):
         mod = mod[:len(mod) - 4]
     for u in DOCS:
-        if u != uri and dirname(uri_path(u)) == dirname(p) and mod in imports_of(DOCS[u].get("ast", None)):
+        q = uri_path(u)
+        dep = False
+        if u != uri and dirname(q) == dirname(p):
+            dep = mod in imports_of(DOCS[u].get("ast", None)) or p in fs_scope(q)
+            if not dep and q.endswith(".cudi"):
+            # a .cudi is checked through its root: a saved root or a saved file the root includes
+                rt = fs_root(q)
+                dep = rt != None and p in rt[1]
+        if dep:
             DOCS[u]["checked"] = None
             publish(u)
 
@@ -499,7 +709,7 @@ def scope_defs(stmts, name, out, deep):
 # into nested functions or classes). out gets [kind, node, line]
     for s in stmts:
         k = s["k"]
-        if (k == "Def" or k == "Class") and s["v"] == name:
+        if (k == "Def" or k == "Class" or k == "Struct" or k == "ExternDef") and s["v"] == name:
             out.append([k, s, s["l"]])
         elif k == "Assign" or k == "AnnAssign" or k == "AugAssign":
             ts = []
@@ -603,6 +813,17 @@ def find_def(path, ast, text, line, word, qual, depth):
         if best == None or (best[0] == "Var" and o[0] != "Var"):
             best = o
     if best == None:
+    # freestanding sources: top-level names of the included files (and, for a .cudi, its root's)
+        for f in fs_scope(path):
+            a = inc_ast(f)
+            if a != None:
+                out = []
+                scope_defs(kids(a[1]), word, out, True)
+                for o in out:
+                    if best == None or (best[0] == "Var" and o[0] != "Var"):
+                        best = o
+                if best != None:
+                    return finish(f, a[0], best, word, depth)
         return None
     return finish(path, text, best, word, depth)
 
@@ -616,8 +837,10 @@ def finish(path, text, o, word, depth):
             if r != None:
                 return r
     after = 0
-    if k == "Def":
+    if k == "Def" or k == "ExternDef":
         after = text.split("\n")[o[2] - 1].find("def ")
+    elif k == "Struct":
+        after = text.split("\n")[o[2] - 1].find("struct ")
     return [path, text, k, n, o[2], name_col(text, o[2], word, after)]
 
 def self_attrs(stmts, out):
@@ -920,7 +1143,12 @@ def hover_text(r, word):
     text = r[1]
     k = r[2]
     n = r[3]
-    if k == "Def" or k == "Class":
+    if k == "ExternDef":
+        s = "```forge\n" + text.split("\n")[r[4] - 1].strip() + "\n```"
+        if r[0] != "":
+            s += "\n\n*" + basename(r[0]) + ":" + str(r[4]) + "*"
+        return s
+    if k == "Def" or k == "Class" or k == "Struct":
         s = "```forge\n" + header(text, r[4]) + "\n```"
         b = def_block(n)
         if len(b) > 0 and b[0]["k"] == "Expr" and kids(b[0])[0]["k"] == "Str":
@@ -942,7 +1170,7 @@ def handle(m):
     mid = m.get("id", None)
     p = m.get("params", {})
     if meth == "initialize":
-        send({"id": mid, "result": {"capabilities": {"textDocumentSync": {"openClose": True, "change": 2, "save": {"includeText": True}}, "definitionProvider": True, "hoverProvider": True, "referencesProvider": True, "renameProvider": True, "completionProvider": {"triggerCharacters": ["."]}, "positionEncoding": "utf-16"}, "serverInfo": {"name": "forge-lsp", "version": "0.2"}}})
+        send({"id": mid, "result": {"capabilities": {"textDocumentSync": {"openClose": True, "change": 2, "save": {"includeText": True}}, "definitionProvider": True, "hoverProvider": True, "referencesProvider": True, "renameProvider": True, "completionProvider": {"triggerCharacters": ["."]}, "positionEncoding": "utf-16"}, "serverInfo": {"name": "forge-lsp", "version": "0.3"}}})
     elif meth == "shutdown":
         send({"id": mid, "result": None})
     elif meth == "exit":
@@ -973,7 +1201,7 @@ def handle(m):
             DOCS.pop(u)
         send({"method": "textDocument/publishDiagnostics", "params": {"uri": u, "diagnostics": []}})
     elif meth == "forge/stats":
-        send({"id": mid, "result": {"compiles": STATS["compiles"]}})
+        send({"id": mid, "result": {"compiles": STATS["compiles"], "parses": STATS["parses"]}})
     elif meth == "textDocument/completion":
         u = p["textDocument"]["uri"]
         pos = p["position"]

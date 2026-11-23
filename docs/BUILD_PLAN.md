@@ -486,6 +486,20 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
    address goes into its displacement (`mov %rS,24(%rB)`). Kernel instructions 83,521 to 83,106.
 5. **The Cuditor language server in Forge**: extend `cuditor lsp` (tools/lsp.cud; Phase 11 item 3): incremental
    checks of changed files, diagnostics, go-to-definition.
+   - *Status, batch 1 of 3: done (2026-11-23, 0.23.0, inv218).* Freestanding sources through `include`: a name
+     not defined in the file resolves to the top-level defs, structs, `extern def`s and globals of its includes
+     (transitively), and for a `.cudi` also of the `.cud` next to it that includes it (its root) and the root's
+     includes; hover shows the header (one line for `extern def`) and the file:line. A `.cudi` is checked through
+     its root: the include chain is written as hidden siblings that point at each other (all removed afterwards),
+     so the root compiles the unsaved buffer. cudc's `NAME.cudi: message` errors go to that file without the
+     prefix; a file further up gets one diagnostic on its `include` line (`in util.cudi line 6: ...`); a missing
+     include (cudc gives line 0) goes on the line that names it. Saving rechecks the open includers, the root and
+     its other open `.cudi`s; included files are parsed once per on-disk text (`forge/stats` reports `parses`).
+     Checked by hand on the kernel: hover on `fpu_area_new` in sched.cudi shows cpux.cudi:136, a misspelt call in
+     the unsaved buffer is reported on its line through kernel.cud (about 1.7 s for the session). Tests:
+     tests/lsp/fsproj and 25 `lsp/fs-*` checks (client.cud `fs` mode; 70 in tests/lsp/run.sh). Next: incremental
+     checks (skip the root compile when only a comment or blank line changed, and cache per include), then
+     references/rename/completion through includes and struct fields.
 6. **The package manager**: grow `cuditor pkg` (tools/pkg.cud; Phase 7 item 4) with dependency resolution,
    signed packages and reproducible builds.
    - *Index format rule (2026-11-13, from the Forge Strategist roadmap review):* from the very first index
@@ -591,7 +605,7 @@ least.
 | Nov 18 | per-CPU run-queue locks plus an SMP scaling benchmark (1/2/4 CPUs) | 1 batch | done (0.23.0, inv216): `rql[q]` per run queue, no lock across `ctx_switch` (`Thread.on_cpu` handshake); `incudela.schedbench` and tests/os/schedbench.sh; yields/s on 1/2/4 CPUs (TCG) about 280k/140k/53k before, 270k/395k/205k after |
 | Nov 18 | early USB smoke image and checklist | 1 item | done (0.23.0, inv217): `tools/usb-image.sh` makes build/usb/incudela-usb.img, a reproducible BIOS+UEFI hybrid image with `incudela.smoke` (device-free self-tests only); tests/os/usb.sh boots it as USB mass storage under OVMF and SeaBIOS; docs/usb.md has the write steps and the checklist. *Kyle* boots it once |
 | Nov 19-21 | 4: SSA backend for fs/kernel mode, gated by optcov and fsfuzz --combos | 8-10 batches | also a `sqrt` intrinsic (benchmarks need asm today) |
-| Nov 22 | 5: language server: incremental checks, diagnostics, definition | 3 batches | tools/lsp.cud exists (45 checks) |
+| Nov 22 | 5: language server: incremental checks, diagnostics, definition | 3 batches | batch 1 done (0.23.0, inv218): include files and `.cudi` diagnostics, 70 checks |
 | Nov 23-24 | 6: package manager: resolution, signed index with publish time and yank flag, reproducible builds | 4 batches | tools/pkg.cud exists (12 checks) |
 | Nov 25-26 | 7: sustained adversarial testing: a soak harness (there is none today), a syscall and capability fuzzer, fault injection, multi-hour runs | 4 batches + runs | |
 | Nov 27- | 8: real-hardware boot | open | *Kyle*: needs his PC |

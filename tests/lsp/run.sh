@@ -1,6 +1,7 @@
 #!/bin/bash
-# Phase 7.5: scripted LSP sessions against `cuditor lsp` (tools/lsp.cud), driven by tests/lsp/client.cud.
-# FORGE_LSP_PY=1 also runs tests/lsp/client.py (the reference) and requires the same output.
+# Phase 7.5: scripted LSP sessions against `cuditor lsp` (tools/lsp.cud), driven by tests/lsp/client.cud:
+# the hosted session on tests/lsp/proj, then the freestanding one on tests/lsp/fsproj (include files).
+# FORGE_LSP_PY=1 also runs tests/lsp/client.py (the reference for the hosted session) and requires the same output.
 D="$(cd "$(dirname "$0")/../.." && pwd)"
 rm -f "$D/build/lsp"   # rebuild with the current compiler and flags
 "$D/cuditor" "$D/tests/lsp/client.cud" -o "$D/build/lsp_client" >/dev/null || { echo "FAIL lsp/client-build"; exit 1; }
@@ -10,3 +11,5 @@ cat "$D/build/lsp_client.out"
 if [ "$FORGE_LSP_PY" = 1 ]; then
   python3 "$D/tests/lsp/client.py" | cmp -s - "$D/build/lsp_client.out" && echo "PASS lsp/matches-client-py" || { echo "FAIL lsp/matches-client-py"; exit 1; }
 fi
+timeout 300 "$D/build/lsp_client" "$D" fs; rc=$?
+[ $rc = 0 ] || { [ $rc = 124 ] && echo "FAIL lsp/fs-session-timeout"; exit 1; }
