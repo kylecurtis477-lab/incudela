@@ -9,6 +9,12 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- Migration (0.23.0): cuditor.lock is now lock_version 2 (`b4e1b88`); `build`, `stage` and `vendor` refuse a version 1
+  lock, so run `cuditor pkg lock` once per project and review the new lock. docs/SYSTEMS.md also describes the trust
+  on first use of the `[registry] key` and the manual key-rotation process (`c2347c9`).
+- `8a4a093` A second module-level `NAME: T` declaration is `error: line N: redeclared global NAME` in hosted and
+  freestanding mode (fix): freestanding builds used to fail later in fas with `symbol redefined`, hosted mode
+  accepted it silently. New tests/errors/dup_global.cud and dup_global_fs.cud; seed refreshed.
 - `17cd45d` tests/user-build expects 122 build/user artifacts (sysfuzz adds .s .o .elf .raw; fix: 2961a9a left the
   count at 118).
 - `2961a9a` `sysfuzz`, a seeded ring-3 syscall and capability fuzzer (the plan's item 7, batch 1): every syscall
