@@ -7,8 +7,13 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI
 
+- `6020666` public CI: .github/workflows/ci.yml builds from the committed seed (FIXPOINT/SEED/TOOLS OK), runs
+  `SKIP_OS=1 ./run_tests.sh` at O2 and boots the -O0 kernel in QEMU to KERNEL OK (tests/os/ci-boot.sh, no retry).
+  QEMU, GRUB, xorriso, mtools and OVMF come from the runner's apt packages only; no secrets, `contents: read`,
+  actions pinned to full commit SHAs, a timeout on every job. tests/ci checks these rules and refuses a copy
+  breaking each one. README CI badge; docs/ci.md. The full OS suite stays the dev-box gate.
 - `c96256e` run_tests.sh runs its non-QEMU blocks as 62 items in lanes: lane S (the OS artifacts in build/kernel,
   build/user, build/efi, ... and their tools) in order in the foreground, the other lanes as background jobs,
   tests/bounds alone after them, and tests/os (QEMU) alone after everything. Output is printed in item order and
