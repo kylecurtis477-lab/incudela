@@ -7,8 +7,12 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `0e763a8` `cuditor pkg vendor [DIR]` (the plan's item 6, batch 4; item 6 is done): after the same lock check as
+  `build`, copies only the locked versions and their signed indexes into a new directory and checks the lock
+  against the copy, so `--registry vendor` builds offline with the same binary hash. tests/pkg/run.sh 46 to 52
+  checks.
 - `b4e1b88` Rolled-back registry indexes are refused (the plan's item 6, batch 3): cuditor.lock (now lock_version 2)
   records per package the newest publish time and yanked count of the index it was made from; `build` and a relock
   refuse an older, still validly signed index (a stale mirror, a rolled-back yank). Version 1 locks must be
