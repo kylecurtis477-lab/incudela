@@ -22,14 +22,15 @@ if [ "$1" = "bench" ]; then
   [ "$D/build/bench" -nt "$D/tools/bench.cud" ] || "$0" "$D/tools/bench.cud" -o "$D/build/bench" >&2
   exec "$D/build/bench" "$@"
 fi
-# cuditor pkg [--registry DIR] lock | build [-o OUT] | publish --key SEEDFILE [--time UNIX] [DIR]
+# cuditor pkg [--registry DIR] lock [--now UNIX] | build [-o OUT] | publish --key SEEDFILE [--time UNIX] [DIR]
 #   | yank --key SEEDFILE NAME VERSION | sha256 FILE... : package manager (tools/pkg.cud).
 # Run in a project directory (cuditor.toml, whose [registry] key pins the registry's Ed25519 public key).
 # Registry: --registry, else $FORGE_REGISTRY, else ./registry.
 # build stages the locked sources into target/stage, compiles the main module to target/<main>
 # (or OUT) and prints its sha256. publish copies the package in DIR (default .) into the registry and
 # adds it to the signed index with publish time UNIX (default now); yank flags a version so it is never
-# newly selected. Both re-sign the index with SEEDFILE. Index signatures are made and checked by the
+# newly selected. Both re-sign the index with SEEDFILE. lock skips versions published within the cuditor.toml
+# [registry] cooldown_days before --now (default: the current time). Index signatures are made and checked by the
 # tools/ed25519.cud CLI (build/edsig, built here on demand).
 if [ "$1" = "pkg" ]; then
   shift
@@ -43,7 +44,9 @@ if [ "$1" = "pkg" ]; then
   reg="${FORGE_REGISTRY:-registry}"
   [ "$1" = "--registry" ] && { reg="$2"; shift 2; }
   case "$1" in
-    lock) exec "$D/build/pkg" --ed "$ed" lock "$reg" ;;
+    lock)
+      now=$(date +%s); [ "$2" = "--now" ] && now="$3"
+      exec "$D/build/pkg" --ed "$ed" lock "$reg" "$now" ;;
     sha256) shift; exec "$D/build/pkg" sha256 "$@" ;;
     build)
       rm -rf target/stage && mkdir -p target/stage
@@ -65,7 +68,7 @@ if [ "$1" = "pkg" ]; then
       fi
       [ $# = 2 ] || { echo "usage: cuditor pkg yank --key SEEDFILE NAME VERSION" >&2; exit 2; }
       exec "$D/build/pkg" --ed "$ed" yank "$reg" "$key" "$1" "$2" ;;
-    *) echo "usage: cuditor pkg [--registry DIR] lock | build [-o OUT] | publish --key SEEDFILE [--time UNIX] [DIR] | yank --key SEEDFILE NAME VERSION | sha256 FILE..." >&2; exit 2 ;;
+    *) echo "usage: cuditor pkg [--registry DIR] lock [--now UNIX] | build [-o OUT] | publish --key SEEDFILE [--time UNIX] [DIR] | yank --key SEEDFILE NAME VERSION | sha256 FILE..." >&2; exit 2 ;;
   esac
 fi
 # cuditor reseed : refresh seed/ from a green build (tools/reseed.cud; tools/reseed.sh is the reference)

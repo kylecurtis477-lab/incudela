@@ -88,6 +88,31 @@ hy=$("$F" pkg --registry $T/ry build 2> $T/w | sed -n 's/.*sha256 //p')
 sed -i 's/^mathx = "\^1"/mathx = "1.2.0"/' cuditor.toml
 "$F" pkg --registry $T/ry lock > $T/e 2>&1; [ $? != 0 ] && grep -q "no version of mathx satisfies 1.2.0 (root) (1 matching version(s) yanked)" $T/e && ok yanked-pin-reported || bad yanked-pin-reported
 cp "$D/tests/pkg/app/cuditor.toml" cuditor.toml; cp $T/lock1 cuditor.lock
+# cooldown: [registry] cooldown_days = "3" skips versions published less than 3 days before `lock --now`.
+# Two days after mathx 1.2.0 / strutil 1.1.0 were published, both fall back to 1.0.0 ...
+cool() { cp "$D/tests/pkg/app/cuditor.toml" cuditor.toml; sed -i "/^key = /a $1" cuditor.toml; }
+cool 'cooldown_days = "3"'
+"$F" pkg --registry $R lock --now 1700272800 > $T/c1 2>&1 && grep -q "^locked mathx 1.0.0$" $T/c1 && grep -q "^locked strutil 1.0.0$" $T/c1 && ok cooldown-skips-young || bad cooldown-skips-young
+# ... exactly 3 days after strutil 1.1.0 it is old enough, one second earlier it is not (mathx 1.2.0 is 100 s older)
+"$F" pkg --registry $R lock --now 1700359300 > $T/c2 2>&1 && grep -q "^locked mathx 1.2.0$" $T/c2 && grep -q "^locked strutil 1.1.0$" $T/c2 && cmp -s cuditor.lock $T/lock1 && ok "cooldown-boundary (same lock as without a cooldown)" || bad cooldown-boundary
+"$F" pkg --registry $R lock --now 1700359299 > $T/c3 2>&1 && grep -q "^locked mathx 1.2.0$" $T/c3 && grep -q "^locked strutil 1.0.0$" $T/c3 && ok cooldown-boundary-minus-1s || bad cooldown-boundary-minus-1s
+# an existing lock with versions inside the cooldown still builds (the cooldown only limits new selection)
+cp $T/lock1 cuditor.lock; rm -rf target; hc=$("$F" pkg --registry $R build 2>&1 | sed -n 's/.*sha256 //p')
+[ "$hc" = "$h1" ] && ok cooldown-keeps-existing-lock || bad "cooldown-keeps-existing-lock ($hc)"
+# exempt packages ignore it; a pin inside it is reported; a malformed value is refused
+cool 'cooldown_days = "3"\ncooldown_exempt = ["mathx", "strutil"]'
+"$F" pkg --registry $R lock --now 1700272800 > $T/c4 2>&1 && grep -q "^locked mathx 1.2.0$" $T/c4 && grep -q "^locked strutil 1.1.0$" $T/c4 && ok cooldown-exempt || bad cooldown-exempt
+cool 'cooldown_days = "3"\ncooldown_exempt = ["strutil"]'
+"$F" pkg --registry $R lock --now 1700272800 > $T/c5 2>&1 && grep -q "^locked mathx 1.0.0$" $T/c5 && grep -q "^locked strutil 1.0.0$" $T/c5 && ok cooldown-exempt-only-named || bad cooldown-exempt-only-named
+cool 'cooldown_days = "3"'; sed -i 's/^mathx = "\^1"/mathx = "1.2.0"/' cuditor.toml
+"$F" pkg --registry $R lock --now 1700272800 > $T/e 2>&1; [ $? != 0 ] && grep -q "no version of mathx satisfies 1.2.0 (root) (1 matching version(s) inside the 3-day cooldown)" $T/e && ok cooldown-pin-reported || bad cooldown-pin-reported
+n=0; for v in '"-1"' '"3d"' '""' '"123456"' '["3"]'; do
+  cool "cooldown_days = $v"; "$F" pkg --registry $R lock --now 1700272800 > $T/e 2>&1; [ $? != 0 ] && grep -q "cooldown_days must be a whole number of days" $T/e && n=$((n + 1))
+done
+[ $n = 5 ] && ok "bad-cooldown-refused (5 forms)" || bad "bad-cooldown-refused ($n/5)"
+cool 'cooldown_exempt = "mathx"'; "$F" pkg --registry $R lock --now 1700272800 > $T/e 2>&1; [ $? != 0 ] && grep -q "cooldown_exempt must be a list" $T/e && ok bad-exempt-refused || bad bad-exempt-refused
+cp "$D/tests/pkg/app/cuditor.toml" cuditor.toml; "$F" pkg --registry $R lock --now soon > $T/e 2>&1; [ $? != 0 ] && grep -q "lock needs the current time in Unix seconds" $T/e && ok bad-now-refused || bad bad-now-refused
+cp "$D/tests/pkg/app/cuditor.toml" cuditor.toml; cp $T/lock1 cuditor.lock
 # cuditor.toml changed without relocking
 sed -i 's/mathx = "\^1"/mathx = "^1.2"/' cuditor.toml
 "$F" pkg --registry $R build > $T/e 2>&1; [ $? != 0 ] && grep -q "out of date" $T/e && ok stale-lock-refused || bad stale-lock-refused

@@ -1,6 +1,8 @@
 # forge pkg: package manager core. A project has a cuditor.toml:
 #     [registry]
 #     key = "<64 hex digits>"     (the registry's Ed25519 public key; every index must verify)
+#     cooldown_days = "7"         (optional: `lock` skips versions published less than 7 days ago)
+#     cooldown_exempt = ["name"]  (optional: packages the cooldown does not apply to)
 #     [package]
 #     name = "app"
 #     version = "0.1.0"
@@ -19,7 +21,8 @@
 # newly selected but still stage for a cuditor.lock that already has them (with a warning).
 # A dependency is used as `import <module>` where <module>.cud is one of its files.
 # usage (ED is the tools/ed25519.cud CLI, which signs and verifies):
-#   pkg --ed ED lock REG       resolve cuditor.toml against REG and write cuditor.lock
+#   pkg --ed ED lock REG NOW   resolve cuditor.toml against REG and write cuditor.lock; NOW (Unix
+#                              seconds) is the time the cooldown is measured from
 #   pkg --ed ED stage REG DIR  check cuditor.lock (up to date, every package hash matches the lock and
 #                              the signed index) and copy the project and dependency sources into DIR
 #                              (one flat module directory)
@@ -235,10 +238,18 @@ def parse_toml(text, where):
         else:
             d[sec + "." + key] = unquote(val, loc)
         if sec == "registry":
-            if key != "key":
+            if key == "key":
+                if not ishex(d["registry.key"], 64):
+                    die(loc + ": [registry] key must be 64 lowercase hex digits (an Ed25519 public key)")
+            elif key == "cooldown_days":
+                c = d["registry.cooldown_days"]
+                if not isinstance(c, str) or len(c) == 0 or len(c) > 5 or not c.isdigit():
+                    die(loc + ": [registry] cooldown_days must be a whole number of days (0 to 99999)")
+            elif key == "cooldown_exempt":
+                if not isinstance(d["registry.cooldown_exempt"], list):
+                    die(loc + ": [registry] cooldown_exempt must be a list of package names")
+            else:
                 die(loc + ": unknown [registry] key " + key)
-            if not ishex(d["registry.key"], 64):
-                die(loc + ": [registry] key must be 64 lowercase hex digits (an Ed25519 public key)")
         if sec == "dependencies":
             if key in deps:
                 die(loc + ": duplicate dependency " + key)
@@ -283,6 +294,16 @@ def vmatch(req, v):
         return x[0] == lo[0] and not vless(x, lo)
     vparse(req)
     return v == req
+
+NOW = [0 - 1]
+COOL = [0]
+EXEMPT = [[]]
+
+def cooling(reg, name, v):
+# True if version v of name is too new to be newly selected (published less than the cooldown ago)
+    if COOL[0] == 0 or name in EXEMPT[0]:
+        return False
+    return entry(reg, name, v)[0] + COOL[0] * 86400 > NOW[0]
 
 INDEX_HEAD = "# cuditor index v1: version published yanked sha256\n"
 INDEXES = {}
@@ -393,6 +414,7 @@ def search(reg, root, sel, mans):
         return sel
     cands = []
     yanked = 0
+    young = 0
     for v in versions(reg, todo):
         ok = True
         for rq in reqs[todo]:
@@ -400,6 +422,8 @@ def search(reg, root, sel, mans):
                 ok = False
         if ok and entry(reg, todo, v)[1]:
             yanked += 1
+        elif ok and cooling(reg, todo, v):
+            young += 1
         elif ok:
             cands.append(v)
     if len(cands) == 0:
@@ -408,6 +432,8 @@ def search(reg, root, sel, mans):
             msg += " " + rq[1] + " (" + rq[0] + ")"
         if yanked > 0:
             msg += " (" + str(yanked) + " matching version(s) yanked)"
+        if young > 0:
+            msg += " (" + str(young) + " matching version(s) inside the " + str(COOL[0]) + "-day cooldown)"
         if FAILMSG[0] == "":
             FAILMSG[0] = msg
         return None
@@ -490,9 +516,14 @@ def read_lock(path):
         cur[l[:eq].strip()] = v
     return hdr, pk
 
-def cmd_lock(reg):
+def cmd_lock(reg, now):
     root = parse_toml(readf("cuditor.toml"), "cuditor.toml")
     KEY[0] = root_key(root)
+    if not now.isdigit():
+        die("lock needs the current time in Unix seconds, got " + now)
+    NOW[0] = int(now)
+    COOL[0] = int(root.get("registry.cooldown_days", "0"))
+    EXEMPT[0] = root.get("registry.cooldown_exempt", [])
     sel, mans = resolve(reg, root)
     t = lock_text(reg, root, sel, mans)
     f = open("cuditor.lock", "w")
@@ -620,8 +651,8 @@ def main():
     if len(a) >= 2 and a[0] == "--ed":
         ED[0] = a[1]
         a = a[2:]
-    if len(a) >= 2 and a[0] == "lock":
-        cmd_lock(a[1])
+    if len(a) == 3 and a[0] == "lock":
+        cmd_lock(a[1], a[2])
     elif len(a) >= 3 and a[0] == "stage":
         cmd_stage(a[1], a[2])
     elif len(a) == 5 and a[0] == "publish":
@@ -632,7 +663,7 @@ def main():
         for f in a[1:]:
             print(sha256(readf(f)) + "  " + f)
     else:
-        die("usage: pkg [--ed ED] lock REG | stage REG DIR | publish REG SEEDFILE SRCDIR TIME | yank REG SEEDFILE NAME VERSION | sha256 FILE...")
+        die("usage: pkg [--ed ED] lock REG NOW | stage REG DIR | publish REG SEEDFILE SRCDIR TIME | yank REG SEEDFILE NAME VERSION | sha256 FILE...")
     cleanup()
 
 main()
