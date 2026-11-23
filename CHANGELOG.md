@@ -7,8 +7,15 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image
 
+- `594dfd7` USB smoke image: `tools/usb-image.sh` writes build/usb/incudela-usb.img, a reproducible BIOS+UEFI hybrid
+  raw image (the kernel ISO tree with `incudela.smoke`, packed by tools/repro-mkrescue from distro GRUB, xorriso and
+  mtools). Its EFI system partition holds only the removable-media `\EFI\BOOT\BOOTX64.EFI`, as forge.iso does. The
+  tool only writes a regular file and refuses /dev paths; docs/usb.md covers writing it to a stick (pick the right
+  device) and the first real-hardware boot. `incudela.smoke` runs only the self-tests that need no QEMU device (no
+  virtio disk, drivers, modules, shell or kexec) and prints a `smoke (incudela.smoke):` line before KERNEL OK.
+  tests/os/usb.sh boots the image as qemu-xhci + usb-storage under OVMF and SeaBIOS; os/result-count 45 to 50.
 - `57de60c` Per-CPU run-queue locks: each run queue has its own spinlock (`rql[q]`); `rq_lock` keeps blocking,
   waking, wait queues, mutexes, condvars, channels and the process tables. No lock is held across `ctx_switch`
   any more: `Thread.on_cpu` stays set until the CPU that switched away from a thread has saved it, and a CPU
