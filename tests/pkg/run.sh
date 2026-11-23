@@ -130,6 +130,14 @@ cp -r $T/rn $T/rny; "$F" pkg --registry $T/rny yank --key $K mathx 1.0.0 > /dev/
 sed 's/^lock_version = "2"$/lock_version = "1"/' $T/lockn > cuditor.lock
 "$F" pkg --registry $T/rn build > $T/e 2>&1; [ $? != 0 ] && grep -q "cuditor.lock is lock_version 1; this cuditor pkg writes 2" $T/e && ok old-lock-version-refused || bad old-lock-version-refused
 cp $T/lock1 cuditor.lock
+# vendor: exactly the locked versions plus their signed indexes, checked, for offline builds
+"$F" pkg --registry $R vendor $T/v > $T/vo 2>&1 && [ "$(cd $T/v && find . -type f | sort | tr '\n' ' ')" = "./mathx/1.2.0/cuditor.toml ./mathx/1.2.0/mathx.cud ./mathx/index ./mathx/index.sig ./strutil/1.1.0/cuditor.toml ./strutil/1.1.0/strutil.cud ./strutil/index ./strutil/index.sig " ] && cmp -s $R/mathx/index $T/v/mathx/index && grep -q "^vendored mathx 1.2.0$" $T/vo && ok vendor-locked-only || bad vendor-locked-only
+rm -rf target; hv=$("$F" pkg --registry $T/v build 2>&1 | sed -n 's/.*sha256 //p'); [ "$hv" = "$h1" ] && ok vendor-offline-build-same || bad "vendor-offline-build-same ($hv)"
+"$F" pkg --registry $T/v lock > /dev/null 2>&1 && cmp -s cuditor.lock $T/lock1 && ok vendor-relock-same || bad vendor-relock-same
+"$F" pkg --registry $R vendor $T/v > $T/e 2>&1; [ $? != 0 ] && grep -q "already exists" $T/e && ok vendor-existing-refused || bad vendor-existing-refused
+cp $T/lockn cuditor.lock; "$F" pkg --registry $R vendor $T/v2 > $T/e 2>&1; [ $? != 0 ] && grep -q "rolled-back index" $T/e && [ ! -e $T/v2 ] && ok vendor-checks-first || bad vendor-checks-first
+cp $T/lock1 cuditor.lock; cp -r $T/v $T/v3; echo "# changed" >> $T/v3/strutil/1.1.0/strutil.cud
+"$F" pkg --registry $T/v3 build > $T/e 2>&1; [ $? != 0 ] && grep -q "hash mismatch for strutil 1.1.0" $T/e && ok vendor-tamper-refused || bad vendor-tamper-refused
 # cuditor.toml changed without relocking
 sed -i 's/mathx = "\^1"/mathx = "^1.2"/' cuditor.toml
 "$F" pkg --registry $R build > $T/e 2>&1; [ $? != 0 ] && grep -q "out of date" $T/e && ok stale-lock-refused || bad stale-lock-refused

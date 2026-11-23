@@ -26,6 +26,9 @@
 #   pkg --ed ED stage REG DIR  check cuditor.lock (up to date, every package hash matches the lock and
 #                              the signed index) and copy the project and dependency sources into DIR
 #                              (one flat module directory)
+#   pkg --ed ED vendor REG DIR check cuditor.lock as stage does, then copy the locked versions and their
+#                              signed indexes into the new directory DIR (a registry for offline builds)
+#                              and check the lock against that copy
 #   pkg --ed ED publish REG SEEDFILE SRCDIR TIME
 #                              copy the package in SRCDIR to REG, add it to the index with publish time
 #                              TIME and re-sign the index with SEEDFILE
@@ -572,7 +575,9 @@ def cmd_lock(reg, now):
     hdr, pk = read_lock("cuditor.lock")
     print("content " + hdr["content"])
 
-def cmd_stage(reg, out):
+def check_lock(reg):
+# cuditor.lock against cuditor.toml and the registry (freshness, hashes, the signed index, requirements);
+# -> [root manifest, locked packages, their manifests]
     root = parse_toml(readf("cuditor.toml"), "cuditor.toml")
     KEY[0] = root_key(root)
     hdr, pk = read_lock("cuditor.lock")
@@ -607,6 +612,13 @@ def cmd_stage(reg, out):
             die("cuditor.lock does not satisfy " + dn + " " + root["dependencies." + dn])
     if lock_text(reg, root, sel, mans, seen) != readf("cuditor.lock"):
         die("cuditor.lock was edited or is stale (run `cuditor pkg lock`)")
+    return [root, pk, mans]
+
+def cmd_stage(reg, out):
+    c = check_lock(reg)
+    root = c[0]
+    pk = c[1]
+    mans = c[2]
     owner = {}
     srcs = []
     for f in root["package.files"]:
@@ -623,6 +635,33 @@ def cmd_stage(reg, out):
         g.write(readf(s[0]))
         g.close()
     print(root["package.main"])
+
+def copyf(src, dst):
+    g = open(dst, "w")
+    g.write(readf(src))
+    g.close()
+
+def cmd_vendor(reg, out):
+# copy exactly the locked packages, with their signed indexes, into the new registry directory out,
+# then check the lock against the copy
+    c = check_lock(reg)
+    if os.path.exists(out):
+        die(out + " already exists (vendor writes a new directory)")
+    os.mkdir(out)
+    for p in c[1]:
+        n = p["name"]
+        os.mkdir(out + "/" + n)
+        copyf(reg + "/" + n + "/index", out + "/" + n + "/index")
+        copyf(reg + "/" + n + "/index.sig", out + "/" + n + "/index.sig")
+        d = out + "/" + n + "/" + p["version"]
+        os.mkdir(d)
+        for f in ["cuditor.toml"] + c[2][n + "@" + p["version"]]["package.files"]:
+            copyf(reg + "/" + n + "/" + p["version"] + "/" + f, d + "/" + f)
+    for k in list(INDEXES.keys()):
+        INDEXES.pop(k)
+    check_lock(out)
+    for p in c[1]:
+        print("vendored " + p["name"] + " " + p["version"])
 
 def write_index(reg, name, seed, order, ent):
     t = INDEX_HEAD
@@ -698,6 +737,8 @@ def main():
         cmd_lock(a[1], a[2])
     elif len(a) >= 3 and a[0] == "stage":
         cmd_stage(a[1], a[2])
+    elif len(a) == 3 and a[0] == "vendor":
+        cmd_vendor(a[1], a[2])
     elif len(a) == 5 and a[0] == "publish":
         cmd_publish(a[1], a[2], a[3], a[4])
     elif len(a) == 5 and a[0] == "yank":
@@ -706,7 +747,7 @@ def main():
         for f in a[1:]:
             print(sha256(readf(f)) + "  " + f)
     else:
-        die("usage: pkg [--ed ED] lock REG NOW | stage REG DIR | publish REG SEEDFILE SRCDIR TIME | yank REG SEEDFILE NAME VERSION | sha256 FILE...")
+        die("usage: pkg [--ed ED] lock REG NOW | stage REG DIR | vendor REG DIR | publish REG SEEDFILE SRCDIR TIME | yank REG SEEDFILE NAME VERSION | sha256 FILE...")
     cleanup()
 
 main()
