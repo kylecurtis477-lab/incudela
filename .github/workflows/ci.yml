@@ -1,0 +1,70 @@
+# Public CI (docs/ci.md). Builds only from the committed seed (seed/cudc-seed, fas-seed, fld-seed: sha256-checked
+# by build.sh); QEMU, GRUB, xorriso, mtools and OVMF come from the runner's Ubuntu packages and are never
+# committed, cached or shipped. No secrets, read-only token, every action pinned to a full commit SHA.
+# tests/ci/run.sh checks these rules on every run_tests.sh run.
+name: ci
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    name: build.sh (seed fixpoint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: build.sh
+        run: |
+          ./build.sh | tee build.log
+          for l in "FIXPOINT OK" "SEED OK" "TOOLS OK" "SEED TOOLS OK"; do grep -q "^$l:" build.log || { echo "missing: $l"; exit 1; }; done
+  tests-o2:
+    name: run_tests.sh O2 (non-QEMU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # full history: tests/provenance checks every commit's trailers
+      - name: distro packages
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends grub-pc-bin grub-efi-amd64-bin grub-common mtools xorriso gdb
+      - name: build.sh
+        run: ./build.sh
+      - name: run_tests.sh (SKIP_OS=1; the OS suite is the boot-o0 job here and tests/os/run.sh on the dev box)
+        run: |
+          SKIP_OS=1 ./run_tests.sh 2>&1 | tee run_tests.log
+          echo "PASS $(grep -c '^PASS' run_tests.log) FAIL $(grep -c '^FAIL' run_tests.log)"
+          ! grep -q '^FAIL' run_tests.log
+      - name: failed item logs
+        if: failure()
+        run: for f in build/par/*.rc; do [ "$(cat $f)" = 0 ] || { echo "== ${f%.rc}.log"; cat ${f%.rc}.log; }; done
+  boot-o0:
+    name: O0 kernel boot to KERNEL OK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: distro packages
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends qemu-system-x86 grub-pc-bin grub-efi-amd64-bin grub-common mtools xorriso ovmf
+      - name: build.sh
+        run: ./build.sh
+      - name: tests/os/ci-boot.sh
+        run: tests/os/ci-boot.sh
+      - name: boot log
+        if: always()
+        run: tail -n 200 build/os-ci/bios.log || true
