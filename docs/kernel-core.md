@@ -153,7 +153,7 @@ outside that configuration. The interface in §§0–5 is unchanged.
 ### A.1 What is verified, and by which tests
 
 Markers in this section are exact serial (or framebuffer) substrings required by `tests/os/run.sh`
-or a kernel self-test. A result name is one of the 41 entries in `tests/os/expected-results.txt`
+or a kernel self-test. A result name is one of the 52 entries in `tests/os/expected-results.txt`
 (`os/result-count` fails if any is missing). The framebuffer check on the BIOS, UEFI, EFI-loader
 and IOMMU boots requires `back == front` and a row that decodes as `KERNEL OK`.
 
@@ -321,7 +321,13 @@ not imply that device DMA was translated.
   `KASLR: big heap at`) and checks the unslid `.text` alias is unmapped. `build/kernel-build --release` builds
   the release kernel with `krelease.cudi` instead, whose `kdbg_*` hooks are empty; image and region KASLR
   themselves are identical in both. The release kernel is checked by `tests/kernel-release/run.sh` (no probe or
-  layout strings, empty hooks, `kaslr_pick`/`kaslr_unmap` and every `ktest_hooks` reference kept) but not booted.
+  layout strings, empty hooks, `kaslr_pick`/`kaslr_unmap` and every `ktest_hooks` reference kept), and since
+  0.23.1 it is also booted: `os/kernel-release-bios` boots it from its own GRUB ISO on the BIOS path to
+  `KERNEL OK` (through one kexec into the test/debug `kernel-next.elf`), and `os/kernel-release-quiet` checks
+  that the release generation's serial output has none of the test/debug lines. Also test/debug only since
+  0.23.1: `page tables built: pml4 at` (`kdbg_paging`), `higher half: rip ..., rsp ...` (`kdbg_higher_half`;
+  it gives away the image slide) and the CPU 0 interrupts-off watch (`i0_watch` and its per-tick `rdtsc`,
+  moved from apic.cudi into kdebug.cudi behind `kdbg_tick0`, `kdbg_watch_reset` and `kdbg_watch_report`).
 - `ktest_hooks` (syscalls 408/409) is armed only for the boot self-test session. Recording in the
   nondeterminism hook is off by default.
 - Claims are about the functional behaviour those tests observe (including "0 frames leaked" and

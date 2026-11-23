@@ -7,6 +7,8 @@ os/kernel-bios
 os/hang-probe-live
 os/irq-off-watch
 os/kernel-bios-smp1
+os/kernel-release-bios
+os/kernel-release-quiet
 os/kernel-iommu
 os/kernel-uefi
 os/efi-loader-gpt

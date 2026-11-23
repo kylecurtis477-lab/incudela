@@ -51,7 +51,7 @@ Linux personality's `uname` strings, and internal symbol names such as `forge_al
 ./cuditor prog.cud -o prog # compile with self-hosted cudc + as + ld
 ./run_tests.sh             # non-QEMU items in parallel lanes, output in serial order; then tests/os alone
 RUN_TESTS_SERIAL=1 ./run_tests.sh  # same items one at a time, streaming (same result lines and counts)
-build/kernel-build --release  # release kernel only (build/kernel-release): no hang probe, no KASLR layout lines
+build/kernel-build --release  # release kernel only (build/kernel-release): no hang probe, KASLR layout, page-table or irq-off watch lines
 bench/run_bench.py         # Forge vs Rust vs CPython (reference; tools/bench.cud is the Forge tracker)
 ```
 run_tests.sh runs its non-QEMU blocks as 63 items in lanes (table `ITEMS`): lane S (everything that builds or reads build/kernel, build/user, build/efi, build/modules, build/fas or the busybox/cpython trees) in the foreground in order, the other lanes (items with their own scratch files; items sharing one share a lane) as background jobs, and tests/bounds (it compares run times) after every lane has finished. Each item's output goes to build/par/NN.log and is printed in item order, so the output is the serial output; a failed item's log is printed in place with a `# t_item (lane L) exited N, log: build/par/NN.log` line, and an item that left no exit status is `FAIL run-tests/t_item`. The QEMU tests (tests/os) start only after all items are done and run alone. `RUN_TESTS_SERIAL=1` runs the items one at a time.

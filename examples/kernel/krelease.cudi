@@ -13,3 +13,20 @@ def kdbg_kaslr_unslid():
 
 def kdbg_hang_probe():
     return
+
+# 0.23.1: no page-table root or higher-half addresses on the console, and no irq-off watch (no per-tick rdtsc
+# on CPU 0, no "irq-off watch:" line)
+def kdbg_paging(pml4: u64):
+    return
+
+def kdbg_higher_half(rsp: u64):
+    return
+
+def kdbg_tick0():
+    return
+
+def kdbg_watch_reset():
+    return
+
+def kdbg_watch_report():
+    return

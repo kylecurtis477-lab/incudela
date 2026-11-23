@@ -4,6 +4,8 @@
 # must give the same output, exit code and build/kernel-release bytes) compiles kernel.cud with krelease.cudi in
 # place of kdebug.cudi. Checked in the assembly and the linked ELF:
 #   release: no hang probe (kdbg_hang_probe's "hang probe:" line, probe_put), no "KASLR: kernel image at",
+#            "page tables built: pml4 at", "higher half: rip" or "irq-off watch:" (0.23.1: kdbg_paging,
+#            kdbg_higher_half, kdbg_watch_*; no i0_watch, so no per-tick rdtsc on CPU 0), no
 #            "KASLR: big heap at" or "unslid .text"; still relocatable (.krel, image KASLR itself stays on) and
 #            ktest_hooks still gates syscalls 408/409 (the sys_kexec / drv checks are in both builds)
 #   test/debug (build/kernel, what the OS tests boot): all of them present
@@ -25,18 +27,18 @@ fi
 R=build/kernel-release; D=build/kernel
 # debug-only code: the strings must be absent from the release .elf and present in the test/debug one (cudc emits
 # string literals as bytes, so they are looked for in the ELF), the functions absent from the release .s
-for pat in "hang probe:" "KASLR: kernel image at" "KASLR: big heap at" "unslid .text"; do
+for pat in "hang probe:" "KASLR: kernel image at" "KASLR: big heap at" "unslid .text" "page tables built: pml4 at" "higher half: rip" "irq-off watch:"; do
   nr=$(grep -ac -- "$pat" $R/kernel.elf 2>/dev/null); nd=$(grep -ac -- "$pat" $D/kernel.elf 2>/dev/null)
   [ "${nr:-x}" = 0 ] && [ "${nd:-0}" -gt 0 ] || { echo "FAIL kernel-release/debug-only-omitted (string '$pat': release ${nr:-none}, test/debug ${nd:-none})"; fail=1; bad=1; }
 done
-for fn in kdbg_hang_probe probe_put kdbg_kaslr_image kdbg_kaslr_dyn kdbg_kaslr_unslid; do
+for fn in kdbg_hang_probe probe_put kdbg_kaslr_image kdbg_kaslr_dyn kdbg_kaslr_unslid kdbg_paging kdbg_higher_half kdbg_tick0 kdbg_watch_reset kdbg_watch_report i0_watch; do
   # release keeps the kdbg_* hook names as empty stubs: their bodies must not call or print anything
   nr=$(awk -v f="$fn:" '$0 == f {on = 1; next} /^[A-Za-z_.][A-Za-z0-9_.]*:$/ && on {exit} on && /call|lea .*\.LS|lea .*rip/ {n++} END {print n + 0}' $R/kernel.s 2>/dev/null)
   hd=$(grep -c "^$fn:$" $D/kernel.s 2>/dev/null)
-  [ "$fn" = probe_put ] && nr=$(grep -c "^$fn:$" $R/kernel.s 2>/dev/null)
+  case $fn in probe_put|i0_watch) nr=$(grep -c "^$fn:$" $R/kernel.s 2>/dev/null) ;; esac
   [ "${nr:-x}" = 0 ] && [ "${hd:-0}" = 1 ] || { echo "FAIL kernel-release/debug-only-omitted ($fn: release ${nr:-none}, test/debug ${hd:-none})"; fail=1; bad=1; }
 done
-[ -z "$bad" ] && echo "PASS kernel-release/debug-only-omitted (hang probe and KASLR layout lines: absent from the release kernel, present in build/kernel)"
+[ -z "$bad" ] && echo "PASS kernel-release/debug-only-omitted (hang probe, KASLR layout, page-table root, higher-half rip/rsp and irq-off watch (i0_watch, its per-tick rdtsc): absent from the release kernel, present in build/kernel)"
 # what stays in release: image KASLR (relocation table, slide pick, alias unmap) and the ktest_hooks gate
 if grep -aq "^kaslr_pick:" $R/kernel.s && grep -aq "^kaslr_unmap:" $R/kernel.s && grep -aq "ktest_hooks" $R/kernel.s \
    && [ "$(grep -ac 'ktest_hooks' $R/kernel.s)" = "$(grep -ac 'ktest_hooks' $D/kernel.s)" ]; then

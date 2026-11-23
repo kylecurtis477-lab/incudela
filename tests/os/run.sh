@@ -44,6 +44,20 @@ grep -aEq "^irq-off watch: cpu0 longest gap between timer interrupts [0-9]+ ms \
 # single CPU (-machine pc -smp 1): no APs, no IPIs; the kernel must still boot to KERNEL OK and kexec
 Q1=${Q/-smp 4/-smp 1}
 $B kernel-bios-smp1 $L/bios-smp1.log 200 "SMP: 1 cpus online|x2APIC: all cpus in x2APIC mode, IPIs sent via MSR 0x830: 0|stall checks: a 2000 ms clock jump between two checks not counted, 5 ms counted: yes|preemptive SMP scheduler OK|ring 3 + syscall/sysret + ELF loader OK|processes + VFS + keyboard/serial input + sh OK|KERNEL OK|kexec handoff OK|debug-exit |ms after KERNEL OK" "$FB" -- $Q1 -machine pc $VD -boot d -cdrom build/kernel/forge.iso
+# 0.23.1: the release kernel (build/kernel-release, krelease.cudi for kdebug.cudi) boots the same BIOS path to
+# KERNEL OK and one kexec (into the test/debug kernel-next.elf from the ESP), and until that handoff its serial
+# output has none of the test/debug lines: no hang probe, KASLR layout, page-table root, higher-half rip/rsp or
+# irq-off watch. The ISO is built here from the GRUB config the default ISO uses.
+RI=$L/release-iso; rm -rf $RI build/kernel-release; mkdir -p $RI/boot/grub
+if build/kernel-build --release >/dev/null 2>&1 && cp build/kernel-release/kernel.elf $RI/boot/kernel.elf && cp examples/kernel/grub.cfg $RI/boot/grub/grub.cfg && tools/repro-mkrescue -o $L/release.iso $RI >/dev/null 2>&1; then
+    $B kernel-release-bios $L/release.log 200 "multiboot2 (BIOS)|$K" "$FB" -- $Q $VD -boot d -cdrom $L/release.iso
+else echo "FAIL os/kernel-release-bios (release kernel or ISO build failed)"; fi
+RG=$(awk '/kernel version: incudela-kernel 0.2.6-next/{exit} {print}' $L/release.log 2>/dev/null)
+RN=$(printf '%s\n' "$RG" | grep -acE '^(hang probe:|KASLR: kernel image at|KASLR: big heap at|page tables built: pml4 at|higher half: rip|irq-off watch:)|unslid .text')
+if grep -aq "^KERNEL OK" $L/release.log 2>/dev/null && [ "$(printf '%s\n' "$RG" | grep -ac '^kernel version: incudela-kernel 0.2.6$')" = 1 ] && [ "$RN" = 0 ] && grep -aq "^page tables built: pml4 at" $L/bios.log && grep -aq "^higher half: rip" $L/bios.log; then
+    echo "PASS os/kernel-release-quiet (release generation: $(printf '%s\n' "$RG" | wc -l) serial lines, 0 test/debug lines; build/kernel prints them)"
+else echo "FAIL os/kernel-release-quiet (test/debug lines in the release generation: ${RN:-?}; see $L/release.log)"; fi
+rm -rf build/kernel-release $RI
 # VT-d: q35 + intel-iommu with interrupt remapping (intremap=on): virtio-blk MSI-X goes through a
 # source-validated IRTE, and edu's MSI is delivered only through an IRTE validated for its requester ID. Modern virtio-blk (no legacy, iommu_platform=on)
 # is required so QEMU offers ACCESS_PLATFORM and actually translates device DMA; transitional virtio

@@ -240,11 +240,7 @@ def kernel_start():
     fb_len = bi.fb_pitch * bi.fb_height
     kaslr_pick()
     pml4 = paging_init(bi.fb_addr, fb_len)
-    puts("page tables built: pml4 at ")
-    put_hex(pml4)
-    puts(", frames used ")
-    put_u64(frames_total - frames_free)
-    putc(10)
+    kdbg_paging(pml4)
     paging_activate(pml4)
     # image KASLR: patch the absolute addresses through the HHDM view, then continue in the slid alias
     krel_apply(HHDM + kdelta, kslide)
@@ -482,11 +478,7 @@ def kmain_high():
         puts(" (8x16 font)\n")
     elif vga_base != 0:
         vga_base = p2v(vga_base)
-    puts("higher half: rip ")
-    put_hex(u64(kmain_high))
-    puts(", rsp ")
-    put_hex(read_rsp())
-    putc(10)
+    kdbg_higher_half(read_rsp())
     check_mapping("identity", 0x100000, 0)
     check_mapping("hhdm", HHDM + 0x100000, 1)
     check_mapping("kernel .text", ksym(0), 1)
@@ -1834,7 +1826,7 @@ def tty_swapper(arg: u64):
 def shell_test():
 # the interactive shell from \EFI\Incudela\bin\sh; the boot test types its commands
     input_init()
-    i0_reset()
+    kdbg_watch_reset()
     # the block driver runs as a supervised ring-3 service for the whole shell session
     f0 = frames_free
     h0 = heap_live
@@ -1913,7 +1905,7 @@ def shell_test():
         panic("tty hot swap lost input")
     puts("tty hot-swap OK\n")
     kbd_report()
-    i0_report()
+    kdbg_watch_report()
     blkd_supervised_stop()
     # slab pages grown at a new allocation peak, and kernel page tables, are kept by the
     # allocator by design (objects are checked by heap_live)
