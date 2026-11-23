@@ -55,7 +55,8 @@ for impl in cud py; do
   then ok "FORGE_GUID_SEED incudela-part-$impl (ignored)"; else bad "FORGE_GUID_SEED incudela-part-$impl"; head -3 $T/pold.err; fi
 done
 # 5. ./cuditor pkg reads only cuditor.toml / cuditor.lock
-R=$D/tests/pkg/registry
+R=$T/oreg; mkdir $R  # the fixture packages, published into a registry signed with the test key (as in tests/pkg)
+for p in mathx/1.0.0 mathx/1.2.0 strutil/1.0.0 strutil/1.1.0; do $D/cuditor pkg --registry $R publish --key $D/tests/pkg/test-key.seed --time 1700000000 $D/tests/pkg/packages/$p > /dev/null || bad "publish $p"; done
 cp -r tests/pkg/app $T/an; cp -r tests/pkg/app $T/ao; mv $T/ao/cuditor.toml $T/ao/forge.toml
 (cd $T/an && $D/cuditor pkg --registry $R lock > out 2>err); (cd $T/ao && $D/cuditor pkg --registry $R lock > out 2>err); ao=$?
 if [ -s $T/an/cuditor.lock ] && [ $ao != 0 ] && [ ! -e $T/ao/cuditor.lock ] && grep -q "missing file cuditor.toml" $T/ao/err && ! grep -q deprecated $T/ao/err

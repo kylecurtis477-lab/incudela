@@ -1,4 +1,6 @@
 # forge pkg: package manager core. A project has a cuditor.toml:
+#     [registry]
+#     key = "<64 hex digits>"     (the registry's Ed25519 public key; every index must verify)
 #     [package]
 #     name = "app"
 #     version = "0.1.0"
@@ -6,19 +8,33 @@
 #     files = ["app.cud", ...]    (sources that belong to the package; default [main])
 #     [dependencies]
 #     strutil = "^1.0"              (exact "1.2.0", caret "^1.2" = >=1.2.0 <2.0.0, or "*")
-# A registry is a local directory: <reg>/<name>/versions lists the published versions, one per
-# line, and <reg>/<name>/<version>/ holds that version's cuditor.toml and files. A dependency is
-# used as `import <module>` where <module>.cud is one of its files.
-# usage:
-#   pkg lock REG          resolve cuditor.toml against REG and write cuditor.lock
-#   pkg stage REG DIR     check cuditor.lock (up to date, every package hash matches) and copy the
-#                         project and dependency sources into DIR (one flat module directory)
-#   pkg sha256 FILE...    print the SHA-256 of each (text) file
+# A registry is a local directory: <reg>/<name>/<version>/ holds that version's cuditor.toml and
+# files, and <reg>/<name>/index is the signed list of published versions (format v1):
+#     # cuditor index v1: version published yanked sha256
+#     1.2.0 1700100000 0 <sha256 of the package, as in cuditor.lock>
+# one line per version: its publish time (Unix seconds), a yank flag (0/1) and the package hash.
+# <reg>/<name>/index.sig is the Ed25519 signature (128 hex digits) of the 81-byte message
+# "cuditor-index-v1 " + sha256(name + "\n" + index), so every publish time and yank flag is covered
+# by the signature and an index cannot be moved to another package name. Yanked versions are never
+# newly selected but still stage for a cuditor.lock that already has them (with a warning).
+# A dependency is used as `import <module>` where <module>.cud is one of its files.
+# usage (ED is the tools/ed25519.cud CLI, which signs and verifies):
+#   pkg --ed ED lock REG       resolve cuditor.toml against REG and write cuditor.lock
+#   pkg --ed ED stage REG DIR  check cuditor.lock (up to date, every package hash matches the lock and
+#                              the signed index) and copy the project and dependency sources into DIR
+#                              (one flat module directory)
+#   pkg --ed ED publish REG SEEDFILE SRCDIR TIME
+#                              copy the package in SRCDIR to REG, add it to the index with publish time
+#                              TIME and re-sign the index with SEEDFILE
+#   pkg --ed ED yank REG SEEDFILE NAME VERSION
+#                              set the version's yank flag and re-sign the index
+#   pkg sha256 FILE...         print the SHA-256 of each (text) file
 # cuditor.lock records each package's version, its direct dependencies and a SHA-256 over its
 # files (name, length and bytes of each file in cuditor.toml order, and the cuditor.toml itself), plus
 # a root hash over all of that, so the same lock always stages the same bytes.
 
 import sys
+import os
 
 K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -105,9 +121,62 @@ def sha256(s):
             i -= 4
     return out
 
+ED = [""]
+KEY = [""]
+TMP = [""]
+
+def cleanup():
+    if TMP[0] != "" and os.path.exists(TMP[0]):
+        os.remove(TMP[0])
+
 def die(msg):
+    cleanup()
     sys.stderr.write("forge pkg: " + msg + "\n")
     sys.exit(1)
+
+def ishex(s, n):
+    if len(s) != n:
+        return False
+    for c in s:
+        if HEX.find(c) < 0:
+            return False
+    return True
+
+def msgfile(text):
+    if TMP[0] == "":
+        TMP[0] = "/tmp/cuditor-pkg." + str(os.getpid()) + ".msg"
+    f = open(TMP[0], "w")
+    f.write(text)
+    f.close()
+    return TMP[0]
+
+def ed(args):
+# -> [exit code, stdout] of the ed25519 CLI
+    if ED[0] == "":
+        die("no ed25519 tool (pass --ed; `cuditor pkg` builds it)")
+    return os.run([ED[0]] + args)
+
+def index_msg(name, text):
+    return "cuditor-index-v1 " + sha256(name + "\n" + text)
+
+def sig_ok(pub, sig, name, text):
+    if not ishex(sig, 128):
+        return False
+    return ed(["verify", pub, sig, msgfile(index_msg(name, text))])[0] == 0
+
+def pubkey(seed):
+    r = ed(["hexpublic", seed])
+    k = r[1].strip()
+    if r[0] != 0 or not ishex(k, 64):
+        die("cannot read the signing key " + seed)
+    return k
+
+def sign(seed, name, text):
+    r = ed(["hexsign", seed, msgfile(index_msg(name, text))])
+    t = r[1].strip()
+    if r[0] != 0 or not ishex(t, 128):
+        die("signing the index of " + name + " failed")
+    return t
 
 def exists(path):
     try:
@@ -145,7 +214,7 @@ def parse_toml(text, where):
             if line[len(line) - 1] != "]":
                 die(loc + ": bad section header")
             sec = line[1:len(line) - 1].strip()
-            if sec != "package" and sec != "dependencies":
+            if sec != "package" and sec != "dependencies" and sec != "registry":
                 die(loc + ": unknown section [" + sec + "]")
             continue
         eq = line.find("=")
@@ -165,6 +234,11 @@ def parse_toml(text, where):
             d[sec + "." + key] = items
         else:
             d[sec + "." + key] = unquote(val, loc)
+        if sec == "registry":
+            if key != "key":
+                die(loc + ": unknown [registry] key " + key)
+            if not ishex(d["registry.key"], 64):
+                die(loc + ": [registry] key must be 64 lowercase hex digits (an Ed25519 public key)")
         if sec == "dependencies":
             if key in deps:
                 die(loc + ": duplicate dependency " + key)
@@ -210,16 +284,61 @@ def vmatch(req, v):
     vparse(req)
     return v == req
 
-def versions(reg, name):
-    p = reg + "/" + name + "/versions"
+INDEX_HEAD = "# cuditor index v1: version published yanked sha256\n"
+INDEXES = {}
+
+def parse_index(name, text):
+# -> [list of versions in index order, dict version -> [published, yanked, sha256]]
+    where = name + "/index"
+    if not text.startswith(INDEX_HEAD):
+        die(where + ": not a v1 index (first line must be " + INDEX_HEAD.strip() + ")")
+    order = []
+    ent = {}
+    last = 0
+    for l in text[len(INDEX_HEAD):].split("\n"):
+        if len(l) == 0:
+            continue
+        f = l.split(" ")
+        if len(f) != 4 or not f[1].isdigit() or (f[2] != "0" and f[2] != "1") or not ishex(f[3], 64):
+            die(where + ": bad line " + l)
+        vparse(f[0])
+        if f[0] in ent:
+            die(where + ": version " + f[0] + " listed twice")
+        if int(f[1]) < last:
+            die(where + ": publish times go backwards at " + f[0])
+        last = int(f[1])
+        order.append(f[0])
+        ent[f[0]] = [int(f[1]), f[2] == "1", f[3]]
+    return [order, ent]
+
+def read_index(reg, name, pub):
+# the parsed index of name, after checking index.sig against the public key pub
+    if name in INDEXES:
+        return INDEXES[name]
+    p = reg + "/" + name + "/index"
     if not exists(p):
         die("package " + name + " is not in the registry " + reg)
-    r = []
-    for l in read_file(p).split("\n"):
-        if len(l.strip()) > 0:
-            vparse(l.strip())
-            r.append(l.strip())
-    return r
+    text = read_file(p)
+    if not exists(p + ".sig"):
+        die("the index of " + name + " is not signed (no " + p + ".sig)")
+    if not sig_ok(pub, read_file(p + ".sig").strip(), name, text):
+        die("the index of " + name + " is not signed by the registry key " + pub[:16] + "... (bad " + p + ".sig)")
+    INDEXES[name] = parse_index(name, text)
+    return INDEXES[name]
+
+def root_key(root):
+    if not ("registry.key" in root):
+        die("cuditor.toml has no [registry] key (the registry's Ed25519 public key, 64 hex digits)")
+    return root["registry.key"]
+
+def versions(reg, name):
+    return read_index(reg, name, KEY[0])[0]
+
+def entry(reg, name, v):
+    ix = read_index(reg, name, KEY[0])
+    if not (v in ix[1]):
+        die(name + " " + v + " is not in the signed index of " + name)
+    return ix[1][v]
 
 def pkg_hash(dir, man):
 # sha256 over cuditor.toml then each file in order: name NUL length NUL bytes
@@ -273,17 +392,22 @@ def search(reg, root, sel, mans):
     if todo == "":
         return sel
     cands = []
+    yanked = 0
     for v in versions(reg, todo):
         ok = True
         for rq in reqs[todo]:
             if not vmatch(rq[1], v):
                 ok = False
-        if ok:
+        if ok and entry(reg, todo, v)[1]:
+            yanked += 1
+        elif ok:
             cands.append(v)
     if len(cands) == 0:
         msg = "no version of " + todo + " satisfies"
         for rq in reqs[todo]:
             msg += " " + rq[1] + " (" + rq[0] + ")"
+        if yanked > 0:
+            msg += " (" + str(yanked) + " matching version(s) yanked)"
         if FAILMSG[0] == "":
             FAILMSG[0] = msg
         return None
@@ -320,6 +444,7 @@ def resolve(reg, root):
 def lock_text(reg, root, sel, mans):
     out = "# cuditor.lock: generated by `cuditor pkg lock`; do not edit\nlock_version = \"1\"\n"
     out += "root = \"" + root["package.name"] + " " + root["package.version"] + "\"\n"
+    out += "registry_key = \"" + KEY[0] + "\"\n"
     ds = ""
     for dn in sorted(root["deps"]):
         ds += dn + " " + root["dependencies." + dn] + ";"
@@ -329,7 +454,10 @@ def lock_text(reg, root, sel, mans):
         v = sel[pn]
         m = mans[pn + "@" + v]
         body += "\n[[package]]\nname = \"" + pn + "\"\nversion = \"" + v + "\"\n"
-        body += "sha256 = \"" + pkg_hash(reg + "/" + pn + "/" + v, m) + "\"\n"
+        h = pkg_hash(reg + "/" + pn + "/" + v, m)
+        if h != entry(reg, pn, v)[2]:
+            die(pn + " " + v + " in the registry does not match its signed index (files " + h + ", index " + entry(reg, pn, v)[2] + ")")
+        body += "sha256 = \"" + h + "\"\n"
         dl = ""
         for dn in sorted(m["deps"]):
             if len(dl) > 0:
@@ -364,6 +492,7 @@ def read_lock(path):
 
 def cmd_lock(reg):
     root = parse_toml(readf("cuditor.toml"), "cuditor.toml")
+    KEY[0] = root_key(root)
     sel, mans = resolve(reg, root)
     t = lock_text(reg, root, sel, mans)
     f = open("cuditor.lock", "w")
@@ -376,6 +505,7 @@ def cmd_lock(reg):
 
 def cmd_stage(reg, out):
     root = parse_toml(readf("cuditor.toml"), "cuditor.toml")
+    KEY[0] = root_key(root)
     hdr, pk = read_lock("cuditor.lock")
     ds = ""
     for dn in sorted(root["deps"]):
@@ -393,6 +523,8 @@ def cmd_stage(reg, out):
         h = pkg_hash(d, m)
         if h != p["sha256"]:
             die("hash mismatch for " + p["name"] + " " + p["version"] + ": lock " + p["sha256"] + ", registry " + h)
+        if entry(reg, p["name"], p["version"])[1]:
+            sys.stderr.write("forge pkg: warning: " + p["name"] + " " + p["version"] + " is yanked; staged because cuditor.lock selects it (`cuditor pkg lock` moves off it)\n")
         for dn in m["deps"]:
             if not (dn in sel) or not vmatch(m["dependencies." + dn], sel[dn]):
                 die("cuditor.lock does not satisfy " + p["name"] + " -> " + dn + " " + m["dependencies." + dn])
@@ -418,16 +550,89 @@ def cmd_stage(reg, out):
         g.close()
     print(root["package.main"])
 
+def write_index(reg, name, seed, order, ent):
+    t = INDEX_HEAD
+    for v in order:
+        e = ent[v]
+        y = "0"
+        if e[1]:
+            y = "1"
+        t += v + " " + str(e[0]) + " " + y + " " + e[2] + "\n"
+    sig = sign(seed, name, t)
+    p = reg + "/" + name + "/index"
+    f = open(p, "w")
+    f.write(t)
+    f.close()
+    f = open(p + ".sig", "w")
+    f.write(sig + "\n")
+    f.close()
+
+def owned_index(reg, name, seed):
+# the current index of name, which must already be signed by seed's key (empty if new)
+    if not exists(reg + "/" + name + "/index"):
+        return [[], {}]
+    return read_index(reg, name, pubkey(seed))
+
+def cmd_publish(reg, seed, src, when):
+    if not when.isdigit():
+        die("publish time must be Unix seconds, got " + when)
+    m = parse_toml(readf(src + "/cuditor.toml"), src + "/cuditor.toml")
+    pn = m["package.name"]
+    v = m["package.version"]
+    vparse(v)
+    ix = owned_index(reg, pn, seed)
+    if v in ix[1]:
+        die(pn + " " + v + " is already published (a version never changes; publish a new one)")
+    if len(ix[0]) > 0 and int(when) < ix[1][ix[0][len(ix[0]) - 1]][0]:
+        die("publish time " + when + " is before the last publish of " + pn)
+    d = reg + "/" + pn + "/" + v
+    if os.path.exists(d):
+        die(d + " exists but is not in the index")
+    if not os.path.isdir(reg):
+        die("no registry directory " + reg)
+    if not os.path.isdir(reg + "/" + pn):
+        os.mkdir(reg + "/" + pn)
+    os.mkdir(d)
+    for f in ["cuditor.toml"] + m["package.files"]:
+        if "/" in f:
+            die(src + ": file names must be plain module names: " + f)
+        g = open(d + "/" + f, "w")
+        g.write(readf(src + "/" + f))
+        g.close()
+    h = pkg_hash(d, m)
+    ix[0].append(v)
+    ix[1][v] = [int(when), False, h]
+    write_index(reg, pn, seed, ix[0], ix[1])
+    print("published " + pn + " " + v + " at " + when + " sha256 " + h)
+
+def cmd_yank(reg, seed, pn, v):
+    ix = owned_index(reg, pn, seed)
+    if not (v in ix[1]):
+        die(pn + " " + v + " is not in the index of " + pn)
+    if ix[1][v][1]:
+        die(pn + " " + v + " is already yanked")
+    ix[1][v][1] = True
+    write_index(reg, pn, seed, ix[0], ix[1])
+    print("yanked " + pn + " " + v)
+
 def main():
     a = sys.argv[1:]
+    if len(a) >= 2 and a[0] == "--ed":
+        ED[0] = a[1]
+        a = a[2:]
     if len(a) >= 2 and a[0] == "lock":
         cmd_lock(a[1])
     elif len(a) >= 3 and a[0] == "stage":
         cmd_stage(a[1], a[2])
+    elif len(a) == 5 and a[0] == "publish":
+        cmd_publish(a[1], a[2], a[3], a[4])
+    elif len(a) == 5 and a[0] == "yank":
+        cmd_yank(a[1], a[2], a[3], a[4])
     elif len(a) >= 2 and a[0] == "sha256":
         for f in a[1:]:
             print(sha256(readf(f)) + "  " + f)
     else:
-        die("usage: pkg lock REG | pkg stage REG DIR | pkg sha256 FILE...")
+        die("usage: pkg [--ed ED] lock REG | stage REG DIR | publish REG SEEDFILE SRCDIR TIME | yank REG SEEDFILE NAME VERSION | sha256 FILE...")
+    cleanup()
 
 main()

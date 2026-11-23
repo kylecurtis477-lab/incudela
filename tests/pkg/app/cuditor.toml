@@ -1,3 +1,7 @@
+# the registry's public key: tests/pkg/test-key.seed (test only)
+[registry]
+key = "fade57096590d34c4020ee3bd0e75415b3058cd3422987eba8d553bd45e077d5"
+
 [package]
 name = "app"
 version = "0.1.0"
