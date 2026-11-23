@@ -9,6 +9,8 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `17cd45d` tests/user-build expects 122 build/user artifacts (sysfuzz adds .s .o .elf .raw; fix: 2961a9a left the
+  count at 118).
 - `2961a9a` `sysfuzz`, a seeded ring-3 syscall and capability fuzzer (the plan's item 7, batch 1): every syscall
   gated by a capability it does not declare must return EACCES, numbers outside the native table ENOSYS, then N calls
   with random arguments (huge lengths, kernel and non-canonical pointers, random path bytes) must leave its canary,
