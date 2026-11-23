@@ -318,6 +318,12 @@ fail=0
 tests/asm-audit/run.sh || fail=1
 return $fail
 }
+t_ci() {
+fail=0
+# tests/ci: the public CI workflow keeps its rules (pinned actions, read-only token, no secrets, timeouts; docs/ci.md)
+tests/ci/run.sh || fail=1
+return $fail
+}
 t_ast_json() {
 fail=0
 build/cudc tests/tuples.cud build/t_ast.json --emit=ast-json && python3 -c 'import json;d=json.load(open("build/t_ast.json"));assert d["forge_ast"]==1 and d["root"]["k"]=="Module"' && echo "PASS ast-json-schema" || { echo "FAIL ast-json-schema"; fail=1; }
@@ -575,14 +581,15 @@ ITEMS='01 A t_cases
 52 M t_ast_selfpp
 53 B t_bench
 54 B t_asm_audit
-55 E t_ast_json
-56 FS t_fs_shapes
-57 Z t_fsfuzz
-58 Z t_optgate
-59 C t_optcov
-60 E t_cdiv
-61 E t_float_global
-62 E t_input_missing'
+55 B t_ci
+56 E t_ast_json
+57 FS t_fs_shapes
+58 Z t_fsfuzz
+59 Z t_optgate
+60 C t_optcov
+61 E t_cdiv
+62 E t_float_global
+63 E t_input_missing'
 P=build/par; rm -rf $P; mkdir -p $P
 if [ -n "$RUN_TESTS_SERIAL" ]; then
   echo "$ITEMS" | while read n l f; do ( $f ) < /dev/null || : > $P/fail; done

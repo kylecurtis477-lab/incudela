@@ -1,5 +1,7 @@
 # Incudela and Cuditor
 
+[![ci](https://github.com/kylecurtis477-lab/incudela/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/kylecurtis477-lab/incudela/actions/workflows/ci.yml)
+
 **Incudela** is an operating system (x86-64 kernel, UEFI loader, drivers, user programs, desktop) and
 **Cuditor** is the language it is written in: Python-like syntax, compiled ahead of time to x86-64
 assembly by its own assembler and linker, with no libc and no runtime dependencies. The compiler,
@@ -52,7 +54,9 @@ RUN_TESTS_SERIAL=1 ./run_tests.sh  # same items one at a time, streaming (same r
 build/kernel-build --release  # release kernel only (build/kernel-release): no hang probe, no KASLR layout lines
 bench/run_bench.py         # Forge vs Rust vs CPython (reference; tools/bench.cud is the Forge tracker)
 ```
-run_tests.sh runs its non-QEMU blocks as 62 items in lanes (table `ITEMS`): lane S (everything that builds or reads build/kernel, build/user, build/efi, build/modules, build/fas or the busybox/cpython trees) in the foreground in order, the other lanes (items with their own scratch files; items sharing one share a lane) as background jobs, and tests/bounds (it compares run times) after every lane has finished. Each item's output goes to build/par/NN.log and is printed in item order, so the output is the serial output; a failed item's log is printed in place with a `# t_item (lane L) exited N, log: build/par/NN.log` line, and an item that left no exit status is `FAIL run-tests/t_item`. The QEMU tests (tests/os) start only after all items are done and run alone. `RUN_TESTS_SERIAL=1` runs the items one at a time.
+run_tests.sh runs its non-QEMU blocks as 63 items in lanes (table `ITEMS`): lane S (everything that builds or reads build/kernel, build/user, build/efi, build/modules, build/fas or the busybox/cpython trees) in the foreground in order, the other lanes (items with their own scratch files; items sharing one share a lane) as background jobs, and tests/bounds (it compares run times) after every lane has finished. Each item's output goes to build/par/NN.log and is printed in item order, so the output is the serial output; a failed item's log is printed in place with a `# t_item (lane L) exited N, log: build/par/NN.log` line, and an item that left no exit status is `FAIL run-tests/t_item`. The QEMU tests (tests/os) start only after all items are done and run alone. `RUN_TESTS_SERIAL=1` runs the items one at a time.
+
+Public CI (`.github/workflows/ci.yml`, docs/ci.md) runs on every push to master and every pull request: `build.sh` from the committed seed (FIXPOINT, SEED, TOOLS and SEED TOOLS OK), `SKIP_OS=1 ./run_tests.sh` at O2, and `tests/os/ci-boot.sh`, which builds the kernel at -O0 and boots it in QEMU to KERNEL OK. QEMU, GRUB, xorriso, mtools and OVMF come from the runner's Ubuntu packages; the workflow has no secrets, a read-only token and actions pinned to full commit SHAs (checked by tests/ci). The full OS suite (tests/os/run.sh) is the gate on the dev box.
 
 Optional bootstrap: `target/release/cuditor-bootstrap file.cud [-o out] [-S]`, or `-e 'src'`.
 
