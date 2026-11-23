@@ -541,6 +541,9 @@ def session(proj, MAIN, UTIL):
     rc = os.waitstatus_to_exitcode(w[1])
     check("exit-code-0", rc == 0, str(rc))
 
+def reused():
+    return request("forge/stats", None)["result"]["reused"]
+
 def parses():
     return request("forge/stats", None)["result"]["parses"]
 
@@ -647,6 +650,55 @@ def fs_session(proj):
     d = seen.get(uri(UTIL), [])
     check("fs-nested-error-on-include-line", len(d) == 1 and d[0]["range"]["start"]["line"] == pos_of(ut, "include \"base")["line"] and "in base.cudi line 10" in d[0]["message"], seen)
     write_file(BASE, bt)
+
+    # incremental checks: an edit of blank or comment lines only is parsed again but not compiled
+    # again, and the last compile's diagnostics move with the code; any code edit compiles
+    t1 = text.replace("twice(LIMIT)", "twicee(LIMIT)")
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(MAIN), "version": 2}, "contentChanges": [{"text": t1}]})
+    d = diags_for(uri(MAIN))
+    check("fs-code-error-diagnostic", len(d) == 1 and d[0]["range"]["start"]["line"] == pos_of(t1, "return twicee")["line"], d)
+    u0 = reused()
+    c0 = stats()
+    t2 = t1.replace("def main() -> i64:", "# a new comment line\n\ndef main() -> i64:")
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(MAIN), "version": 3}, "contentChanges": [{"text": t2}]})
+    d = diags_for(uri(MAIN))
+    check("fs-comment-edit-reuses-compile", reused() == u0 + 1 and stats() == c0 + 1, [u0, reused(), c0, stats()])
+    check("fs-comment-edit-moves-diagnostic", len(d) == 1 and d[0]["range"]["start"]["line"] == pos_of(t2, "return twicee")["line"] and d[0]["range"]["start"]["line"] == pos_of(t1, "return twicee")["line"] + 2, d)
+    t3 = t2.replace("twicee(LIMIT)", "twice(LIMIT)")
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(MAIN), "version": 4}, "contentChanges": [{"text": t3}]})
+    d = diags_for(uri(MAIN))
+    check("fs-code-edit-compiles-again", len(d) == 0 and reused() == u0 + 1, [d, reused()])
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(MAIN), "version": 5}, "contentChanges": [{"text": text}]})
+    d = diags_for(uri(MAIN))
+    t4 = ut.replace("    \"Double x.\"", "    # comment in a .cudi\n    \"Double x.\"")
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(UTIL), "version": 4}, "contentChanges": [{"text": t4}]})
+    d = diags_for(uri(UTIL))
+    u1 = reused()
+    t5 = t4.replace("def twice", "\ndef twice")
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(UTIL), "version": 5}, "contentChanges": [{"text": t5}]})
+    d = diags_for(uri(UTIL))
+    check("fs-cudi-comment-edit-reuses-compile", len(d) == 0 and reused() == u1 + 1, [d, u1, reused()])
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(UTIL), "version": 6}, "contentChanges": [{"text": ut}]})
+    d = diags_for(uri(UTIL))
+    u1 = reused()
+    write_file(BASE, bb)
+    notify("textDocument/didSave", {"textDocument": {"uri": uri(BASE)}, "text": bb})
+    seen = {}
+    while len(seen) < 3:
+        m = recv()
+        if m.get("method") == "textDocument/publishDiagnostics":
+            seen[m["params"]["uri"]] = m["params"]["diagnostics"]
+    check("fs-include-change-not-reused", len(seen.get(uri(MAIN), [])) == 1 and reused() == u1, [seen, u1, reused()])
+    write_file(BASE, bt)
+    notify("textDocument/didChange", {"textDocument": {"uri": uri(BASE), "version": 3}, "contentChanges": [{"text": bt}]})
+    d = diags_for(uri(BASE))
+    notify("textDocument/didSave", {"textDocument": {"uri": uri(BASE)}, "text": bt})
+    seen = {}
+    while len(seen) < 3:
+        m = recv()
+        if m.get("method") == "textDocument/publishDiagnostics":
+            seen[m["params"]["uri"]] = m["params"]["diagnostics"]
+    check("fs-include-restored-clears", len(seen.get(uri(MAIN), [1])) == 0 and len(seen.get(uri(UTIL), [1])) == 0, seen)
 
     # a missing include file: on the line that names it
     t2 = text.replace("include \"util.cudi\"", "include \"util.cudi\"\ninclude \"nope.cudi\"")

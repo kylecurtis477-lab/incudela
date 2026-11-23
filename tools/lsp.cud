@@ -16,6 +16,8 @@
 # Positions on the wire are UTF-16 code units, converted to and from the byte offsets used inside.
 # Freestanding sources: names resolve through `include` files (and, for a .cudi, through the .cud that
 # includes it); a .cudi is checked by compiling that root with the include chain written as hidden siblings.
+# An edit that changes only blank or comment lines is parsed again but not compiled again: the last full
+# compile's diagnostics move to the new line numbers (forge/stats `reused`).
 
 import sys
 
@@ -24,7 +26,8 @@ DOCS = {}
 PID = [0]
 MODS = {}
 INCS = {}
-STATS = {"compiles": 0, "parses": 0}
+FULL = {}
+STATS = {"compiles": 0, "parses": 0, "reused": 0}
 
 # ---------------- JSON ----------------
 def jskip(s, i):
@@ -323,6 +326,62 @@ def inc_via(path, text, name):
                 return inc_line(text, n)
     return 0
 
+def code_lines(text):
+# 1-based numbers of the lines that are neither blank nor a whole-line comment
+    r = []
+    n = 1
+    for l in text.split("\n"):
+        t = l.strip()
+        if t != "" and not t.startswith("#"):
+            r.append(n)
+        n += 1
+    return r
+
+def full_key(path, text, ast):
+# what a full compile of path depends on: its code lines (not blank or comment lines) and the text of
+# every file it reaches through include (for a .cudi: its root and the root's includes) or import, as
+# the open buffer and on disk
+    ls = text.split("\n")
+    k = []
+    for n in code_lines(text):
+        k.append(ls[n - 1])
+    for f in fs_scope(path):
+    # both texts: a root compiles its includes from disk, a .cudi's chain from the open buffers
+        t = doc_text(f)
+        if t == None:
+            t = ""
+        e = file_text(f)
+        if e == None:
+            e = ""
+        k.append("\0" + f + "\0" + t + "\0" + e)
+    for m in imports_of(ast):
+        t = doc_text(dirname(path) + "/" + m + ".cud")
+        if t == None:
+            t = ""
+        k.append("\0" + m + "\0" + t)
+    return "\n".join(k)
+
+def moved(diags, old, new):
+# diagnostics of old text on the matching code lines of new (same code lines, so same count)
+    a = code_lines(old)
+    b = code_lines(new)
+    at = {}
+    i = 0
+    while i < len(a) and i < len(b):
+        at[a[i]] = b[i]
+        i += 1
+    r = []
+    for j in diags:
+        c = {}
+        for x in j:
+            c[x] = j[x]
+        if c["line"] in at:
+            c["line"] = at[c["line"]]
+        if c["end_line"] in at:
+            c["end_line"] = at[c["end_line"]]
+        r.append(c)
+    return r
+
 def compile_doc(path, text):
 # -> [ast or None, list of diagnostic dicts]
 # A .cudi file is checked through the .cud next to it that includes it (fs_root): the chain of includes
@@ -342,10 +401,21 @@ def compile_doc(path, text):
     ast = None
     fsdoc = path.endswith(".cudi")
     main = src
+    full = False
+    key = ""
     if d != None and len(d.strip()) == 0:
         a = file_text(T + ".ast")
         if a != None and a.startswith("{"):
             ast = jparse(a, 0)[0]["root"]
+        key = full_key(path, text, ast)
+        if path in FULL and FULL[path][0] == key:
+        # only blank or comment lines changed since the last full compile: its diagnostics, moved
+            run_sh("rm -f " + T + ".ast " + T + ".d1")
+            for t in tmps:
+                run_sh("rm -f " + shq(t))
+            STATS["reused"] = STATS["reused"] + 1
+            return [ast, moved(FULL[path][1], FULL[path][2], text)]
+        full = True
         if fsdoc:
             main = ""
             r = fs_root(path)
@@ -415,6 +485,8 @@ def compile_doc(path, text):
                     diags.append(j)
         elif l.startswith("error:"):
             diags.append({"line": 1, "col": 1, "end_line": 1, "end_col": 1, "code": "E0000", "message": "compiler failed: " + l, "severity": "error"})
+    if full:
+        FULL[path] = [key, diags, text]
     return [ast, diags]
 
 # ---------------- include files (freestanding Forge sources) ----------------
@@ -1201,7 +1273,7 @@ def handle(m):
             DOCS.pop(u)
         send({"method": "textDocument/publishDiagnostics", "params": {"uri": u, "diagnostics": []}})
     elif meth == "forge/stats":
-        send({"id": mid, "result": {"compiles": STATS["compiles"], "parses": STATS["parses"]}})
+        send({"id": mid, "result": {"compiles": STATS["compiles"], "parses": STATS["parses"], "reused": STATS["reused"]}})
     elif meth == "textDocument/completion":
         u = p["textDocument"]["uri"]
         pos = p["position"]
