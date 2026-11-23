@@ -9,6 +9,11 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `0d6ef27` Boot harness: box freezes inside the `FORGE_BOOT_INPUT` injection are counted and reported (fix). The
+  injection loop never ran the freeze check, so inv224's os/desktop failed with no freeze noted: a box stall let the
+  guest's 30 s input window run out with the last 6 of 36 commands unsent. Each command is now checked, the log says
+  `[harness: box frozen Ns during input injection, not counted]` and how long the injection took, and any freeze
+  shows on the result line. The result still fails. New self-test line `boot-harness input-freeze`.
 - `0e763a8` `cuditor pkg vendor [DIR]` (the plan's item 6, batch 4; item 6 is done): after the same lock check as
   `build`, copies only the locked versions and their signed indexes into a new directory and checks the lock
   against the copy, so `--registry vendor` builds offline with the same binary hash. tests/pkg/run.sh 46 to 52
