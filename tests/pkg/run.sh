@@ -113,6 +113,23 @@ done
 cool 'cooldown_exempt = "mathx"'; "$F" pkg --registry $R lock --now 1700272800 > $T/e 2>&1; [ $? != 0 ] && grep -q "cooldown_exempt must be a list" $T/e && ok bad-exempt-refused || bad bad-exempt-refused
 cp "$D/tests/pkg/app/cuditor.toml" cuditor.toml; "$F" pkg --registry $R lock --now soon > $T/e 2>&1; [ $? != 0 ] && grep -q "lock needs the current time in Unix seconds" $T/e && ok bad-now-refused || bad bad-now-refused
 cp "$D/tests/pkg/app/cuditor.toml" cuditor.toml; cp $T/lock1 cuditor.lock
+# rollback protection: lock_version 2 records each index's newest publish time and yanked count, which
+# only grow; build and a later lock refuse an index with smaller values (an older, validly signed index)
+grep -q '^lock_version = "2"$' $T/lock1 && [ "$(sed -n '/^name = "mathx"$/,/^$/s/^index_newest = "\(.*\)"$/\1/p' $T/lock1)" = 1700200000 ] && [ "$(sed -n '/^name = "mathx"$/,/^$/s/^index_yanked = "\(.*\)"$/\1/p' $T/lock1)" = 0 ] && ok lock-records-index-state || bad lock-records-index-state
+cp -r $R $T/rn; cp -r $S/mathx/2.0.0 $T/m21; sed -i 's/2.0.0/2.1.0/' $T/m21/cuditor.toml
+"$F" pkg --registry $T/rn publish --key $K --time 1700300000 $T/m21 > /dev/null 2>&1
+"$F" pkg --registry $T/rn lock > /dev/null 2>&1; cp cuditor.lock $T/lockn
+grep -q '^index_newest = "1700300000"$' $T/lockn && grep -q '^version = "1.2.0"$' $T/lockn && ok lock-sees-newer-index || bad lock-sees-newer-index
+rm -rf target; hn=$("$F" pkg --registry $T/rn build 2>&1 | sed -n 's/.*sha256 //p'); [ "$hn" = "$h1" ] && ok newer-index-builds-same || bad "newer-index-builds-same ($hn)"
+"$F" pkg --registry $R build > $T/e 2>&1; [ $? != 0 ] && grep -q "the index of mathx is older than the one cuditor.lock was made from (newest publish 1700200000, 0 yanked; the lock saw 1700300000, 0 yanked)" $T/e && ok rollback-refused-build || bad rollback-refused-build
+"$F" pkg --registry $R lock > $T/e 2>&1; [ $? != 0 ] && grep -q "the index of mathx is older than the one cuditor.lock was made from" $T/e && cmp -s cuditor.lock $T/lockn && ok rollback-refused-relock || bad rollback-refused-relock
+# an older index that differs only in a yank flag is caught by the yanked count
+cp -r $T/rn $T/rny; "$F" pkg --registry $T/rny yank --key $K mathx 1.0.0 > /dev/null 2>&1
+"$F" pkg --registry $T/rny lock > /dev/null 2>&1 && grep -q '^index_yanked = "1"$' cuditor.lock && "$F" pkg --registry $T/rn build > $T/e 2>&1; [ $? != 0 ] && grep -q "(newest publish 1700300000, 0 yanked; the lock saw 1700300000, 1 yanked)" $T/e && ok yank-rollback-refused || bad yank-rollback-refused
+# a lock from before rollback protection is refused until relocked
+sed 's/^lock_version = "2"$/lock_version = "1"/' $T/lockn > cuditor.lock
+"$F" pkg --registry $T/rn build > $T/e 2>&1; [ $? != 0 ] && grep -q "cuditor.lock is lock_version 1; this cuditor pkg writes 2" $T/e && ok old-lock-version-refused || bad old-lock-version-refused
+cp $T/lock1 cuditor.lock
 # cuditor.toml changed without relocking
 sed -i 's/mathx = "\^1"/mathx = "^1.2"/' cuditor.toml
 "$F" pkg --registry $R build > $T/e 2>&1; [ $? != 0 ] && grep -q "out of date" $T/e && ok stale-lock-refused || bad stale-lock-refused

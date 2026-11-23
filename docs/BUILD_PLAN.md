@@ -549,6 +549,15 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
      boundary and one second before it, an existing lock unaffected, exempt and partly exempt, a pin inside the
      cooldown reported, malformed cooldown_days (5 forms), cooldown_exempt and --now refused); mutation-checked
      (no cooldown, `>=` at the boundary, ignoring the exemption, hours instead of days). Next: remote fetching.
+   - *Batch 3 (2026-11-23): index rollback protection — status: done.* Closes the gap batch 1 listed (a registry
+     serving an older, validly signed index). cuditor.lock becomes lock_version 2 and records per package the
+     newest publish time and the yanked count of the index it was made from (`index_newest`, `index_yanked`, inside
+     the content hash); both only grow, so `build` and a relock refuse an index with a smaller value, naming both
+     states. A version 1 lock is refused with a relock hint. Relative to what the project has seen only (no
+     protection for a first lock). tests/pkg/run.sh 39 to 46 checks (the recorded state; a newer index locks and
+     builds the same binary; a rolled-back index refused by build and by relock, which leaves the lock alone; a
+     rolled-back yank caught by the count; a version 1 lock refused); mutation-checked (no yank count, no build
+     check, no relock check). Next: remote fetching.
 7. **Sustained adversarial testing**: multi-hour soak runs, syscall and capability fuzzing, and fault injection,
    with the results recorded.
 8. **Real-hardware boot**: a USB image plus a test checklist for Kyle's PC (needs Kyle's hardware).
@@ -648,7 +657,7 @@ least.
 | Nov 18 | early USB smoke image and checklist | 1 item | done (0.23.0, inv217): `tools/usb-image.sh` makes build/usb/incudela-usb.img, a reproducible BIOS+UEFI hybrid image with `incudela.smoke` (device-free self-tests only); tests/os/usb.sh boots it as USB mass storage under OVMF and SeaBIOS; docs/usb.md has the write steps and the checklist. *Kyle* boots it once |
 | Nov 19-21 | 4: SSA backend for fs/kernel mode, gated by optcov and fsfuzz --combos | 8-10 batches | also a `sqrt` intrinsic (benchmarks need asm today) |
 | Nov 22 | 5: language server: incremental checks, diagnostics, definition | 3 batches | done (0.23.0, inv218-inv220): include files and `.cudi` diagnostics; comment-only edits not recompiled; references, rename, completion and struct fields through includes; 87 checks |
-| Nov 23-24 | 6: package manager: resolution, signed index with publish time and yank flag, reproducible builds | 4 batches | batches 1-2 done (signed index, publish, yank; cooldowns; 39 checks) |
+| Nov 23-24 | 6: package manager: resolution, signed index with publish time and yank flag, reproducible builds | 4 batches | batches 1-3 done (signed index, publish, yank; cooldowns; rollback protection; 46 checks) |
 | Nov 25-26 | 7: sustained adversarial testing: a soak harness (there is none today), a syscall and capability fuzzer, fault injection, multi-hour runs | 4 batches + runs | |
 | Nov 27- | 8: real-hardware boot | open | *Kyle*: needs his PC |
 | Nov 28-Dec 1 | 9: Linux compatibility by real apps (fork, pipe, file-backed mmap first; app list with pass/fail) | 6+ batches | 39 Linux syscalls today |
