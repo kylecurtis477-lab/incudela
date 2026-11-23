@@ -1,6 +1,9 @@
-# Preemptive kernel threads: spinlocks (atomics), per-CPU run queues with stealing (one rq_lock), per-CPU current and
-# idle threads, round-robin on the 100 Hz LAPIC timer. The run-queue lock is held across the stack switch and
-# released by whichever thread resumes, so a thread can never be picked up by another CPU half-saved.
+# Preemptive kernel threads: spinlocks (atomics), per-CPU run queues with stealing, per-CPU current and idle threads,
+# round-robin on the 100 Hz LAPIC timer. Each run queue has its own lock (rql[q]); rq_lock stays the lock of thread
+# state, wait queues, mutexes, condition variables and the process tables. Lock order: rq_lock, then one rql[q]; never
+# rq_lock while holding an rql. No lock is held across the stack switch: Thread.on_cpu stays 1 until the CPU that
+# switched away from a thread has saved it (the resumed side clears it), and a CPU that takes a thread from a run queue
+# waits for on_cpu == 0 before switching to it, so a thread can never run on two CPUs or be picked up half-saved.
 T_READY = 0
 T_RUNNING = 1
 T_DEAD = 2
@@ -38,6 +41,7 @@ struct Thread:
     sig_rx: u64[2]  # rcx, r11 that rt_sigreturn restores (the iretq exit in user.cudi reads them via SF pad)
     rq_next: nown[Thread]  # Stage 3e: the run queue's owning link (wait queues keep using the raw `next`)
     rq_owned: u64  # 1 while an owner exists (run queue, current[] or idle_thr[]): thread_adopt refuses a second one
+    on_cpu: u64  # 0.23.0: 1 from the moment a CPU picks the thread until the CPU that switched away from it saved it
 
 asm(
     ".text",
@@ -69,8 +73,10 @@ rq_lock: u64
 # thread while it is not running, so a thread has one owner at a time and moves between them by take/replace. A
 # thread gets its owner from thread_adopt (thread_start_ready, wake_l, sched_cpu_init) and gives it up in
 # schedule_l when it blocks (the raw wait-queue link holds it until wake_l adopts it again) or dies (thread_reap
-# frees it through its handle). Everything is under rq_lock, as before.
-rq_head: nown[Thread][8]  # Phase 8: one run queue per CPU (still under the one rq_lock)
+# frees it through its handle). Queue q's list, length and counters are under rql[q] (0.23.0); current[cpu] and
+# idle_thr[cpu] are only touched by their own CPU with interrupts off; blocking and waking stay under rq_lock.
+rql: u64[8]  # 0.23.0: per-CPU run-queue locks
+rq_head: nown[Thread][8]  # Phase 8: one run queue per CPU
 rq_tail: u64[8]
 rq_len: u64[8]
 rq_enq: u64[8]
@@ -79,6 +85,8 @@ current: nown[Thread][8]
 idle_thr: nown[Thread][8]
 next_tid: u64
 ctx_switches: u64
+sw_prev: u64[8]  # per CPU: the thread just switched away from; the resumed side clears its on_cpu (sched_finish)
+on_cpu_waits: u64  # picks that found the thread still being switched out on another CPU
 
 def thread_release(t: nown[Thread]):
 # an owner given up: to a raw handle (blocked or dead thread) or a none returned by replace
@@ -122,16 +130,18 @@ def rq_push(t: own[Thread]):
         q = t.pin - 1
     else:
         i: u64 = 0
-        while i < n:
+        while i < n:  # the lengths are read without their locks: only a balancing hint
             if rq_len[i] < rq_len[q]:
                 q = i
             i += 1
+    spin_lock(addr(rql[q]))
     rq_link(q, t)
     rq_len[q] += 1
     rq_enq[q] += 1
+    spin_unlock(addr(rql[q]))
 
 def rq_take_first(q: u64, cpu: u64) -> nown[Thread]:
-# the first thread of queue q that may run on cpu (unpinned or pinned to it); the others keep their order
+# rql[q] held: the first thread of queue q that may run on cpu (unpinned or pinned to it); the others keep their order
     last = rq_tail[q]
     chain = take(rq_head[q])
     rq_tail[q] = 0
@@ -154,13 +164,16 @@ def rq_pop(cpu: u64) -> nown[Thread]:
     k: u64 = 0
     while k < 8:
         q = (cpu + k) % 8
-        if rq_head[q] != 0:
+        if rq_head[q] != 0:  # unlocked peek: an empty queue costs no lock
+            spin_lock(addr(rql[q]))
             t = rq_take_first(q, cpu)
             if t != 0:
                 rq_len[q] -= 1
+                spin_unlock(addr(rql[q]))
                 if k != 0:
-                    rq_steals += 1
+                    atomic_fetch_add(addr(rq_steals), 1, acq_rel)
                 return t
+            spin_unlock(addr(rql[q]))
             thread_release(t)
         k += 1
     none: nown[Thread]
@@ -222,7 +235,8 @@ def thread_spawn(fn: u64, arg: u64) -> ptr[Thread]:
     return t
 
 def thread_free(t: ptr[Thread]):
-# only for T_DEAD threads: the lock round-trip guarantees the CPU that switched away from it is done
+# only for T_DEAD threads (set under rq_lock); on_cpu == 0 means the CPU that switched away from it is done with its
+# stack, FPU area and address space
     f = irq_save()
     spin_lock(addr(rq_lock))
     st = t.state
@@ -230,26 +244,62 @@ def thread_free(t: ptr[Thread]):
     irq_restore(f)
     if st != T_DEAD:
         panic("thread_free: thread still alive")
+    on_cpu_wait(t)
     kstack_free(t.stack, KTHREAD_PAGES)
     fpu_area_free(t.fpu)
     kfree(u64(t))
 
+def on_cpu_wait(t: ptr[Thread]):
+# wait until no CPU is still switching away from t (interrupts off or on; stop_machine and shootdown IPIs are served)
+    if atomic_load(addr(t.on_cpu), acquire) == 0:
+        return
+    atomic_fetch_add(addr(on_cpu_waits), 1, acq_rel)
+    tl = rdtsc()
+    used: u64 = 0
+    while atomic_load(addr(t.on_cpu), acquire) != 0:
+        tlb_poll()
+        cpu_relax()
+        if tsc_per_ms != 0:
+            n = rdtsc()
+            used += tsc_counted(n - tl)
+            tl = n
+            if used > tsc_per_ms * SPIN_LIMIT_MS:
+                spin_stuck(addr(t.on_cpu), used)
+
+def sched_finish():
+# the resumed side of a switch (right after ctx_switch, or a new thread's first run): the thread this CPU switched
+# away from is saved, so it may now run elsewhere or be freed
+    c = lapic_cpu()
+    p = sw_prev[c]
+    if p != 0:
+        sw_prev[c] = 0
+        atomic_store(addr(as_thread(p).on_cpu), 0, release)
+
 @export
 @unsafe
 def sched_tail():
-    spin_unlock(addr(rq_lock))
+    sched_finish()
     sti()
 
 def schedule(exiting: u64):
-# interrupts are off (timer handler, yield, exit)
-    spin_lock(addr(rq_lock))
-    schedule_l(exiting)
+# interrupts are off (timer handler, yield, exit). A running or idle thread switches without rq_lock (run-queue locks
+# only); an exiting one takes it, so T_DEAD is set under rq_lock as thread_free and the reapers expect
+    if exiting:
+        spin_lock(addr(rq_lock))
+        sched_switch(1, 1)
+    else:
+        sched_switch(0, 0)
+
+def schedule_l(exiting: u64):
+# rq_lock held, interrupts off; returns with rq_lock released
+    sched_switch(exiting, 1)
 
 @unsafe
-def schedule_l(exiting: u64):
-# rq_lock held, interrupts off; returns with rq_lock released. A T_BLOCKED caller is parked on a
-# wait queue already and is not put back on the run queue. current[cpu] keeps cur's owner until the one
-# transfer point below (replace by nxt), so cur_thread() is valid all the way to the switch.
+def sched_switch(exiting: u64, locked: u64):
+# interrupts off; with locked, rq_lock is held and released before the switch (always released on return). A T_BLOCKED
+# caller (locked) is parked on a wait queue already and is not put back on the run queue: rq_lock is kept until its owner
+# is given up below, so no waker can adopt it before that. current[cpu] keeps cur's owner until the one transfer point
+# (replace by nxt), so cur_thread() is valid all the way to the switch.
     cpu = lapic_cpu()
     cur = cur_thread()
     if u64(cur) == 0:
@@ -260,19 +310,25 @@ def schedule_l(exiting: u64):
     if nxt == 0:
         if cur.state == T_RUNNING or cur.state == T_IDLE:
             thread_release(nxt)
-            spin_unlock(addr(rq_lock))
+            if locked:
+                spin_unlock(addr(rq_lock))
             return
         swap(nxt, idle_thr[cpu])
     if nxt == 0:
         thread_release(nxt)
         panic("schedule: no idle thread")
         return
+    # nxt may still be switching out on the CPU that queued it; that CPU is past its own wait (it queues its old
+    # thread only after it), so this cannot wait in a cycle. Wait before cur goes back on a queue.
+    nt = as_thread(thread_addr(borrow(nxt)))
+    on_cpu_wait(nt)
+    atomic_store(addr(nt.on_cpu), 1, relaxed)
     if nxt.state != T_IDLE:
         nxt.state = T_RUNNING
     nd_hook(ND_SCHED, cpu, thread_addr(borrow(nxt)))
     nxt.cpus_seen = nxt.cpus_seen | (u64(1) << cpu)
     nxt.switches += 1
-    ctx_switches += 1
+    atomic_fetch_add(addr(ctx_switches), 1, acq_rel)
     tss[cpu].rsp0 = nxt.kstack_top
     percpu_kstack[cpu * 4] = nxt.kstack_top
     ncr3 = nxt.cr3
@@ -293,6 +349,9 @@ def schedule_l(exiting: u64):
             thread_release(old)
     else:
         thread_release(old)
+    sw_prev[cpu] = u64(cur)
+    if locked:
+        spin_unlock(addr(rq_lock))
     if ncr3 != cur.cr3:
         switch_cr3(cpu, ncr3)
     # 11.1b: the kernel never uses FS, so the MSR always holds the running thread's user FS base
@@ -301,7 +360,7 @@ def schedule_l(exiting: u64):
     fpu_save(cur.fpu)
     fpu_restore(nfpu)
     ctx_switch(u64(addr(cur.rsp)), nrsp)
-    spin_unlock(addr(rq_lock))
+    sched_finish()
 
 def yield_cpu():
     f = irq_save()
@@ -347,6 +406,7 @@ def sched_cpu_init(cpu: u64, boot_ctx_is_idle: u64):
     t.cr3 = kernel_pml4
     t.fpu = fpu_area_new()
     t.cpus_seen = u64(1) << cpu
+    t.on_cpu = 1  # it is running now
     if boot_ctx_is_idle:
         t.state = T_IDLE
         t.kstack_top = tss[cpu].rsp0

@@ -16,10 +16,12 @@ kexec handoff (SYSTEMS.md "Process-state format", `pstate.cudi`), the nondetermi
 ## 0. Conventions
 - Errors are returned as negative values in a u64 (`EPERM`, `EBADF`, `EFAULT`, `EINVAL`, `EMFILE`,
   `EACCES`, `EPIPE` = -32). Argument and permission errors are reported before any side effect.
-- Locking: one global spinlock `rq_lock` guards every run queue, wait queue, mutex, condvar and
-  channel. Functions ending in `_l` require `rq_lock` held **and interrupts off**; all others take and
-  release it themselves and may be called with interrupts on. Lock order: `rq_lock` is innermost; no
-  other lock may be taken while holding it.
+- Locking: the global spinlock `rq_lock` guards thread state changes for blocking and waking, every
+  wait queue, mutex, condvar and channel, and the process tables. Each CPU's run queue has its own
+  spinlock `rql[q]` (0.23.0), taken only inside `rq_push`/`rq_pop`. Functions ending in `_l` require
+  `rq_lock` held **and interrupts off**; all others take and release it themselves and may be called
+  with interrupts on. Lock order: `rq_lock`, then at most one `rql[q]`, innermost; no other lock may be
+  taken while holding `rq_lock`, and `rq_lock` never while holding an `rql`.
 - "Blocks" means the caller may be descheduled; it must not hold `rq_lock` (non-`_l` API) or any
   spinlock other than `rq_lock` (the `_l` API, which releases it while parked).
 
@@ -32,6 +34,13 @@ kexec handoff (SYSTEMS.md "Process-state format", `pstate.cudi`), the nondetermi
   Transitions: new -> READY (`thread_start_ready`); READY -> RUNNING (picked); RUNNING -> READY
   (preempted / yield); RUNNING -> BLOCKED (`wq_block_l`); BLOCKED -> READY (`wake_l`);
   RUNNING -> DEAD (`thread_exit`). No other transition is legal.
+- No lock is held across the stack switch (0.23.0; before, `rq_lock` was held across it and released by
+  the resumed thread). `Thread.on_cpu` is 1 from the moment a CPU picks the thread until the CPU that
+  switched away from it has saved it: the resumed side (`sched_finish`, after `ctx_switch` or in a new
+  thread's `sched_tail`) clears it for `sw_prev[cpu]`. A CPU that took a thread from a run queue waits
+  for `on_cpu == 0` before switching to it, and does so before its own old thread goes back on a queue, so
+  the waits cannot form a cycle; `thread_free` waits for it too. A blocking thread keeps `rq_lock` until
+  its owner is given up, so no waker can adopt it earlier.
 - Every pick passes the nondeterminism hook (`nd_hook(ND_SCHED, cpu, thread)`).
 - Ownership (Stage 3e): each thread has at most one owner at a time. The run queue owns its READY threads
   (`rq_head[q]: nown[Thread]`, then `Thread.rq_next`; `rq_tail[q]` is a non-owning view), `current[cpu]`
@@ -54,7 +63,7 @@ kexec handoff (SYSTEMS.md "Process-state format", `pstate.cudi`), the nondetermi
 | `yield_cpu()` | give up the CPU; returns READY->RUNNING later |
 | `thread_exit()` | never returns; the thread is reaped by `thread_reap` (its stack and FPU area freed) |
 | `sleep_ticks(n)` | block for at least n timer ticks (10 ms each) |
-| `schedule(exiting)` / `schedule_l` | internal: irqs off; `_l` returns with `rq_lock` released |
+| `schedule(exiting)` / `schedule_l` | internal: irqs off; `_l` returns with `rq_lock` released; a running thread's `schedule(0)` (timer, yield) takes no `rq_lock` |
 
 ### Wait queues and sleeping locks
 | call | contract |
