@@ -58,6 +58,8 @@ run_tests.sh runs its non-QEMU blocks as 63 items in lanes (table `ITEMS`): lane
 
 Public CI (`.github/workflows/ci.yml`, docs/ci.md) runs on every push to master and every pull request: `build.sh` from the committed seed (FIXPOINT, SEED, TOOLS and SEED TOOLS OK), `SKIP_OS=1 ./run_tests.sh` at O2, and `tests/os/ci-boot.sh`, which builds the kernel at -O0 and boots it in QEMU to KERNEL OK. QEMU, GRUB, xorriso, mtools and OVMF come from the runner's Ubuntu packages; the workflow has no secrets, a read-only token and actions pinned to full commit SHAs (checked by tests/ci). The full OS suite (tests/os/run.sh) is the gate on the dev box.
 
+USB smoke image (docs/usb.md): `tools/usb-image.sh` writes build/usb/incudela-usb.img, a reproducible BIOS+UEFI image that boots the kernel in smoke mode (`incudela.smoke`: only the self-tests that need no QEMU device) on a real PC. Copy it to a stick yourself, for example `sudo dd if=build/usb/incudela-usb.img of=/dev/sdX bs=4M conv=fsync` after checking with `lsblk` which device is the stick. **Writing to the wrong device erases it**, and the tool itself never writes to a device. tests/os/usb.sh boots it as USB mass storage under OVMF and SeaBIOS.
+
 Optional bootstrap: `target/release/cuditor-bootstrap file.cud [-o out] [-S]`, or `-e 'src'`.
 
 ## Syntax
@@ -187,6 +189,7 @@ Subsystem docs (design, formats, APIs, tests, limits):
 - docs/tools-ostools.md: the OS-test toolchain preflight (tools/ostools.cud) the gate runs before any test, and how it reinstalls the tools offline-verified after a box reset
 - docs/tools-optcov.md: block coverage of the fs optimizer passes (tools/optcov.cud, build-plan item 3), with the current report and the `-O0` finding
 - docs/tools-fsfuzz.md: the `--fs-opt` differential fuzzer (each random program built O2, -O0, --fs-opt, -O0 --fs-opt, --fs-live, -O0 --fs-live, --fs-temps, -O0 --fs-temps, --fs-ssa and -O0 --fs-ssa; outputs must match; `--combos`: 72 flag sets x 2 sources)
+- docs/usb.md: the USB smoke image (build, write it to a stick, first-boot checklist)
 - docs/tools-bench.md: the Phase 12.4 performance tracker (bench records, baseline, regression check, targets)
 - docs/rfc/incremental.md: RFC (proposed, design only) for a query-based incremental compiler: module/function queries, dependency graph with early cutoff, content-addressed cache, LSP integration, byte-identical output (FIXPOINT, seals unaffected) and the test plan
 

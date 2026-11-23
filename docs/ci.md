@@ -11,7 +11,7 @@ Status: [![ci](https://github.com/kylecurtis477-lab/incudela/actions/workflows/c
 | `tests-o2` | `./build.sh`, then `SKIP_OS=1 ./run_tests.sh` (every non-QEMU item, parallel lanes); fails on any `FAIL` line and prints the failed items' `build/par` logs | 60 min |
 | `boot-o0` | `./build.sh`, then `tests/os/ci-boot.sh`: kernel, user programs, modules and EFI disk built with `CUDC_FLAGS=-O0`, one BIOS boot (GRUB multiboot2, 4 CPUs, TCG) that must reach KERNEL OK on the serial console and the framebuffer; no retry on a hang | 30 min |
 
-The full OS suite (`tests/os/run.sh`, 45 results, BIOS/UEFI/kexec/desktop/IOMMU paths) is not run on GitHub: it is
+The full OS suite (`tests/os/run.sh`, 50 results, BIOS/UEFI/kexec/desktop/IOMMU paths) is not run on GitHub: it is
 the gate on the development box (pregate, `tests/os/run.sh` alone, then `run_tests.sh` at O2 and O0).
 
 ## Rules

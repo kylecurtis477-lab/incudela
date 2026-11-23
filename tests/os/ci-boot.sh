@@ -5,7 +5,7 @@
 # reach KERNEL OK on the serial console and on the framebuffer (tests/os/boot.cud). No retry: a hang is a FAIL
 # (FORGE_BOOT_NO_RETRY=1). Needs build.sh's build/ plus qemu-system-x86_64, grub-mkrescue, xorriso and mtools from
 # the host's distro packages. Prints PASS/FAIL lines; exit 1 on any FAIL. TIMEOUT (default 300 s) is the boot's
-# timeout passed to the harness. The full OS suite (tests/os/run.sh, 45 results) is the gate on the dev box.
+# timeout passed to the harness. The full OS suite (tests/os/run.sh, 50 results) is the gate on the dev box.
 cd "$(dirname "$0")/../.."
 L=build/os-ci; rm -rf $L; mkdir -p $L; B=$L/boot; T=${TIMEOUT:-300}
 fail() { echo "FAIL $1"; [ -f "$2" ] && tail -n 40 "$2"; exit 1; }

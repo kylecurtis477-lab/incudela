@@ -862,16 +862,11 @@ sb_turn: u64[8]
 sb_pp: u64[8]
 
 def schedbench_wanted() -> u64:
-    i: u64 = 0
-    while i < 255 and bi.cmdline[i] != 0:
-        while i < 255 and bi.cmdline[i] == 32:
-            i += 1
-        s = i
-        while i < 255 and bi.cmdline[i] != 0 and bi.cmdline[i] != 32:
-            i += 1
-        if i > s and cmd_tok_eq(s, i - s, "incudela.schedbench"):
-            return 1
-    return 0
+    return cmdline_key("incudela.schedbench")
+
+def smoke_wanted() -> u64:
+# `incudela.smoke` (the USB smoke image, tools/usb-image.sh): only the self-tests that need no QEMU device
+    return cmdline_key("incudela.smoke")
 
 def sb_yielder(arg: u64):
 # switch-heavy load: every yield goes through the run queues
@@ -2088,16 +2083,30 @@ def after_overflow():
     sync_test()
     vecmap_test()
     user_test()
-    fs_test()
-    hw_test()
-    uaccess_test()
-    ffs_test()
-    module_test()
-    drv_test()
-    livepatch_test()
-    stop_machine_stress()
+    if smoke_wanted() != 0:  # real hardware: no virtio disk, and no driver may touch the PC's NVMe/AHCI/xHCI/NIC
+        uaccess_test()
+        stop_machine_stress()
+    else:
+        fs_test()
+        hw_test()
+        uaccess_test()
+        ffs_test()
+        module_test()
+        drv_test()
+        livepatch_test()
+        stop_machine_stress()
     if bi.handoff != 0:
         kexec_resume()
+    elif smoke_wanted() != 0:
+        puts("smoke (incudela.smoke): ")
+        put_u64(ncpu_online)
+        puts(" cpus, ")
+        put_u64(frames_free * 4 / 1024)
+        puts(" MiB free, fb ")
+        put_u64(fb_w)
+        puts("x")
+        put_u64(fb_h)
+        puts("; CPU, memory, interrupts, timers, SMP scheduler, user mode and stop-machine checks done; disk, driver, module, shell and kexec tests skipped\n")
     elif desktop_wanted() != 0:
         puts("shell and kexec sessions skipped: desktop mode (incudela.desktop)\n")
         desktop_app()

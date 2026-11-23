@@ -589,7 +589,7 @@ least.
 | Nov 17 | kernel O0 variant: one boot test of a kernel built without the `--fs-*` passes | 1 item | today -O0 still names `--fs-ssa` for the kernel (documented) |
 | Nov 18 | data-at-rest keys: RDRAND/RDSEED mixed into the data key, a salted iterated KDF for the passphrase key, key rotation | 2 batches | objd.cudi; TPM sealing stays open (no TPM in QEMU tests) |
 | Nov 18 | per-CPU run-queue locks plus an SMP scaling benchmark (1/2/4 CPUs) | 1 batch | done (0.23.0, inv216): `rql[q]` per run queue, no lock across `ctx_switch` (`Thread.on_cpu` handshake); `incudela.schedbench` and tests/os/schedbench.sh; yields/s on 1/2/4 CPUs (TCG) about 280k/140k/53k before, 270k/395k/205k after |
-| Nov 18 | early USB smoke image and checklist | 1 item | *Kyle* boots it once |
+| Nov 18 | early USB smoke image and checklist | 1 item | done (0.23.0, inv217): `tools/usb-image.sh` makes build/usb/incudela-usb.img, a reproducible BIOS+UEFI hybrid image with `incudela.smoke` (device-free self-tests only); tests/os/usb.sh boots it as USB mass storage under OVMF and SeaBIOS; docs/usb.md has the write steps and the checklist. *Kyle* boots it once |
 | Nov 19-21 | 4: SSA backend for fs/kernel mode, gated by optcov and fsfuzz --combos | 8-10 batches | also a `sqrt` intrinsic (benchmarks need asm today) |
 | Nov 22 | 5: language server: incremental checks, diagnostics, definition | 3 batches | tools/lsp.cud exists (45 checks) |
 | Nov 23-24 | 6: package manager: resolution, signed index with publish time and yank flag, reproducible builds | 4 batches | tools/pkg.cud exists (12 checks) |

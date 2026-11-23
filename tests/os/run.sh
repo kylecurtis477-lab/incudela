@@ -85,6 +85,8 @@ bash tests/os/bootpol.sh
 bash tests/os/forgefs.sh
 # screen step 1: the desktop (gfx.cudi) drawn and presented, checked from the screendump
 bash tests/os/desktop.sh
+# the USB smoke image (tools/usb-image.sh): reproducible, booted as USB mass storage under UEFI and BIOS
+bash tests/os/usb.sh
 # old-to-new kexec: the first kernel is built from an older commit (tests/os/kexec-compat.sh)
 bash tests/os/kexec-compat.sh
 
