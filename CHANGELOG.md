@@ -7,9 +7,21 @@
      the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI
+## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks
 
-- `6020666` public CI: .github/workflows/ci.yml builds from the committed seed (FIXPOINT/SEED/TOOLS OK), runs
+- `57de60c` Per-CPU run-queue locks: each run queue has its own spinlock (`rql[q]`); `rq_lock` keeps blocking,
+  waking, wait queues, mutexes, condvars, channels and the process tables. No lock is held across `ctx_switch`
+  any more: `Thread.on_cpu` stays set until the CPU that switched away from a thread has saved it, and a CPU
+  waits for it before switching to that thread (and `thread_free` before freeing it). A running thread's timer
+  or yield switch takes no `rq_lock`. Kernel unsafe report unchanged (168 functions, 659 ops). Benchmark
+  (`tests/os/schedbench.sh`, TCG on the box), yields/s on 1/2/4 CPUs: about 280k/140k/53k before, 270k/395k/205k
+  after; mutex/condvar ping-pongs/s about 141k/70k/24k before, 134k/155k/78k after.
+- `a5dcf60` Scheduler benchmark: `incudela.schedbench` on the boot command line runs 2 yielding threads and one
+  mutex/condvar ping-pong pair per CPU for 2 s and prints a `schedbench:` line; tests/os/schedbench.sh boots it
+  with -smp 1, 2 and 4. A measurement only; it never gates.
+- `669946e`, `3c4c48e` public CI (gated as 6020666; pushed in two commits because a git push of a workflow file
+  needs the token's workflow scope, so `.github/workflows/ci.yml` came through the GitHub API in 3c4c48e, with
+  the same tree as the gated one): .github/workflows/ci.yml builds from the committed seed (FIXPOINT/SEED/TOOLS OK), runs
   `SKIP_OS=1 ./run_tests.sh` at O2 and boots the -O0 kernel in QEMU to KERNEL OK (tests/os/ci-boot.sh, no retry).
   QEMU, GRUB, xorriso, mtools and OVMF come from the runner's apt packages only; no secrets, `contents: read`,
   actions pinned to full commit SHAs, a timeout on every job. tests/ci checks these rules and refuses a copy
