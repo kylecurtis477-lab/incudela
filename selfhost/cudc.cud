@@ -15787,6 +15787,7 @@ fsp_pin = list(4096)  # step 4a: frame offsets named by a %rbp form other than t
 fs_gon = 0
 nfsd = 0
 fsd_ln = list(262144)
+fsd_at = list(262144)  # inv234: out[] index of marker .Lfsd<n> (fs_dhide/fs_dshow take it out around the passes)
 nfsgf = 0
 fsgf_s = list(8192)
 fsgf_ln = list(8192)
@@ -15843,6 +15844,7 @@ def fs_dmark():
 # a line-table row at the current address for the statement at fp
     global nfsd
     if fs_gon and nfsd < 262144:
+        fsd_at[nfsd] = nout
         emit_raw(c3(".Lfsd", str(nfsd), ":\n"))
         fsd_ln[nfsd] = tl[fp]
         nfsd += 1
@@ -20571,9 +20573,13 @@ def fs_function2(f):
         emit_raw(concat(ok, ":\n"))
     e("leave")
     e("ret")
+    gk = -1
+    ge = 0
     if fs_gon:
         fs_gon = 0
         fsgf_b[nfsgf] = nfsd
+        gk = nfsgf
+        ge = nout
         emit_raw(c3(".Lfsde", str(nfsgf), ":\n"))
         nfsgf += 1
     while fs_frame % 16 != 0:
@@ -20585,8 +20591,34 @@ def fs_function2(f):
     if guard:
         fs_spn += 1
         out[pidx] = concat(out[pidx], "    mov stack_canary(%rip),%r11\n    mov %r11,-8(%rbp)\n")
+    # the -g markers are out of out[] while the passes run (each marker has its own slot, so with no pass in
+    # between the pair is the identity; it sits outside the fs_ra gate, as it is not an optimizer pass)
+    if gk >= 0:
+        fs_dhide(gk, ge)
     if fs_ra and not fs_hasasm:
         fs_regalloc(ras0)
+    if gk >= 0:
+        fs_dshow(gk, ge)
+
+def fs_dhide(k, ge):
+# -g must not change the code (inv234): the --fs-* passes see the -g line markers as labels, which end their
+# windows and SSA blocks, so with them in place the kernel's --fs-ssa text grew by 0x110 bytes. Function k's
+# markers (.Lfsd<n>: before each statement, .Lfsde<k>: after its ret) leave out[] while fs_regalloc runs, so the
+# passes see exactly the lines of a build without -g; fs_dshow puts each back in its own slot.
+    j = fsgf_a[k]
+    while j < fsgf_b[k]:
+        out[fsd_at[j]] = ""
+        j += 1
+    out[ge] = ""
+
+def fs_dshow(k, ge):
+# a marker goes back in front of whatever its slot holds after the passes (empty, or a line a pass put there), so
+# it still labels the address of the first instruction of its statement that the passes kept
+    j = fsgf_a[k]
+    while j < fsgf_b[k]:
+        out[fsd_at[j]] = concat(c3(".Lfsd", str(j), ":\n"), out[fsd_at[j]])
+        j += 1
+    out[ge] = concat(c3(".Lfsde", str(k), ":\n"), out[ge])
 
 def fs_hasbuf():
 # a local or parameter wider than a word (array, struct) is what a stray write overflows
