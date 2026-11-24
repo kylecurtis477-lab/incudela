@@ -8,6 +8,7 @@
 #   boot 7 (inv228) runs on the good image with objects.key rewritten as a legacy v1 key slot (objects.keyb zeroed): it
 #   must still unlock
 #   boot 8 (inv229) runs on the good image with objects.key damaged: it unlocks from objects.keyb and repairs objects.key
+#   boots 9-11 (inv229) change the passphrase and check old and new; boots 12-13 replay a crash halfway through it
 # After every boot, every byte outside the Incudela partition (ESP, other partitions, GPT) must be unchanged.
 cd "$(dirname "$0")/../.."
 T=$(mktemp -d /tmp/forge-ffs.XXXXXX)
@@ -66,9 +67,11 @@ kput() {
 }
 . tests/os/frozen.sh
 frz_self_test
-boot() {  # boot [userkey]: the user key reaches the kernel as QEMU fw_cfg file opt/forge/userkey
+boot() {  # boot [userkey [newkey]]: the user key reaches the kernel as QEMU fw_cfg file opt/forge/userkey (a new
+  # passphrase for a passphrase change, inv229, as opt/forge/newkey)
   rm -f $T/s.log
   K=(); [ -n "${1:-}" ] && K=(-fw_cfg "name=opt/forge/userkey,string=$1")
+  [ -n "${2:-}" ] && K+=(-fw_cfg "name=opt/forge/newkey,string=$2")
   qemu-system-x86_64 -machine q35 -cpu max -display none -no-reboot -m 256 -smp 4 -net none \
     -serial file:$T/s.log -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     -drive file=$T/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio-blk-pci,drive=vd \
@@ -249,6 +252,48 @@ if [ -s $T/b8.log ] && grep -aq "^objstore: key file: 2 copies, generation 1, cu
    && [ "$(hx $T/okey8.bin 0 224)" = "$KA" ] && [ "$(hx $T/okeyb8.bin 0 224)" = "$KA" ]; then
   echo "PASS os/objstore-key-copy-repair (objects.key damaged: unlocked from objects.keyb, objects.key rewritten, store intact)"
 else echo "FAIL os/objstore-key-copy-repair ($(grep -a 'objstore: \(key file\|lock\)\|PANIC' $T/b8.log 2>/dev/null | tail -2))"; fi
+cp $T/nv.good $T/nv.img
+# inv229: passphrase change. Boot 9 gets the user key and a new passphrase (fw_cfg opt/forge/newkey): both copies
+# become a generation-2 slot with fresh wrap and KDF salts whose check value is the host's PBKDF2 of the new
+# passphrase, wrapping the same data key. Boot 10 with the old passphrase is locked and writes nothing; boot 11 with
+# the new one reads the persisted store without rewriting a copy
+KEY2=changed-passphrase-uid1000-inv229
+boot $KEY $KEY2; cp $T/s.log $T/b9.log
+$T/incudela-part read $T/nv.img objects.key > $T/okey9.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb9.bin
+KS9=$(hx $T/okey9.bin 136 16); SW9=$(hx $T/okey9.bin 16 16)
+KEK9=$(openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt "pass:$KEY2" -kdfopt "hexsalt:$KS9" -kdfopt "iter:20000" PBKDF2 2>/dev/null | tr -d ':' | tr 'A-F' 'a-f')
+boot $KEY; cp $T/s.log $T/b10.log
+$T/incudela-part read $T/nv.img objects.key > $T/okey10.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb10.bin
+boot $KEY2; cp $T/s.log $T/b11.log
+if grep -aq "^objstore: passphrase changed: the data key is rewrapped under the new passphrase, key slot generation 2, both copies; the old passphrase no longer opens the store$" $T/b9.log \
+   && grep -aq "^objstore: key file: 2 copies, generation 1, current copy objects.key$" $T/b9.log \
+   && [ "$(hx $T/okey9.bin 0 224)" = "$(hx $T/okeyb9.bin 0 224)" ] && [ "$(hx $T/okey9.bin 160 8)" = 0200000000000000 ] \
+   && [ "$(sha "$(hx $T/okey9.bin 0 192)")" = "$(hx $T/okey9.bin 192 32)" ] && [ "$KS9" != "$KS" ] && [ "$SW9" != "$SALTW" ] \
+   && [ "$(hmac "$KEK9" "63686b0000000000$SW9")" = "$(hx $T/okey9.bin 96 32)" ] && [ "$(od_dk_hex $T/okey9.bin "$KEK9")" = "$DKH" ] \
+   && grep -aq "objstore: locked: wrong user key for uid 1000, nothing decrypted or written" $T/b10.log \
+   && cmp -s $T/okey9.bin $T/okey10.bin && cmp -s $T/okeyb9.bin $T/okeyb10.bin \
+   && grep -aq "^objstore: key file: 2 copies, generation 2, current copy objects.key$" $T/b11.log \
+   && grep -aq "^objstore system rewind persisted OK" $T/b11.log && grep -aq "^objstore VFS view persisted OK" $T/b11.log; then
+  echo "PASS os/objstore-passphrase-change (generation 2 under the new passphrase, same data key, fresh salts; old passphrase locked, new one reads the store)"
+else echo "FAIL os/objstore-passphrase-change ($(grep -a 'objstore: \(passphrase\|key file\|lock\)\|PANIC' $T/b9.log $T/b10.log $T/b11.log 2>/dev/null | tail -3))"; fi
+# inv229: a crash in the middle of the passphrase change. The kernel writes the copy that is not current first
+# (objects.keyb), so the crash image has objects.keyb = the generation-2 slot and objects.key = the old generation-1
+# slot. Boot 12 with the old passphrase must stay locked (the newer intact copy supersedes the old one) and write
+# nothing; boot 13 with the new passphrase unlocks from objects.keyb and rewrites objects.key
+KOFFS=$(LC_ALL=C grep -obUaP "$(hx $T/okey9.bin 0 32 | sed 's/../\\x&/g')" $T/nv.img | cut -d: -f1 | tr '\n' ' ')
+if kput "$KA" "$(hx $T/okey9.bin 0 224)"; then
+  $T/incudela-part read $T/nv.img objects.key > $T/okey12a.bin
+  boot $KEY; cp $T/s.log $T/b12.log
+  $T/incudela-part read $T/nv.img objects.key > $T/okey12.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb12.bin
+  boot $KEY2; cp $T/s.log $T/b13.log
+  $T/incudela-part read $T/nv.img objects.key > $T/okey13.bin
+fi
+if [ -s $T/b13.log ] && grep -aq "objstore: locked: wrong user key for uid 1000, nothing decrypted or written" $T/b12.log \
+   && cmp -s $T/okey12a.bin $T/okey12.bin && [ "$(hx $T/okeyb12.bin 0 224)" = "$(hx $T/okey9.bin 0 224)" ] \
+   && grep -aq "^objstore: key file: 2 copies, generation 2, current copy objects.keyb; the other copy was older or damaged and was rewritten from it$" $T/b13.log \
+   && grep -aq "^objstore VFS view persisted OK" $T/b13.log && [ "$(hx $T/okey13.bin 0 224)" = "$(hx $T/okey9.bin 0 224)" ]; then
+  echo "PASS os/objstore-passphrase-change-crash (old slot in objects.key, new in objects.keyb: old passphrase locked, new one unlocks and repairs objects.key)"
+else echo "FAIL os/objstore-passphrase-change-crash (offsets '$KOFFS', $(grep -a 'objstore: \(key file\|lock\)\|PANIC' $T/b12.log $T/b13.log 2>/dev/null | tail -2))"; fi
 cp $T/nv.good $T/nv.img
 $T/incudela-part read $T/nv.img hello.txt | grep -q "written by the Incudela kernel on its own GPT partition" && echo "PASS os/forgefs-host-read" || echo "FAIL os/forgefs-host-read"
 grep -ah "Incudela FS: remount" $T/b2.log

@@ -24,6 +24,11 @@ OD_KDF_ITERS = 20000  # PBKDF2 iterations for a new slot (stored in the slot, so
 OD_KDF_MAX = 0x1000000  # a slot asking for more (or 0) is refused as damaged
 od_uk: u8[64]  # the passphrase from fw_cfg, wiped once od_kek is derived
 od_ukn: u64
+od_nk: u8[64]  # a new passphrase from fw_cfg opt/forge/newkey (inv229), wiped with od_uk
+od_nkn: u64
+od_kchg: u64  # the last open changed the passphrase (inv229)
+od_kg0: u64  # generation of the slot the last open unlocked
+od_kc0: u64  # the copy it was in (0 = objects.key, 1 = objects.keyb)
 od_kver: u64  # key slot version of the last create or unlock (1 legacy, 2 PBKDF2)
 od_kiter: u64  # its PBKDF2 iterations
 od_kdf_tsc: u64  # TSC ticks the last PBKDF2 took
@@ -53,9 +58,10 @@ def od_tpm_present() -> u64:
 # TPM 2.0 sealing is not implemented: no TPM device is attached in any test configuration
     return 0
 
-def od_fwcfg_key() -> u64:
-# read fw_cfg file opt/forge/userkey (8..64 bytes) into od_uk; 0 if absent. od_kek is derived from it once the
-# key slot (new or on disk) gives the KDF: od_kek_pbkdf2, or od_kek_legacy for a v1 slot
+def od_fwcfg_key(w: u64) -> u64:
+# w = 0: read fw_cfg file opt/forge/userkey (8..64 bytes) into od_uk; 0 if absent. od_kek is derived from it once
+# the key slot (new or on disk) gives the KDF: od_kek_pbkdf2, or od_kek_legacy for a v1 slot.
+# w = 1 (inv229): opt/forge/newkey into od_nk, the new passphrase of a passphrase change
     pio_add(0x510, 2)
     pio_wr(0x510, 2, 0)
     if pio_rd(0x511, 1) != 81 or pio_rd(0x511, 1) != 69 or pio_rd(0x511, 1) != 77 or pio_rd(0x511, 1) != 85:
@@ -92,7 +98,9 @@ def od_fwcfg_key() -> u64:
             v[i / 8] = v[i / 8] | (u64(nm[i]) << ((i % 8) * 8))
             i += 1
         same: u64 = 0
-        if v[0] == 0x67726F662F74706F and v[1] == 0x656B726573752F65 and v[2] == 0x79:
+        if w == 0 and v[0] == 0x67726F662F74706F and v[1] == 0x656B726573752F65 and v[2] == 0x79:
+            same = 1
+        if w == 1 and v[0] == 0x67726F662F74706F and v[1] == 0x79656B77656E2F65 and v[2] == 0:
             same = 1
         if same == 1 and sel == 0:
             sel = ec
@@ -103,20 +111,29 @@ def od_fwcfg_key() -> u64:
     pio_wr(0x510, 2, sel)
     i = 0
     while i < 64:
-        od_uk[i] = u8(0)
+        c: u64 = 0
         if i < sz:
-            od_uk[i] = u8(pio_rd(0x511, 1))
+            c = pio_rd(0x511, 1)
+        if w == 0:
+            od_uk[i] = u8(c)
+        else:
+            od_nk[i] = u8(c)
         i += 1
-    od_ukn = sz
+    if w == 0:
+        od_ukn = sz
+    else:
+        od_nkn = sz
     return 1
 
 def od_uk_wipe():
-# the passphrase is needed only to derive od_kek
+# the passphrases are needed only to derive od_kek
     i: u64 = 0
     while i < 64:
         od_uk[i] = u8(0)
+        od_nk[i] = u8(0)
         i += 1
     od_ukn = 0
+    od_nkn = 0
 
 def od_kek_legacy():
 # key slot v1 (before inv228): KEK = SHA-256("frge-kek" || passphrase), no salt, one hash
@@ -526,6 +543,8 @@ def od_key_new() -> u64:
     od_krep = 0
     if od_key_store() == 0:
         return 0
+    od_kg0 = od_kn[OD_KG]
+    od_kc0 = od_kcur
     od_keys_from_dk()
     return 1
 
@@ -574,8 +593,25 @@ def od_key_load() -> u64:
         od_dk[k] = od_kn[4 + k] ^ od_t[k]
         k += 1
     od_keys_from_dk()
+    od_kg0 = od_kn[OD_KG]
+    od_kc0 = od_kcur
     if od_key_fix() == 0:
         return 0
+    od_kchg = 0
+    # passphrase change: the same data key, wrapped under the new passphrase with fresh salts, as the next
+    # generation in both copies; once the first copy is flushed, the old passphrase opens nothing
+    if od_fwcfg_key(1) != 0:
+        i = 0
+        while i < 64:
+            od_uk[i] = od_nk[i]
+            i += 1
+        od_ukn = od_nkn
+        od_pool_new()
+        od_slot_build(od_kn[OD_KG] + 1)
+        od_pool_wipe()
+        if od_key_store() == 0:
+            return 0
+        od_kchg = 1
     return 1
 
 # ---- encrypted, tagged log blocks ----
@@ -743,7 +779,7 @@ def od_open() -> u64:
     b: u64 = 0
     if od_tpm_present() != 0:
         od_ksrc = 1
-    elif od_fwcfg_key() != 0:
+    elif od_fwcfg_key(0) != 0:
         od_ksrc = 2
     if od_ksrc == 0:
         return 3
@@ -963,15 +999,20 @@ def od_keymsg(r: u64):
     else:
         puts("objstore: key slot v1 (legacy): passphrase KDF unsalted SHA-256; rotation to a v2 slot is planned (inv229)\n")
     puts("objstore: key file: 2 copies, generation ")
-    put_u64(od_kn[OD_KG])
+    put_u64(od_kg0)
     puts(", current copy objects.key")
-    if od_kcur == 1:
+    if od_kc0 == 1:
         putc(98)
     if od_krep == 1:
         puts("; the other copy was older or damaged and was rewritten from it")
     elif od_krep == 2:
         puts("; objects.keyb was missing and was written from it")
     putc(10)
+    if od_kchg != 0:
+        puts("objstore: passphrase changed: the data key is rewrapped under the new passphrase, key slot ")
+        puts("generation ")
+        put_u64(od_kn[OD_KG])
+        puts(", both copies; the old passphrase no longer opens the store\n")
     if r == 2:
         puts("objstore: data key entropy: ")
         put_u64(od_rs)

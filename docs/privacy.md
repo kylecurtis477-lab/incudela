@@ -49,6 +49,13 @@ file names and contents) is encrypted and authenticated. The code is in `example
   old or the new slot. At unlock the intact copy with the higher generation is current, its key is the only one
   tried, and a missing, damaged or older other copy is rewritten from it (the boot log names the current copy and
   any rewrite). The slot fits in the first 512-byte sector of its block.
+- **Passphrase change (inv229).** Boot with the current passphrase as `opt/forge/userkey` and the new one (8..64
+  bytes) as fw_cfg file `opt/forge/newkey`, for example `-fw_cfg name=opt/forge/newkey,string=NEW`. After the
+  unlock, the same data key is wrapped under PBKDF2 of the new passphrase with fresh wrap and KDF salts (from a new
+  entropy pool) as the next generation, through the two-copy write; the data itself is not rewritten. Once the
+  first copy is flushed the old passphrase opens nothing, even if the boot stops before the second copy is
+  written: the newer intact copy supersedes the older one. Both passphrases are wiped after the open. Pass
+  `newkey` for one boot only: a second boot with the old `userkey` is locked.
 - **Working keys, separate for each job.** K_enc = HMAC(DK, "enc") is the ChaCha20 key and K_mac = HMAC(DK, "mac")
   the HMAC key; neither is stored, and they are independent PRF outputs, so the cipher and the MAC never share a key.
 - **No key** (no TPM and no fw_cfg file): the store stays locked. Nothing is read, created or written, and
@@ -119,6 +126,13 @@ Not protected against:
 - **os/objstore-key-copy-repair:** boot 8 runs with one byte of `objects.key`'s wrapped data key flipped; it
   unlocks from `objects.keyb`, reads the persisted store and rewrites `objects.key`, so both copies are the
   original slot again.
+- **os/objstore-passphrase-change:** boot 9 changes the passphrase. Both copies become one generation-2 slot with
+  new salts whose check value is the host's PBKDF2 of the new passphrase and which unwraps to the same data key;
+  boot 10 with the old passphrase is locked and writes nothing, boot 11 with the new one reads the persisted store.
+- **os/objstore-passphrase-change-crash:** the host rebuilds the state of a crash between the two writes
+  (`objects.keyb` new, `objects.key` old); the old passphrase stays locked and writes nothing, the new one unlocks
+  from `objects.keyb` and rewrites `objects.key`. With the generation comparison removed from the kernel, the old
+  passphrase unlocks the stale copy and this test fails.
 - The Phase 9 crash-recovery, rewind and /obj tests all run on the encrypted store.
 
 ### Limits
@@ -130,9 +144,10 @@ Not protected against:
   Incudela FS self-test files) is not encrypted. Only the object store is.
 - **DK entropy.** RDSEED and RDRAND are mixed in when the CPU has them (inv228); on a CPU with neither, the data
   key rests on TSC jitter alone, which is weak. The CPU RNG is trusted only as one input of the pool.
-- **No rotation.** Neither the passphrase nor the data key can be rotated yet, and v1 slots are not upgraded to
-  v2 yet; the two-copy key file (inv229) is what makes those rewrites crash-safe, and they come next. Stores made
-  before inv228's data-key fix keep their weaker data key until data-key rotation re-encrypts them.
+- **No data-key rotation.** The passphrase can be changed (inv229), but the data key itself cannot be rotated
+  yet, and v1 slots are not upgraded to v2 yet. Stores made before inv228's data-key fix keep their weaker data key
+  until data-key rotation re-encrypts the object log. A passphrase change does not help against someone who
+  already copied the disk while the old passphrase was in use: the old slot opens that copy.
 - **Rollback and weak-passphrase guessing** are possible, see the threat model.
 - **Key wrap.** The wrapped DK is XORed with a PRF output and checked through the KEK check value, not a
   standard AEAD key wrap; tampering with it only makes every tag fail (the store reads as empty / locked).
