@@ -52,6 +52,15 @@ od_dk_hex() {
   for i in 0 1 2 3 4 5 6 7; do d="$d$(le32 "$(x32 "$(le32 "$(hx "$1" $((32 + 8 * i)) 4)")" "$(le32 "${W:$((8 * i)):8}")")")"; done
   printf '%s' "$d"
 }
+# the offsets in nv.img of the slot whose first 32 bytes are those of key file $1. grep matches within lines, so a
+# pattern holding a 0x0a byte never matches: grep only for bytes 0..15 (magic and uid, no 0x0a), then keep the
+# candidates whose bytes 0..31 match (the random wrap salt in bytes 16..31 can hold 0x0a; fix, inv230)
+koffs() {
+  local w=$(hx "$1" 0 32) o
+  for o in $(LC_ALL=C grep -obUaP "$(hx "$1" 0 16 | sed 's/../\\x&/g')" $T/nv.img | cut -d: -f1); do
+    [ "$(hx $T/nv.img $o 32)" = "$w" ] && printf '%s ' $o
+  done
+}
 # inv229: the two key copies objects.key and objects.keyb begin with the same 32 bytes; kput A B writes copy A and
 # copy B (hex, from byte 0) into nv.img at KOFFS, the two offsets of those bytes, telling them apart by reading
 # objects.key back through the partition tool
@@ -204,7 +213,7 @@ boot; cp $T/s.log $T/b5.log
 $T/incudela-part read $T/nv.img objects.log > $T/olog.bin; $T/incudela-part read $T/nv.img objects.key > $T/okey.bin
 if grep -aq "objstore: locked: wrong user key for uid 1000, nothing decrypted or written" $T/b4.log && grep -aq "objstore: locked: no user key" $T/b5.log && [ "$(cat $T/olog.bin $T/okey.bin | sha256sum)" = "$O0" ]; then
   echo "PASS os/objstore-wrong-key-locked"; else echo "FAIL os/objstore-wrong-key-locked: $(grep -a 'objstore: lock\|PANIC' $T/b4.log $T/b5.log | tail -2)"; fi
-KOFFS=$(LC_ALL=C grep -obUaP "$(hx $T/okey.bin 0 32 | sed 's/../\\x&/g')" $T/nv.img | cut -d: -f1 | tr '\n' ' ')
+KOFFS=$(koffs $T/okey.bin)
 # tamper: flip one ciphertext bit of the newest slot in a copy of the image; HMAC must reject that slot
 cp $T/nv.img $T/nv.good
 python3 - $T/nv.img $T/olog.bin <<'P'
@@ -290,7 +299,7 @@ else echo "FAIL os/objstore-passphrase-change ($(grep -a 'objstore: \(passphrase
 # (objects.keyb), so the crash image has objects.keyb = the generation-2 slot and objects.key = the old generation-1
 # slot. Boot 12 with the old passphrase must stay locked (the newer intact copy supersedes the old one) and write
 # nothing; boot 13 with the new passphrase unlocks from objects.keyb and rewrites objects.key
-KOFFS=$(LC_ALL=C grep -obUaP "$(hx $T/okey9.bin 0 32 | sed 's/../\\x&/g')" $T/nv.img | cut -d: -f1 | tr '\n' ' ')
+KOFFS=$(koffs $T/okey9.bin)
 if kput "$KA" "$(hx $T/okey9.bin 0 224)"; then
   $T/incudela-part read $T/nv.img objects.key > $T/okey12a.bin
   boot $KEY; cp $T/s.log $T/b12.log

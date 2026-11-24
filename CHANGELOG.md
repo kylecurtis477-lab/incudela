@@ -9,6 +9,9 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- Test fix: tests/os/forgefs.sh found the two key-file copies in the disk image with a grep of the slot's first 32
+  bytes, which never matches when the random wrap salt holds a newline byte; the passphrase-change crash test then
+  failed. It now searches the fixed 16-byte prefix and compares all 32 bytes (`koffs`).
 - Migration (0.23.0): since `93f788d` a v1 key slot is upgraded to v2 at its first unlock, and since `7e04ddb` a
   store from before inv229 gets its second key copy `objects.keyb` at its first unlock; both are written through
   the crash-safe two-copy order. Data keys made before `87b91fb` stay until data-key rotation (inv230).
