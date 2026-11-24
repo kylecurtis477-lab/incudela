@@ -6,7 +6,7 @@
 # GPT GUIDs (INCUDELA_GUID_SEED), so esp.fat and disk.img must be byte-identical. efi-build/esp-reproducible
 # builds the script twice and compares sha256 of those two images. The missing-input case hides
 # examples/efi/scripts/hello.sh: mcopy must fail with the same message and exit code in both, leaving the same
-# partial build/efi.
+# partial build/efi. efi-build/mformat-last-sector checks tools/repro-mformat against a shim for mtools before 4.0.48.
 # Needs build/ (cudc, fas, fld and the kernel/user/modules artifacts): run after build.sh.
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
@@ -49,5 +49,26 @@ chk O0 "-O0" 10
 mv examples/efi/scripts/hello.sh $T/hello.sh
 chk missing-input "" 6
 mv $T/hello.sh examples/efi/scripts/hello.sh
+# efi-build/mformat-last-sector: mformat -C sizes a new image by writing its last sector, and before mtools 4.0.48
+# that write came from an uninitialized buffer (Ubuntu 24.04's 4.0.43: two clean builds' esp.fat and forge.iso
+# differed there). A shim mformat that fills the new image's last sector with 0xa5 stands in for the old mtools;
+# tools/repro-mformat run on it must give exactly the image the real mformat gives (and the shim's own image
+# must differ, so the check can fail).
+RM=$(command -v mformat)
+{
+  echo '#!/bin/sh'
+  echo "$RM"' "$@" || exit $?'
+  echo 'img=; p='
+  echo 'for a in "$@"; do [ "$p" = -i ] && img=$a; p=$a; done'
+  echo 's=$(wc -c < "$img")'
+  printf '%s\n' "tr '\\000' '\\245' < /dev/zero | dd of=\"\$img\" bs=512 count=1 seek=\$((s / 512 - 1)) conv=notrunc iflag=fullblock status=none"
+} > $T/oldmformat
+chmod +x $T/oldmformat
+MF="-C -F -c 1 -T 131072 -v FORGE_ESP"
+MFORMAT=$RM sh tools/repro-mformat $MF -i $T/m1.img :: && MFORMAT=$T/oldmformat sh tools/repro-mformat $MF -i $T/m2.img :: &&
+  $T/oldmformat -N 6553F100 $MF -i $T/m3.img :: || echo "mformat failed"
+if cmp -s $T/m1.img $T/m2.img && ! cmp -s $T/m1.img $T/m3.img; then echo "PASS efi-build/mformat-last-sector"
+else echo "FAIL efi-build/mformat-last-sector"; cmp -l $T/m1.img $T/m2.img 2>&1 | head -3; fail=1; fi
+rm -f $T/m1.img $T/m2.img $T/m3.img
 rm -rf build/efi; [ -d $T/orig ] && cp -a $T/orig build/efi
 exit $fail

@@ -3,18 +3,36 @@
 # add -N <low 32 bits of the epoch as 8 hex digits> so the FAT volume serial is
 # deterministic. Used by examples/efi/build.sh and (via PATH) by
 # tools/repro-mkrescue for grub-mkrescue's efi.img. Unset: identical to mformat.
+#
+# With -C (create the image) and -i FILE, the image's last 512-byte sector is
+# zeroed after mformat returns. mformat -C sizes a new image by writing its last
+# sector, and before mtools 4.0.48 ("uninitialized buffer fix in mformat") that
+# write used an uninitialized buffer, so two clean builds with mtools 4.0.43
+# (Ubuntu 24.04) gave different esp.fat / forge.iso bytes. 4.0.48 writes zeros
+# there, so with 4.0.48 the result is byte-identical to plain mformat; nothing
+# else is in that sector when the image has just been created.
 set -e
 MFORMAT=${MFORMAT:-/usr/bin/mformat}
 hasN=0
+create=0
+img=
+prev=
 for a in "$@"; do
-    if [ "$a" = "-N" ]; then
-        hasN=1
-        break
-    fi
+    [ "$a" = "-N" ] && hasN=1
+    [ "$a" = "-C" ] && create=1
+    [ "$prev" = "-i" ] && img=$a
+    prev=$a
 done
 if [ -n "${SOURCE_DATE_EPOCH:-}" ] && [ "$hasN" = 0 ]; then
     # 4294967295 = 0xffffffff; keep the serial in 32 bits.
     N=$(printf '%08X' $(( SOURCE_DATE_EPOCH & 4294967295 )))
-    exec "$MFORMAT" -N "$N" "$@"
+    "$MFORMAT" -N "$N" "$@"
+else
+    "$MFORMAT" "$@"
 fi
-exec "$MFORMAT" "$@"
+if [ "$create" = 1 ] && [ -n "$img" ] && [ -f "$img" ]; then
+    size=$(wc -c < "$img")
+    if [ "$size" -ge 512 ]; then
+        dd if=/dev/zero of="$img" bs=512 count=1 seek=$(( size / 512 - 1 )) conv=notrunc status=none
+    fi
+fi
