@@ -9,6 +9,7 @@
 #   must still unlock, and (inv229) it is upgraded to a v2 slot; boot 7b unlocks the upgraded slot
 #   boot 8 (inv229) runs on the good image with objects.key damaged: it unlocks from objects.keyb and repairs objects.key
 #   boots 9-11 (inv229) change the passphrase and check old and new; boots 12-13 replay a crash halfway through it
+#   boots 14-15 (inv231) rotate the data key; boots 16-21 stop a rotation halfway and at its start and resume it
 # After every boot, every byte outside the Incudela partition (ESP, other partitions, GPT) must be unchanged.
 cd "$(dirname "$0")/../.."
 T=$(mktemp -d /tmp/forge-ffs.XXXXXX)
@@ -76,11 +77,13 @@ kput() {
 }
 . tests/os/frozen.sh
 frz_self_test
-boot() {  # boot [userkey [newkey]]: the user key reaches the kernel as QEMU fw_cfg file opt/forge/userkey (a new
-  # passphrase for a passphrase change, inv229, as opt/forge/newkey)
+boot() {  # boot [userkey [newkey [rotatedk]]]: the user key reaches the kernel as QEMU fw_cfg file opt/forge/userkey (a new
+  # passphrase for a passphrase change, inv229, as opt/forge/newkey; a data-key rotation request, inv231, as
+  # opt/forge/rotatedk)
   rm -f $T/s.log
   K=(); [ -n "${1:-}" ] && K=(-fw_cfg "name=opt/forge/userkey,string=$1")
   [ -n "${2:-}" ] && K+=(-fw_cfg "name=opt/forge/newkey,string=$2")
+  [ -n "${3:-}" ] && K+=(-fw_cfg "name=opt/forge/rotatedk,string=$3")
   qemu-system-x86_64 -machine q35 -cpu max -display none -no-reboot -m 256 -smp 4 -net none \
     -serial file:$T/s.log -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     -drive file=$T/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio-blk-pci,drive=vd \
@@ -313,6 +316,54 @@ if [ -s $T/b13.log ] && grep -aq "objstore: locked: wrong user key for uid 1000,
    && grep -aq "^objstore VFS view persisted OK" $T/b13.log && [ "$(hx $T/okey13.bin 0 224)" = "$(hx $T/okey9.bin 0 224)" ]; then
   echo "PASS os/objstore-passphrase-change-crash (old slot in objects.key, new in objects.keyb: old passphrase locked, new one unlocks and repairs objects.key)"
 else echo "FAIL os/objstore-passphrase-change-crash (offsets '$KOFFS', $(grep -a 'objstore: \(key file\|lock\)\|PANIC' $T/b12.log $T/b13.log 2>/dev/null | tail -2))"; fi
+cp $T/nv.good $T/nv.img
+# inv231: data-key rotation on request (fw_cfg opt/forge/rotatedk = rotate-data-key). Boot 14 re-encrypts every
+# log block under a fresh data key: both copies become generation 3 (2 = the rotating slot, 3 = done) with the same
+# KDF salt (the KEK is unchanged), a new wrap salt and a new data key, and no old key in words 28..35. Boot 15
+# reads the persisted store from the disk under the new key alone
+skeq() { [ "$(hx $1 0 288)" = "$(hx $2 0 288)" ]; }
+Z64=$(printf '0%.0s' $(seq 128))
+boot $KEY "" rotate-data-key; cp $T/s.log $T/b14.log
+$T/incudela-part read $T/nv.img objects.key > $T/okey14.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb14.bin
+boot $KEY; cp $T/s.log $T/b15.log
+DK14=$(od_dk_hex $T/okey14.bin "$KEKH"); SW14=$(hx $T/okey14.bin 16 16)
+if grep -aq "^objstore: data key rotated: 65 log blocks re-encrypted under a fresh independent data key (operator request), key slot generation 3, both copies" $T/b14.log \
+   && skeq $T/okey14.bin $T/okeyb14.bin && [ "$(hx $T/okey14.bin 160 16)" = "03000000000000000000000000000000" ] && [ "$(hx $T/okey14.bin 224 64)" = "$Z64" ] \
+   && [ "$(sha "$(hx $T/okey14.bin 0 192)")" = "$(hx $T/okey14.bin 192 32)" ] && [ "$(hx $T/okey14.bin 136 16)" = "$KS" ] && [ "$SW14" != "$SALTW" ] \
+   && [ "$(hmac "$KEKH" "63686b0000000000$SW14")" = "$(hx $T/okey14.bin 96 32)" ] && [ "${#DK14}" = 64 ] && [ "$DK14" != "$DKH" ] \
+   && grep -aq "^objstore: key file: 2 copies, generation 3, current copy objects.key$" $T/b15.log && ! grep -aq 'objstore: \(data key rot\|key slot is mid-rot\)' $T/b15.log \
+   && grep -aq "^objstore system rewind persisted OK" $T/b15.log && grep -aq "^objstore VFS view persisted OK" $T/b15.log; then
+  echo "PASS os/objstore-dk-rotate (65 log blocks re-encrypted under a new data key; generation 3, KEK kept, new wrap salt; the next boot reads the store under the new key alone)"
+else echo "FAIL os/objstore-dk-rotate ($(grep -a 'objstore: \(data key rot\|key file\|lock\)\|PANIC\|panic' $T/b14.log $T/b15.log 2>/dev/null | tail -3))"; fi
+cp $T/nv.good $T/nv.img
+# inv231: a power loss in the middle of a rotation. Boot 16 stops after 30 of the 65 log blocks
+# (rotate-data-key:stop-after:30): both copies are the rotating generation-2 slot, whose words 28..35 unwrap (host,
+# HMAC(KEK, "odk" || wrap salt)) to the old data key and whose SHA-256 covers them. Boot 17 opens it with log and
+# counter slots under either key, reads the persisted store and finishes the rotation; boot 18 reads it under the
+# new key alone. Boots 19-21 repeat this with stop-after:0 (the rotating slot written, no block rewritten yet)
+boot $KEY "" rotate-data-key:stop-after:30; cp $T/s.log $T/b16.log
+$T/incudela-part read $T/nv.img objects.key > $T/okey16.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb16.bin
+boot $KEY; cp $T/s.log $T/b17.log
+boot $KEY; cp $T/s.log $T/b18.log
+SW16=$(hx $T/okey16.bin 16 16); OW=$(hmac "$KEKH" "6f646b0000000000$SW16"); OD16=""
+for i in 0 1 2 3 4 5 6 7; do OD16="$OD16$(le32 "$(x32 "$(le32 "$(hx $T/okey16.bin $((224 + 8 * i)) 4)")" "$(le32 "${OW:$((8 * i)):8}")")")"; done
+cp $T/nv.good $T/nv.img
+boot $KEY "" rotate-data-key:stop-after:0; cp $T/s.log $T/b19.log
+boot $KEY; cp $T/s.log $T/b20.log
+boot $KEY; cp $T/s.log $T/b21.log
+RB='^objstore: data key rotated: 65 log blocks re-encrypted under a fresh independent data key (resumed after an interrupted rotation), key slot generation 3, both copies'
+MR='^objstore: key slot is mid-rotation (an interrupted data-key rotation): log and counter slots verified under the old and the new data key'
+if grep -aq "^objstore: data key rotation stopped after 30 of 65 log blocks" $T/b16.log && skeq $T/okey16.bin $T/okeyb16.bin \
+   && [ "$(hx $T/okey16.bin 160 16)" = "02000000000000000100000000000000" ] && [ "$OD16" = "$DKH" ] && [ "$(od_dk_hex $T/okey16.bin "$KEKH")" != "$DKH" ] \
+   && [ "$(sha "$(hx $T/okey16.bin 0 192)$(hx $T/okey16.bin 224 64)")" = "$(hx $T/okey16.bin 192 32)" ] \
+   && grep -aq "$MR" $T/b17.log && grep -aq "$RB" $T/b17.log \
+   && grep -aq "^objstore system rewind persisted OK" $T/b17.log && grep -aq "^objstore VFS view persisted OK" $T/b17.log \
+   && grep -aq "^objstore: key file: 2 copies, generation 3, current copy objects.key$" $T/b18.log && ! grep -aq 'objstore: \(data key rot\|key slot is mid-rot\)' $T/b18.log \
+   && grep -aq "^objstore VFS view persisted OK" $T/b18.log \
+   && grep -aq "^objstore: data key rotation stopped after 0 of 65 log blocks" $T/b19.log && grep -aq "$MR" $T/b20.log && grep -aq "$RB" $T/b20.log \
+   && grep -aq "^objstore VFS view persisted OK" $T/b20.log && grep -aq "^objstore VFS view persisted OK" $T/b21.log && ! grep -aq 'objstore: \(data key rot\|key slot is mid-rot\)' $T/b21.log; then
+  echo "PASS os/objstore-dk-rotate-crash (stopped after 30 and after 0 of 65 blocks: the rotating slot holds both keys, the next boot reads the store under both and finishes, the one after under the new key alone)"
+else echo "FAIL os/objstore-dk-rotate-crash ($(grep -a 'objstore: \(data key rot\|key slot is\|key file\|lock\)\|PANIC\|panic' $T/b16.log $T/b17.log $T/b18.log $T/b19.log $T/b20.log $T/b21.log 2>/dev/null | tail -4))"; fi
 cp $T/nv.good $T/nv.img
 $T/incudela-part read $T/nv.img hello.txt | grep -q "written by the Incudela kernel on its own GPT partition" && echo "PASS os/forgefs-host-read" || echo "FAIL os/forgefs-host-read"
 grep -ah "Incudela FS: remount" $T/b2.log

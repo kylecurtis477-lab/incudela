@@ -57,6 +57,16 @@ file names and contents) is encrypted and authenticated. The code is in `example
   first copy is flushed the old passphrase opens nothing, even if the boot stops before the second copy is
   written: the newer intact copy supersedes the older one. Both passphrases are wiped after the open. Pass
   `newkey` for one boot only: a second boot with the old `userkey` is locked.
+- **Data-key rotation (inv231).** Boot with the passphrase and fw_cfg file `opt/forge/rotatedk` set to
+  `rotate-data-key` (`-fw_cfg name=opt/forge/rotatedk,string=rotate-data-key`). After the open, a fresh
+  independent data key is drawn from a new entropy pool (RDSEED/RDRAND + TSC) and every object log block is
+  re-encrypted under it. The KEK is kept (no new passphrase needed) with a fresh wrap salt. Crash safety: first the
+  rotating slot is stored as the next generation through the two-copy write, holding the new data key wrapped as
+  usual and the old one as DK_old XOR HMAC(KEK, "odk" || wrap salt) in words 28..35, covered by the slot's
+  SHA-256, with word 21 = 1. While the slot is rotating, a log or counter slot is accepted under either key. After
+  the last block, the final slot (next generation, old key cleared) is stored. A boot that finds a rotating slot
+  (a crash or power loss in the middle) reads the store under both keys and finishes the rotation, and the boot log
+  says so. The request is honoured on the boot it is passed; pass it for one boot.
 - **Working keys, separate for each job.** K_enc = HMAC(DK, "enc") is the ChaCha20 key and K_mac = HMAC(DK, "mac")
   the HMAC key; neither is stored, and they are independent PRF outputs, so the cipher and the MAC never share a key.
 - **No key** (no TPM and no fw_cfg file): the store stays locked. Nothing is read, created or written, and
@@ -137,6 +147,15 @@ Not protected against:
   (`objects.keyb` new, `objects.key` old); the old passphrase stays locked and writes nothing, the new one unlocks
   from `objects.keyb` and rewrites `objects.key`. With the generation comparison removed from the kernel, the old
   passphrase unlocks the stale copy and this test fails.
+- **os/objstore-dk-rotate:** boot 14 asks for a rotation; all 65 log blocks are re-encrypted, both copies become
+  one generation-3 slot with the same KDF salt, a new wrap salt and check value (host HMAC of the same KEK), no old
+  key, and a data key (host unwrap) different from the old one; boot 15 reads the persisted store under the new key
+  alone and reports nothing about rotation.
+- **os/objstore-dk-rotate-crash:** boot 16 stops a rotation after 30 of 65 blocks. Both copies are the rotating
+  generation-2 slot whose SHA-256 covers words 28..35, and the host unwraps the old data key from them. Boot 17
+  reports the mid-rotation slot, reads the persisted store under both keys and finishes the rotation (generation 3,
+  reason resumed); boot 18 reads it under the new key alone. Boots 19-21 do the same with a stop after 0 blocks.
+  With old-key verification removed from the kernel this test fails.
 - The Phase 9 crash-recovery, rewind and /obj tests all run on the encrypted store.
 
 ### Limits
@@ -148,10 +167,10 @@ Not protected against:
   Incudela FS self-test files) is not encrypted. Only the object store is.
 - **DK entropy.** RDSEED and RDRAND are mixed in when the CPU has them (inv228); on a CPU with neither, the data
   key rests on TSC jitter alone, which is weak. The CPU RNG is trusted only as one input of the pool.
-- **No data-key rotation.** The passphrase can be changed (inv229), but the data key itself cannot be rotated
-  yet. Stores made before inv228's data-key fix keep their weaker data key
-  until data-key rotation re-encrypts the object log. A passphrase change does not help against someone who
-  already copied the disk while the old passphrase was in use: the old slot opens that copy.
+- **Rotation and old copies.** Rotation (inv231) rewrites each log block into a new slot; the other physical slot
+  of a block keeps old-key ciphertext until it is next written, and Incudela FS does not erase freed blocks. A
+  rotation or passphrase change does not help against someone who already copied the disk with the old key slot:
+  that copy still opens. Stores made before inv228's data-key fix keep their weaker data key until rotated.
 - **Rollback and weak-passphrase guessing** are possible, see the threat model.
 - **Key wrap.** The wrapped DK is XORed with a PRF output and checked through the KEK check value, not a
   standard AEAD key wrap; tampering with it only makes every tag fail (the store reads as empty / locked).

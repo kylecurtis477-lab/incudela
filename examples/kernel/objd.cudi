@@ -64,6 +64,7 @@ def od_fwcfg_key(w: u64) -> u64:
 # w = 0: read fw_cfg file opt/forge/userkey (8..64 bytes) into od_uk; 0 if absent. od_kek is derived from it once
 # the key slot (new or on disk) gives the KDF: od_kek_pbkdf2, or od_kek_legacy for a v1 slot.
 # w = 1 (inv229): opt/forge/newkey into od_nk, the new passphrase of a passphrase change
+# w = 2 (inv231): opt/forge/rotatedk into od_rk, a data-key rotation request
     pio_add(0x510, 2)
     pio_wr(0x510, 2, 0)
     if pio_rd(0x511, 1) != 81 or pio_rd(0x511, 1) != 69 or pio_rd(0x511, 1) != 77 or pio_rd(0x511, 1) != 85:
@@ -104,6 +105,8 @@ def od_fwcfg_key(w: u64) -> u64:
             same = 1
         if w == 1 and v[0] == 0x67726F662F74706F and v[1] == 0x79656B77656E2F65 and v[2] == 0:
             same = 1
+        if w == 2 and v[0] == 0x67726F662F74706F and v[1] == 0x657461746F722F65 and v[2] == 0x6B64:
+            same = 1
         if same == 1 and sel == 0:
             sel = ec
             sz = es
@@ -118,13 +121,17 @@ def od_fwcfg_key(w: u64) -> u64:
             c = pio_rd(0x511, 1)
         if w == 0:
             od_uk[i] = u8(c)
-        else:
+        elif w == 1:
             od_nk[i] = u8(c)
+        else:
+            od_rk[i] = u8(c)
         i += 1
     if w == 0:
         od_ukn = sz
-    else:
+    elif w == 1:
         od_nkn = sz
+    else:
+        od_rkn = sz
     return 1
 
 def od_uk_wipe():
@@ -133,9 +140,11 @@ def od_uk_wipe():
     while i < 64:
         od_uk[i] = u8(0)
         od_nk[i] = u8(0)
+        od_rk[i] = u8(0)
         i += 1
     od_ukn = 0
     od_nkn = 0
+    od_rkn = 0
 
 def od_kek_legacy():
 # key slot v1 (before inv228): KEK = SHA-256("frge-kek" || passphrase), no salt, one hash
@@ -187,6 +196,18 @@ def od_kdf(k: u64[8], label: u64, salt0: u64, salt1: u64):
     i: u64 = 0
     while i < 8:
         od_t[i] = od_be(sh_h[i])
+        i += 1
+
+def od_kswap():
+# exchange the working keys (od_ek, od_mk) with the old ones of a rotation (od_ek1, od_mk1)
+    i: u64 = 0
+    while i < 8:
+        t = od_ek[i]
+        od_ek[i] = od_ek1[i]
+        od_ek1[i] = t
+        t = od_mk[i]
+        od_mk[i] = od_mk1[i]
+        od_mk1[i] = t
         i += 1
 
 def od_keys_from_dk():
@@ -289,24 +310,48 @@ def od_mkfile(name: ptr[u8], nb: u64) -> u64:
 # intact copy of either the old or the new slot, never only a torn one. At unlock the intact copy with the
 # higher generation is current (an older copy is superseded: its key is not tried), and a missing, torn or
 # older other copy is rewritten from it.
-OD_KW = 28  # slot words in each copy
+OD_KW = 36  # slot words in each copy (28..35: the old data key while a rotation runs, inv231)
 OD_KG = 20  # generation word; 0 on slots written before inv229 (words 20..27 zero)
 OD_KH = 24  # words 24..27: SHA-256 of slot bytes 0..191
-od_ka: u64[28]  # copy A (objects.key) as read at the last open
-od_kb: u64[28]  # copy B (objects.keyb)
-od_kn: u64[28]  # the current slot (unlocked, or being written)
+od_ka: u64[36]  # copy A (objects.key) as read at the last open
+od_kb: u64[36]  # copy B (objects.keyb)
+od_kn: u64[36]  # the current slot (unlocked, or being written)
 od_kast: u64  # objects.key block (0 if absent)
 od_kbst: u64  # objects.keyb block (0 if absent)
 od_kcur: u64  # copy holding the current slot: 0 = objects.key, 1 = objects.keyb
 od_krep: u64  # the last open rewrote the other copy: 0 no, 1 it was older or damaged, 2 it was missing
+# ---- data-key rotation (inv231) ----
+# A rotating slot (word 21 = 1) wraps the NEW data key in words 4..11 and the OLD one in words 28..35
+# (DK_old XOR HMAC(KEK, "odk" || wrap salt)); its SHA-256 also covers bytes 224..287. While a slot is rotating,
+# a log or counter slot verifies under either data key, and every log block is rewritten under the new one;
+# then the slot drops the old key (word 21 = 0). A crash anywhere leaves a store that opens and resumes.
+OD_KR = 21  # rotation word: 0 none, 1 rotating
+OD_KO = 28  # words 28..35: the old data key, wrapped
+od_rot: u64  # the unlocked slot is rotating: od_dk1/od_ek1/od_mk1 hold the old keys
+od_dk1: u64[8]
+od_ek1: u64[8]
+od_mk1: u64[8]
+od_lk: u64  # the key the last od_slot_wc verified under: 0 the current (new) one, 1 the old one
+od_rk: u8[64]  # fw_cfg opt/forge/rotatedk ("rotate-data-key", optionally ":stop-after:N")
+od_rkn: u64
+od_rotr: u64  # why the last open rotated: 0 not, 1 operator request, 2 pre-fix data key, 3 resumed
+od_rotb: u64  # log blocks it re-encrypted
+od_rots: u64  # 1 + the block count it stopped after (rotatedk stop-after), 0 if it did not stop
+od_rold: u64  # the last open found a rotating slot
 
-def od_kh(s: u64[28]):
-# od_tv = SHA-256 of the slot's bytes 0..191 (words 0..23, little-endian) as four words
+def od_kh(s: u64[36]):
+# od_tv = SHA-256 of the slot's bytes 0..191 (words 0..23, little-endian), then bytes 224..287 (the old data
+# key) if the slot is rotating, as four words
     sh_init()
     i: u64 = 0
     while i < OD_KH:
         sh_u64(s[i])
         i += 1
+    if s[OD_KR] != 0:
+        i = OD_KO
+        while i < OD_KO + 8:
+            sh_u64(s[i])
+            i += 1
     sh_fin()
     i = 0
     while i < 8:
@@ -317,8 +362,8 @@ def od_kh(s: u64[28]):
         od_tv[i] = od_t[i * 2] | (od_t[i * 2 + 1] << 32)
         i += 1
 
-def od_kintact(s: u64[28]) -> u64:
-# 1 if the copy is a whole slot: magic, owner, and the SHA-256 over its bytes (or words 20..27 all 0 for a
+def od_kintact(s: u64[36]) -> u64:
+# 1 if the copy is a whole slot: magic, owner, and the SHA-256 over its bytes (or words 20..35 all 0 for a
 # slot from before inv229, which has no generation or hash)
     if s[0] != OD_KMAGIC or s[1] != OD_UID:
         return 0
@@ -361,7 +406,7 @@ def od_kread(name: ptr[u8], w: u64) -> u64:
         i += 1
     return st
 
-def od_kput(st: u64, s: u64[28]) -> u64:
+def od_kput(st: u64, s: u64[36]) -> u64:
 # write one copy and flush it
     i: u64 = 0
     while i < 512:
@@ -395,7 +440,7 @@ def od_kget(w: u64):
             od_kn[i] = od_kb[i]
         i += 1
 
-def od_ksame(a: u64[28], b: u64[28]) -> u64:
+def od_ksame(a: u64[36], b: u64[36]) -> u64:
     d: u64 = 0
     i: u64 = 0
     while i < OD_KW:
@@ -503,10 +548,22 @@ def od_slot_build(gen: u64) -> u64:
         i += 1
     od_kn[0] = OD_KMAGIC
     od_kn[1] = OD_UID
+    od_slot_wrap(s0, s1)
+    od_kn[16] = OD_KVER
+    od_kn[17] = ks0
+    od_kn[18] = ks1
+    od_kn[19] = OD_KDF_ITERS
+    od_kn[OD_KG] = gen
+    if od_rot != 0:
+        od_slot_rot()
+    return ks0
+
+def od_slot_wrap(s0: u64, s1: u64):
+# od_kn words 2..15 = wrap salt s0, s1, od_dk wrapped under od_kek with it, and the key check value
     od_kn[2] = s0
     od_kn[3] = s1
     od_kdf(od_kek, 0x70617277, s0, s1)  # "wrap"
-    i = 0
+    i: u64 = 0
     while i < 8:
         od_kn[4 + i] = od_dk[i] ^ od_t[i]
         i += 1
@@ -515,12 +572,15 @@ def od_slot_build(gen: u64) -> u64:
     while i < 4:
         od_kn[12 + i] = od_t[i * 2] | (od_t[i * 2 + 1] << 32)
         i += 1
-    od_kn[16] = OD_KVER
-    od_kn[17] = ks0
-    od_kn[18] = ks1
-    od_kn[19] = OD_KDF_ITERS
-    od_kn[OD_KG] = gen
-    return ks0
+
+def od_slot_rot():
+# mark od_kn rotating: words 28..35 = od_dk1 (the old data key) wrapped under od_kek with the slot's wrap salt
+    od_kdf(od_kek, 0x6B646F, od_kn[2], od_kn[3])  # "odk"
+    i: u64 = 0
+    while i < 8:
+        od_kn[OD_KO + i] = od_dk1[i] ^ od_t[i]
+        i += 1
+    od_kn[OD_KR] = 1
 
 def od_key_new() -> u64:
 # first mount: a random data key, stored only wrapped by the user key, in both copies of the key file
@@ -589,6 +649,19 @@ def od_key_load() -> u64:
         k += 1
     if ct_eq4(od_tv, od_tr) == 0:
         return 3
+    if od_kn[OD_KR] > 1:
+        return 3
+    od_rot = od_kn[OD_KR]
+    od_rold = od_rot
+    if od_rot != 0:
+        od_kdf(od_kek, 0x6B646F, s0, s1)  # "odk": the old data key of a rotation in progress
+        k = 0
+        while k < 8:
+            od_dk[k] = od_kn[OD_KO + k] ^ od_t[k]
+            od_dk1[k] = od_dk[k]
+            k += 1
+        od_keys_from_dk()
+        od_kswap()
     od_kdf(od_kek, 0x70617277, s0, s1)
     k = 0
     while k < 8:
@@ -696,7 +769,13 @@ def od_ctr_load() -> u64:
         if ffs_get(od_cst + slot, 0) != 0 and ffs_b[0] == OD_CMAGIC:
             v = ffs_b[1]
             od_ctr_tag(slot, v)
-            if od_tag_ok(2) != 0 and v >= od_hwm:
+            ok = od_tag_ok(2)
+            if ok == 0 and od_rot != 0:
+                od_kswap()
+                od_ctr_tag(slot, v)
+                ok = od_tag_ok(2)
+                od_kswap()
+            if ok != 0 and v >= od_hwm:
                 od_hwm = v
                 od_hs = slot
         slot += 1
@@ -760,9 +839,20 @@ def od_slot_wc(b: u64, slot: u64) -> u64:
         od_rawmax = wc  # even an unverified counter is never reused
     if wc == 0:
         return 0
+    od_lk = 0
     od_tag(b, wc)
-    if od_tag_ok(OD_PW + 1) == 0:
+    if od_tag_ok(OD_PW + 1) != 0:
+        return wc
+    if od_rot == 0:
         return 0
+    # mid-rotation: a block not rewritten yet is still under the old data key
+    od_kswap()
+    od_tag(b, wc)
+    ok = od_tag_ok(OD_PW + 1)
+    od_kswap()
+    if ok == 0:
+        return 0
+    od_lk = 1
     return wc
 
 def od_sync() -> u64:
@@ -782,7 +872,8 @@ def od_sync() -> u64:
     return 1
 
 def od_open() -> u64:
-# 0 = unavailable, 1 = recovered an existing log, 2 = created an empty one, 3 = locked (no or wrong key)
+# 0 = unavailable, 1 = recovered an existing log, 2 = created an empty one, 3 = locked (no or wrong key),
+# 4 = recovered, but a data-key rotation was stopped on request in the middle (inv231)
     od_torn = 0
     od_commits = 0
     od_badtag = 0
@@ -852,7 +943,11 @@ def od_open() -> u64:
             od_cs[b] = u8(slot)
             if wc > od_wc:
                 od_wc = wc
+            if od_lk != 0:
+                od_kswap()
             od_xor(b, wc)
+            if od_lk != 0:
+                od_kswap()
             k = 0
             while k < OD_PW:
                 if b * OD_PW + k < OB_NL:
@@ -883,6 +978,112 @@ def od_open() -> u64:
         if nvme_flush() == 0:
             return 0
     od_synced = ob_lp
+    return od_rot_maybe()
+
+def od_rkw(o: u64, n: u64) -> u64:
+# the n (<= 8) bytes of od_rk from o as a little-endian value
+    v: u64 = 0
+    i: u64 = 0
+    while i < n:
+        v = v | (u64(od_rk[o + i]) << (i * 8))
+        i += 1
+    return v
+
+def od_rk_req() -> u64:
+# the rotation request in od_rk: 0 none, 1 rotate; od_rots = 1 + N for ":stop-after:N" (stop after N blocks, to
+# test a power loss in the middle of a rotation)
+    od_rots = 0
+    if od_fwcfg_key(2) == 0 or od_rkn < 15:
+        return 0
+    # "rotate-d" "ata-key" (15 bytes), then optionally ":" "stop-aft" "er:" and digits
+    if od_rkw(0, 8) != 0x642D657461746F72 or od_rkw(8, 7) != 0x79656B2D617461:
+        return 0
+    if od_rkn == 15:
+        return 1
+    if od_rkn < 28 or od_rkw(15, 1) != 58 or od_rkw(16, 8) != 0x7466612D706F7473 or od_rkw(24, 3) != 0x3A7265:
+        return 0
+    n: u64 = 0
+    i: u64 = 27
+    while i < od_rkn:
+        c = u64(od_rk[i])
+        if c < 48 or c > 57:
+            return 0
+        n = n * 10 + c - 48
+        i += 1
+    od_rots = n + 1
+    return 1
+
+def od_rot_maybe() -> u64:
+# after an open: resume a rotation found on disk, or start one on request. 1 = open (rotated or not),
+# 4 = stopped on request in the middle (the store is left rotating, as after a crash), 0 = I/O error
+    od_rotr = 0
+    od_rotb = 0
+    req = od_rk_req()
+    if od_rot != 0:
+        od_rotr = 3
+    elif req != 0:
+        od_rotr = 1
+    else:
+        return 1
+    # begin: a fresh independent data key from a new entropy pool; the old one goes into the slot beside it
+    if od_rot == 0:
+        i: u64 = 0
+        while i < 8:
+            od_dk1[i] = od_dk[i]
+            od_ek1[i] = od_ek[i]
+            od_mk1[i] = od_mk[i]
+            i += 1
+        od_pool_new()
+        od_kdf(od_pool, 0x79656B64, 0, 0)  # "dkey"
+        i = 0
+        while i < 8:
+            od_dk[i] = od_t[i]
+            i += 1
+        od_kdf(od_pool, 0x746C617377, 0, 0)  # "wsalt": a fresh wrap salt (the KEK and its KDF salt stay)
+        s0 = od_t[0] | (od_t[1] << 32)
+        s1 = od_t[2] | (od_t[3] << 32)
+        od_pool_wipe()
+        od_rot = 1
+        od_slot_wrap(s0, s1)
+        od_slot_rot()
+        od_kn[OD_KG] = od_kn[OD_KG] + 1
+        if od_key_store() == 0:
+            return 0
+        od_keys_from_dk()
+    # the counter high-water mark under the new MAC key first, then every log block under the new data key
+    hw = od_hwm
+    if od_wc > hw:
+        hw = od_wc
+    if od_ctr_put(hw + OD_WRES) == 0:
+        return 0
+    b: u64 = 0
+    while b < OD_NB:
+        if od_rots != 0 and b == od_rots - 1:
+            if nvme_flush() == 0:
+                return 0
+            return 4
+        if od_put(b) == 0:
+            return 0
+        b += 1
+        od_rotb = b
+    if nvme_flush() == 0:
+        return 0
+    # done: the slot keeps only the new data key
+    i = OD_KO
+    while i < OD_KO + 8:
+        od_kn[i] = 0
+        i += 1
+    od_kn[OD_KR] = 0
+    od_kn[OD_KG] = od_kn[OD_KG] + 1
+    if od_key_store() == 0:
+        return 0
+    od_rot = 0
+    i = 0
+    while i < 8:
+        od_dk1[i] = 0
+        od_ek1[i] = 0
+        od_mk1[i] = 0
+        i += 1
     return 1
 
 def od_fp() -> u64:
@@ -1038,6 +1239,28 @@ def od_keymsg(r: u64):
         puts(" RDRAND words mixed with 512 TSC jitter samples (")
         put_u64(od_rbad)
         puts(" CPU RNG results refused)\n")
+    if od_rold != 0:
+        puts("objstore: key slot is mid-rotation (an interrupted data-key rotation): log and counter slots verified ")
+        puts("under the old and the new data key\n")
+    if od_rotr != 0 and r == 1:
+        puts("objstore: data key rotated: ")
+        put_u64(od_rotb)
+        puts(" log blocks re-encrypted under a fresh independent data key (")
+        if od_rotr == 1:
+            puts("operator request")
+        elif od_rotr == 2:
+            puts("pre-fix data key")
+        else:
+            puts("resumed after an interrupted rotation")
+        puts("), key slot generation ")
+        put_u64(od_kn[OD_KG])
+        puts(", both copies; the old data key is gone from the key file\n")
+    if r == 4:
+        puts("objstore: data key rotation stopped after ")
+        put_u64(od_rots - 1)
+        puts(" of ")
+        put_u64(OD_NB)
+        puts(" log blocks (rotatedk stop-after); the store is left mid-rotation, as after a power loss\n")
     if r == 1:
         puts("objstore: ")
         put_u64(OD_NB * 2)
@@ -1057,6 +1280,8 @@ def objstore_test():
             puts("objstore: locked: wrong user key for uid 1000, nothing decrypted or written\n")
         return
     od_keymsg(r)
+    if r == 4:
+        return
     if r == 1 and ob_tf[2] != 0:
         objrw_verify()
         objfs_verify()
