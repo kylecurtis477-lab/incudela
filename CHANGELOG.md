@@ -9,6 +9,11 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `f6241c4` v1 reservation 5 (abi3): the CPython embed's binding layer uses only the stable ABI. Run and eval go
+  through `Py_CompileString` / `PyEval_EvalCode` instead of `PyRun_*`, a one-argument call through `PyObject_Call`
+  instead of `PyObject_CallOneArg`; only the PyConfig init of the embedding host (`forge_py_init`) is outside the
+  stable ABI (abi3 floor 3.10). New `cpython-embed/stable-abi` check against the pinned `Misc/stable_abi.toml` and
+  run/eval error-path checks. An abi3 extension module waits for PIC code and shared-object output.
 - Migration (0.23.0): since `2d89c82` a store whose data key was made before `87b91fb` gets a fresh data key at
   its first open, with no request needed: the object log is re-encrypted through the crash-safe rotation of
   `e59be70`. Old disk copies and the second physical slot of each log block stay under the old key until
