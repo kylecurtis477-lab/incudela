@@ -9,6 +9,13 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `cadc75a` Fix: `cudc -g` changed `--fs-*` code. The `-g` line markers were in the output while the `--fs-opt`,
+  `--fs-live`, `--fs-temps` and `--fs-ssa` passes ran, and the passes end their windows and SSA blocks at labels,
+  so the `--fs-ssa` kernel built with `-g` was 0x110 bytes larger than without it. The markers are now taken out
+  around the passes and put back after; `-g` output equals non-g output apart from the debug information.
+  Reseeded.
+- `bb5ad6d` Fix: dwarf/image-unchanged-by-g could not fail (memimg always exits 0 and the test read only its exit
+  status). It now requires memimg's `SAME` line and builds its `-g` kernel with build/kernel's flags.
 - `0669f6f` docs/SYSTEMS.md "SSA stop rule": `--fs-ssa` repeats its rewrites until a round changes nothing or 12
   rounds (FS_SSRND) have run; the push/pop rewrite runs only in a round where folds and copies settled, so 45
   kernel functions are cut off (87,350 instructions at 12 rounds, 87,240 at 16). The limit is unchanged.

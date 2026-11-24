@@ -213,7 +213,7 @@ following. Also required: `os/boot-harness-self-test` (the harness's own stall a
 `os/bootpol-cmdline-strict`, `os/bootpol-config-strict` and `os/bootpol-iommu-kexec` (tests/os/bootpol.sh: the
 sealed `\EFI\Incudela\boot.cfg` and `incudela.iommu=strict` only tighten the DMA policy, also across kexec),
 `dwarf/image-unchanged-by-g`, `dwarf/line-table` and `dwarf/gdb-schedule` (`-g` debug info leaves the loaded
-image unchanged and gdb resolves kernel lines), and `os/desktop` (tests/os/desktop.sh: colour bars, window
+image unchanged, memimg must print `SAME`, and gdb resolves kernel lines), and `os/desktop` (tests/os/desktop.sh: colour bars, window
 drag, the app canvas, taskbar and launcher checked from a screendump).
 
 **Kexec and process-state.** `kexec handoff OK`, `kexec: handoff format v5`, `process-state: format

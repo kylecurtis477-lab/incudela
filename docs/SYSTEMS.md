@@ -521,7 +521,7 @@ transparency log are planned later (Master Plan V2).
 so newer published versions can be selected).
 
 ## Debug info (Phase 7.3)
-`cudc -g` emits DWARF 4 line tables and subprogram DIEs for the kernel; `.Lfsd<n>` labels mark each statement and the line program uses `fixed_advance_pc` label differences, so fas and GNU as produce the same object. fld keeps `.debug_*` as non-alloc sections after the loaded segments. To debug: boot with `-gdb tcp::PORT`, read the slide from the `KASLR: kernel image at ... (slide 0x...)` serial line, then in gdb `symbol-file -o 0x<slide> build/dwarf/kernel.elf`, `target remote :PORT`, `hbreak schedule`. Line info only so far.
+`cudc -g` emits DWARF 4 line tables and subprogram DIEs for the kernel; `.Lfsd<n>` labels mark each statement and the line program uses `fixed_advance_pc` label differences, so fas and GNU as produce the same object. `-g` does not change the code: a function's markers are taken out of its output while the `--fs-*` passes run and put back in their slots afterwards (before inv234 the passes ended their windows and SSA blocks at them, and the kernel's `--fs-ssa` text grew by 0x110 bytes); dwarf/image-unchanged-by-g requires memimg's `SAME` line. fld keeps `.debug_*` as non-alloc sections after the loaded segments. To debug: boot with `-gdb tcp::PORT`, read the slide from the `KASLR: kernel image at ... (slide 0x...)` serial line, then in gdb `symbol-file -o 0x<slide> build/dwarf/kernel.elf`, `target remote :PORT`, `hbreak schedule`. Line info only so far.
 
 ## Built-in linker (Phase 7.2)
 `build/fld` (tools/fld.cud): `fld [--format exec|kernel|pe] [--base ADDR] [-e SYM] [--subsystem N] [--image-base ADDR] -o OUT in.o...`.
