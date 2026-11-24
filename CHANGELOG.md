@@ -9,6 +9,16 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `0669f6f` docs/SYSTEMS.md "SSA stop rule": `--fs-ssa` repeats its rewrites until a round changes nothing or 12
+  rounds (FS_SSRND) have run; the push/pop rewrite runs only in a round where folds and copies settled, so 45
+  kernel functions are cut off (87,350 instructions at 12 rounds, 87,240 at 16). The limit is unchanged.
+- `fede009` Fix: the O0 kernel kept the SSA backend. The kernel build put `--fs-ssa` before `$CUDC_FLAGS`, so the
+  O0 gate (and CI's boot-o0) booted `--fs-ssa -O0` code; with `-O0` in `$CUDC_FLAGS` the kernels are now built by
+  the plain freestanding code generator (exactly `cudc -O0`, every bounds check kept: 2275 of 2275). New
+  `kernel-build/O0-no-fs-ssa`. User programs, modules and the EFI loader keep `--fs-ssa`.
+- `89305ae` `sqrt(x)` intrinsic in freestanding code: one `sqrtsd` / `sqrtss` for an f64 / f32 (correctly rounded,
+  NaN for a negative argument; an integer needs `f64(x)`; a program's own `def sqrt` wins). New tests/fs/fsqrt and
+  tests/errors/sqrt_int_fs. Reseeded.
 - `f6241c4` v1 reservation 5 (abi3): the CPython embed's binding layer uses only the stable ABI. Run and eval go
   through `Py_CompileString` / `PyEval_EvalCode` instead of `PyRun_*`, a one-argument call through `PyObject_Call`
   instead of `PyObject_CallOneArg`; only the PyConfig init of the embedding host (`forge_py_init`) is outside the
