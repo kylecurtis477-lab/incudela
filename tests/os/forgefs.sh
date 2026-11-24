@@ -107,6 +107,10 @@ if grep -aq "objfs: after reboot /obj lists 2 files, /obj/motd is 200 bytes" $T/
 # Phase 10.1: objects encrypted at rest. The image must hold no object plaintext, no key material in the
 # clear, and look random where the log was written; a wrong key or no key leaves the store locked and untouched.
 grep -aq "objstore: encrypted at rest (ChaCha20, encrypt-then-MAC HMAC-SHA256), uid 1000 data key created, wrapped by the platform key (no TPM)" $T/b1.log && grep -aq "data key unwrapped with the platform key" $T/b3.log && echo "PASS os/objstore-key-wrap" || echo "FAIL os/objstore-key-wrap: $(grep -a 'objstore: \(enc\|lock\)' $T/b1.log $T/b3.log | tail -2)"
+# inv228: the new data key's pool got CPU RNG words: under -cpu max QEMU offers RDSEED and RDRAND, and all
+# OD_HWN = 32 of each must have been mixed in, none refused
+EN=$(grep -aoE "^objstore: data key entropy: [0-9]+ RDSEED \+ [0-9]+ RDRAND words mixed with 512 TSC jitter samples \([0-9]+ CPU RNG results refused\)" $T/b1.log)
+case "$EN" in *": 32 RDSEED + 32 RDRAND words "*"(0 CPU RNG results refused)") echo "PASS os/objstore-key-entropy (${EN#objstore: data key entropy: })";; *) echo "FAIL os/objstore-key-entropy (${EN:-no entropy line in boot 1})";; esac
 $T/incudela-part read $T/nv.img objects.log > $T/olog.bin; $T/incudela-part read $T/nv.img objects.key > $T/okey.bin
 PT=$(python3 - $T/nv.img $T/olog.bin $KEY <<'P'
 import sys,zlib,struct

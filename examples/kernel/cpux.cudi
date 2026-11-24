@@ -8,6 +8,7 @@ smep_on: u64
 smap_on: u64
 cpu_feat7b: u64
 cpuid_out: u32[4]
+hw_rand_ok: u64  # hw_rand: 1 if the last call got a value from the CPU
 uaccess_faults: u64
 
 asm(".text",
@@ -22,6 +23,19 @@ asm(".text",
     ".globl xsetbv0",
     "xsetbv0:",                    # xsetbv0(value): XCR0 = value
     "  mov %rdi, %rax", "mov %rdi, %rdx", "shr $32, %rdx", "xor %ecx, %ecx", "xsetbv", "ret",
+    ".globl hw_rand",
+    "hw_rand:",                    # hw_rand(kind): 0 = RDRAND, 1 = RDSEED, 64-bit; value in rax, hw_rand_ok = 1 if the
+    "  mov $64, %rcx",             # CPU returned one (CF) within 64 tries, else 0 and rax = 0; rax, rcx only
+    "1:",
+    "  test %rdi, %rdi", "jnz 2f",
+    "  .byte 0x48, 0x0f, 0xc7, 0xf0", "jc 3f", "jmp 4f",
+    "2:",
+    "  .byte 0x48, 0x0f, 0xc7, 0xf8", "jc 3f",
+    "4:",
+    "  pause", "sub $1, %rcx", "jnz 1b",
+    "  movq $0, hw_rand_ok(%rip)", "xor %eax, %eax", "ret",
+    "3:",
+    "  movq $1, hw_rand_ok(%rip)", "ret",
     ".globl fpu_save",
     "fpu_save:",
     "  cmpq $2, fpu_mode(%rip)", "jne 1f",
@@ -105,6 +119,7 @@ asm(".text",
     ".text")
 extern def cpuid4(leaf: u64, sub: u64)
 extern def xsetbv0(v: u64)
+extern def hw_rand(kind: u64) -> u64
 extern def fpu_save(p: u64)
 extern def fpu_restore(p: u64)
 extern def fpu_reset()

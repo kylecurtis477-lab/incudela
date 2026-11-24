@@ -328,6 +328,8 @@ Kernel (examples/kernel):
 - [x] `krel_apply` (boot.cudi): touches rax, rcx, rdx, r8, r9 only (caller-saved).
 - [x] `cpuid4` (cpux.cudi): saves and restores rbx around `cpuid`.
 - [x] `xsetbv0`, `fpu_save`, `fpu_restore`, `fpu_reset` (cpux.cudi): rax, rcx, rdx only.
+- [x] `hw_rand` (cpux.cudi, inv228): RDRAND or RDSEED into rax (emitted as `.byte`; fas has no mnemonic), rcx as the
+  retry count; rax, rcx and the flags only, and memory only `hw_rand_ok`.
 - [x] `copy_user`, `copy_str_user`, `smap_probe`, `uaccess_labels` (cpux.cudi): rax, rcx, rdx, rsi, rdi, r8, r9 only; the #PF fixups only rewrite rip.
 - [x] `smep_probe` (cpux.cudi): **fixed** in step 3. It calls user bytes in ring 0 (a self-test that SMEP blocks it), so it saves rbp, rbx, r12–r15 around the call and restores them on both the return and the `smep_blocked` fixup path; a CPU without SMEP cannot corrupt kernel registers.
 - [x] `ctx_switch`, `thread_start_addr` (sched.cudi): `ctx_switch` saves all callee-saved registers on the thread stack; `thread_start` only calls Forge.

@@ -1,7 +1,8 @@
 # Nondeterminism hook (plan v1.3 item 6): the single point every nondeterministic input of the kernel
 # passes through -- syscall results (syscall_dispatch), timer interrupts (on_lapic_timer), scheduler choices
 # (schedule_l) and random values (nd_rand: KASLR slide, stack canary, Linux AT_RANDOM, the object-store
-# key entropy). nd_hook(kind, a, v) returns v unchanged; it is where a later replay mode can substitute a
+# key entropy: TSC jitter site 4, RDSEED site 5, RDRAND site 6). nd_hook(kind, a, v) returns v unchanged; it is
+# where a later replay mode can substitute a
 # recorded value. Recording is OFF by default (nd_rec = 0): the hook then only reads one global and returns.
 # With recording on, each event is counted per kind and appended to a fixed ring of ND_RING entries
 # (kind, a, v; the slot index is taken atomically, so CPUs never share a slot). Nothing is persisted.

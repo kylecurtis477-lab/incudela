@@ -132,6 +132,50 @@ def od_keys_from_dk():
         od_mk[i] = od_t[i]
         i += 1
 
+# ---- data key entropy (inv228): CPU RNG words mixed into the TSC jitter pool ----
+OD_HWN = 32  # RDSEED and RDRAND words each, when the CPU has them
+od_rs: u64  # RDSEED words mixed into the last new data key
+od_rr: u64  # RDRAND words mixed in
+od_rbad: u64  # CPU RNG results refused (no value within hw_rand's retries, 0, all ones, or a repeat)
+
+def od_hw_caps() -> u64:
+# bit 0 RDRAND (CPUID.1:ECX[30]), bit 1 RDSEED (CPUID.(7,0):EBX[18])
+    cpuid4(1, 0)
+    c = (u64(cpuid_out[2]) >> 30) & 1
+    return c | (((cpu_feat7b >> 18) & 1) << 1)
+
+def od_hw_mix(kind: u64, site: u64, prev: u64) -> u64:
+# one CPU RNG word into the SHA-256 pool (through the nondeterminism hook, like the jitter samples); a missing,
+# stuck (0, all ones) or repeated value is refused and counted, never mixed. Returns the value, 0 if refused.
+    v = hw_rand(kind)
+    if hw_rand_ok == 0 or v == 0 or v == 0xFFFFFFFFFFFFFFFF or v == prev:
+        od_rbad += 1
+        return 0
+    sh_u64(nd_rand(site, v))
+    return v
+
+def od_hw_pool():
+# up to OD_HWN RDSEED words (conditioned seed, the stronger source) and OD_HWN RDRAND words into the pool
+    od_rs = 0
+    od_rr = 0
+    od_rbad = 0
+    caps = od_hw_caps()
+    ps: u64 = 0
+    pr: u64 = 0
+    k: u64 = 0
+    while k < OD_HWN:
+        if (caps & 2) != 0:
+            v = od_hw_mix(1, 5, ps)
+            if v != 0:
+                od_rs += 1
+                ps = v
+        if (caps & 1) != 0:
+            v = od_hw_mix(0, 6, pr)
+            if v != 0:
+                od_rr += 1
+                pr = v
+        k += 1
+
 def od_mkfile(name: ptr[u8], nb: u64) -> u64:
 # reserve a zero-filled nb-block Incudela FS file; its first block (0 on failure)
     if ffs_ok == 0 or ffs_find(name) != FFS_NI:
@@ -169,7 +213,8 @@ def od_mkfile(name: ptr[u8], nb: u64) -> u64:
     return st
 
 def od_key_new() -> u64:
-# first mount: a random data key, stored only wrapped by the user key, in objects.key
+# first mount: a random data key, stored only wrapped by the user key, in objects.key. The pool: 512 TSC jitter
+# samples, then the CPU RNG words of od_hw_pool (inv228)
     st = od_mkfile("objects.key", 1)
     if st == 0:
         return 0
@@ -183,6 +228,7 @@ def od_key_new() -> u64:
         sh_u64(nd_rand(4, rdtsc() - t0))
         sh_u64(t0)
         i += 1
+    od_hw_pool()
     sh_fin()
     # the pool digest is only a PRF key: the data key and the wrap salt are independent HMAC outputs of it.
     # (Before inv228 the salt was digest words 0..3 and the data key mixed the same words with words 4..7,
@@ -623,6 +669,14 @@ def od_keymsg(r: u64):
         puts("TPM-sealed key\n")
     else:
         puts("platform key (no TPM)\n")
+    if r == 2:
+        puts("objstore: data key entropy: ")
+        put_u64(od_rs)
+        puts(" RDSEED + ")
+        put_u64(od_rr)
+        puts(" RDRAND words mixed with 512 TSC jitter samples (")
+        put_u64(od_rbad)
+        puts(" CPU RNG results refused)\n")
     if r == 1:
         puts("objstore: ")
         put_u64(OD_NB * 2)

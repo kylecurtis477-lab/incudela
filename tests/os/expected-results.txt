@@ -36,6 +36,7 @@ os/objstore-rewind-persists
 os/objfs-vfs-view
 os/objfs-persists
 os/objstore-key-wrap
+os/objstore-key-entropy
 os/objstore-no-plaintext
 os/objstore-data-key-independent
 os/objstore-nonce-unique

@@ -25,7 +25,9 @@ file names and contents) is encrypted and authenticated. The code is in `example
   returns 0; see Limits): SHA-256("frge-kek" || passphrase), where the passphrase (8..64 bytes) arrives as the QEMU fw_cfg file
   `opt/forge/userkey` (I/O ports 0x510/0x511, read through the `pio_add`/`pio_rd`/`pio_wr` safe wrappers).
   The user key itself is never written anywhere.
-- **Data key (DK).** Made at first mount from 512 TSC jitter samples hashed with SHA-256; the digest is only a
+- **Data key (DK).** Made at first mount from a SHA-256 pool of 512 TSC jitter samples and, since inv228, up to 32
+  RDSEED and 32 RDRAND words when CPUID reports them (`hw_rand` in cpux.cudi; a missing, 0, all-ones or repeated
+  value is refused and counted, never mixed; the boot log says how many of each went in); the digest is only a
   PRF key: DK = HMAC(digest, "dkey") and the wrap salt = HMAC(digest, "wsalt"), so the plaintext salt says nothing
   about DK (fix, inv228: the salt used to be digest words 0..3 and DK mixed those words with words 4..7, which left
   DK 128 unknown bits once the salt was read from the disk). It is stored only
@@ -77,6 +79,8 @@ Not protected against:
   and not the passphrase either. The written log slots do not compress with zlib.
 - **os/objstore-wrong-key-locked:** a boot with a wrong passphrase and a boot with no key both report the
   store locked, and `objects.log`/`objects.key` are byte-identical afterwards.
+- **os/objstore-key-entropy:** boot 1 reports 32 RDSEED and 32 RDRAND words mixed into the new data key (QEMU
+  `-cpu max` has both) and none refused.
 - **os/objstore-data-key-independent:** the host unwraps DK from `objects.key` with the KEK (openssl), checks the
   key check value, and checks the old salt-to-DK relation holds for none of the four word pairs (on the old
   derivation it held for all four).
@@ -93,7 +97,8 @@ Not protected against:
 - **One user per store.** Each store has one user key (uid 1000); there are no separate per-user stores yet.
 - **Plaintext metadata.** Incudela FS metadata (file names, sizes, extents, and the plaintext `hello.txt`/`persist.dat`
   Incudela FS self-test files) is not encrypted. Only the object store is.
-- **Weak DK entropy.** TSC jitter at boot is a weak entropy source; RDRAND/RDSEED are not used yet.
+- **DK entropy.** RDSEED and RDRAND are mixed in when the CPU has them (inv228); on a CPU with neither, the data
+  key rests on TSC jitter alone, which is weak. The CPU RNG is trusted only as one input of the pool.
 - **No rotation.** Neither the passphrase nor the data key can be rotated yet.
 - **Rollback and weak-passphrase guessing** are possible, see the threat model.
 - **Key wrap.** The wrapped DK is XORed with a PRF output and checked through the KEK check value, not a
