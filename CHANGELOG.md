@@ -9,6 +9,11 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `82a6560` Fix: the boot harness lost the framebuffer screendump when the kernel's 5 s wait for `q`
+  expired mid-dump (inv236 `os/bootpol-config-strict`: 38 s box suspend, debug-exit 5846 ms, no ppm).
+  That wait is `rdtsc` vs `tsc_per_ms * 5000`, so a host suspend can jump guest TSC. After KERNEL OK
+  the harness now issues QEMU monitor `stop`, dumps, queues `q`, then `cont`. A failed screendump
+  still FAILs. New `os/boot-harness-delay-after-ok` (6 s delay; FAILs on the pre-stop harness).
 - `751c90b` cudc: more bounds checks elided by default (bounds-bench-overhead on slow CI runners). A local written
   once as `n = len(x)` at the top of a function, x a slice parameter it never writes, now counts as `len(x)`;
   `while v < n:` / `while v < len(x):` (v unsigned, its `addr()` never taken) drops the check on `x[v]` in that
