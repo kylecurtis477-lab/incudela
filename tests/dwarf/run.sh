@@ -10,12 +10,18 @@ GDB=${GDB:-$(command -v gdb || echo $HOME/gdbd/bin/gdb)}
 if [ ! -x "$GDB" ]; then echo "SKIP dwarf/gdb-schedule (no gdb)"; exit 0; fi
 D=build/dwarf; mkdir -p $D/iso/boot/grub
 fail() { echo "FAIL dwarf/$1"; pkill -f "qemu-system.*$D/forge-g.iso" 2>/dev/null; exit 0; }
-(cd examples/kernel && ../../build/cudc kernel.cud ../../$D/kernel.s --fs-ssa -g) || fail "build (cudc -g)"
+# the -g kernel gets the flags examples/kernel/build.cud gives build/kernel (--fs-ssa then $CUDC_FLAGS, or
+# $CUDC_FLAGS alone when it has -O0), so image-unchanged-by-g compares like with like at O2 and O0
+KF=--fs-ssa; case " $CUDC_FLAGS " in *" -O0 "*) KF= ;; esac
+(cd examples/kernel && ../../build/cudc kernel.cud ../../$D/kernel.s $KF $CUDC_FLAGS -g) || fail "build (cudc -g)"
 build/fas -I build/user -o $D/kernel.o $D/kernel.s || fail "build (fas)"
 build/fld --format kernel -o $D/kernel.elf $D/kernel.o || fail "build (fld)"
-# -g changes only the debug sections: the loaded image equals the normal build's
+# -g changes only the debug sections: the loaded image equals the normal build's. memimg always exits 0 and
+# prints SAME or DIFF, so the test reads that line (inv234: checking only the exit status passed on DIFF since
+# the test was written; the -g kernel's text was 0x110 bytes longer under --fs-ssa)
 { build/cudc tests/fld/memimg.cud $D/memimg.s && build/fas -o $D/memimg.o $D/memimg.s && build/fld --base 0x100000000000 -o $D/memimg $D/memimg.o; } || fail "build (memimg)"
-$D/memimg $D/kernel.elf build/kernel/kernel.elf > /dev/null && echo "PASS dwarf/image-unchanged-by-g" || echo "FAIL dwarf/image-unchanged-by-g"
+MI=$($D/memimg $D/kernel.elf build/kernel/kernel.elf 2>&1)
+echo "$MI" | grep -q '^SAME ' && echo "PASS dwarf/image-unchanged-by-g" || echo "FAIL dwarf/image-unchanged-by-g ($(echo "$MI" | tr '\n' ' ' | cut -c1-300))"
 readelf --debug-dump=decodedline $D/kernel.elf 2>&1 | grep -q "^sched.cudi  *157 " && echo "PASS dwarf/line-table (readelf decodes sched.cudi:157)" || echo "FAIL dwarf/line-table"
 cp $D/kernel.elf $D/iso/boot/kernel.elf && cp examples/kernel/grub.cfg $D/iso/boot/grub/grub.cfg
 grub-mkrescue -o $D/forge-g.iso $D/iso >/dev/null 2>&1 || fail "iso"
