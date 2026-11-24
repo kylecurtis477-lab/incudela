@@ -9,6 +9,19 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- Migration (0.23.0): since `2d89c82` a store whose data key was made before `87b91fb` gets a fresh data key at
+  its first open, with no request needed: the object log is re-encrypted through the crash-safe rotation of
+  `e59be70`. Old disk copies and the second physical slot of each log block stay under the old key until
+  overwritten.
+- `2d89c82` A data key made by the pre-`87b91fb` derivation is detected at each open (`od_dk_weak`: the old
+  salt-to-key relation holds for all four word pairs) and rotated unasked. A detector self-test runs first, and the
+  boot log reports it and the verdict. New `os/objstore-dk-prefix-rotate` (a host-written pre-fix slot); tests/os
+  expected results 62 to 63.
+- `e59be70` Crash-safe data-key rotation: boot with fw_cfg `opt/forge/rotatedk` = `rotate-data-key` to re-encrypt
+  every object log block under a fresh independent data key from a new RDSEED/RDRAND+TSC pool (KEK kept, fresh
+  wrap salt). The rotating key slot holds both data keys and is written first through the two-copy order, so a
+  crash in the middle is resumed at the next boot; `rotate-data-key:stop-after:N` simulates one. New
+  `os/objstore-dk-rotate` and `os/objstore-dk-rotate-crash`; expected results 60 to 62.
 - xHCI fix: the USB keyboard could go silent after the switch to MSI-X when its last polled report (the Enter
   release) was posted between draining the event ring and enabling the interrupter, which left Event Handler
   Busy set with no interrupt sent. `xh_irq_init` now enables the interrupter first and drains after. Found by the
@@ -18,7 +31,7 @@
   failed. It now searches the fixed 16-byte prefix and compares all 32 bytes (`koffs`).
 - Migration (0.23.0): since `93f788d` a v1 key slot is upgraded to v2 at its first unlock, and since `7e04ddb` a
   store from before inv229 gets its second key copy `objects.keyb` at its first unlock; both are written through
-  the crash-safe two-copy order. Data keys made before `87b91fb` stay until data-key rotation (inv230).
+  the crash-safe two-copy order. Data keys made before `87b91fb` stayed until data-key rotation (`e59be70`, `2d89c82`, above).
 - `93f788d` A v1 key slot (unsalted SHA-256 KEK) is upgraded at its first unlock: the same data key under PBKDF2 of
   the same passphrase with fresh salts, as the next key slot generation. `os/objstore-legacy-slot` checks the
   upgraded slot on the host and a second boot.
@@ -33,7 +46,7 @@
 - Migration (0.23.0): stores made before `2417854` keep their v1 key slot (unsalted SHA-256 passphrase key) and
   stores made before `87b91fb` keep their weaker data key; both still unlock, and the boot log names a v1 slot.
   Neither is upgraded in place by that batch; the passphrase change and the v1-to-v2 upgrade came in inv229
-  (above), and data-key rotation is planned for inv230. Making a new store gives a v2 slot and an independent data key.
+  (above), and data-key rotation came in inv231 (above). Making a new store gives a v2 slot and an independent data key.
 - `2417854` The object store's passphrase key is PBKDF2-HMAC-SHA256 with a 128-bit salt and 20000 iterations (key
   slot v2: version, KDF salt and count in `objects.key` words 16..19; about 0.5 s on QEMU TCG), replacing one
   unsalted SHA-256. `pb_kdf` is in crypt.cudi with known-answer tests in tests/fs/crypt.cud. The raw passphrase is
