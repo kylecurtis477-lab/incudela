@@ -325,6 +325,15 @@ def step_gap(tp, tq, wait):
 # freeze was reported because the loop never checked)
     return freeze_gap(tp + wait, tq)
 
+def hnote(buf, notes, s):
+# A harness note never shares a line with guest output: inv235 os/kaslr missed a kexec because a freeze note was
+# glued to the front of "kexec: new kernel relocatable, ..." and run.sh's ^-anchored grep no longer matched it.
+# At a line boundary the note gets its own line in place; mid-line (a guest line still arriving) it goes to the
+# end-of-log notes, as the input-injection notes do. Returns [buf, notes].
+    if buf == "" or buf[len(buf) - 1:] == "\n":
+        return [concat(buf, concat(s, "\n")), notes]
+    return [buf, concat(notes, concat(s, "\n"))]
+
 def stall_expired(now, tlast, stall) -> i64:
 # 1 if serial has been silent for `stall` seconds (FORGE_BOOT_STALL, default 60; never raised here)
     if now - tlast >= stall:
@@ -458,13 +467,17 @@ def boot(h, attempt):
             tlast += g
             t0 += g
             deadline += g
-            buf += f"[harness: box frozen {fix(g)}s, not counted]"
+            hn = hnote(buf, notes, f"[harness: box frozen {fix(g)}s, not counted]")
+            buf = hn[0]
+            notes = hn[1]
         tprev = tn
         ws = time.time() - tn - woff
         if ws > 1.0:
             susp += ws
             woff += ws
-            buf += f"[harness: box suspended {fix(ws)}s by the wall clock, not counted]"
+            hn = hnote(buf, notes, f"[harness: box suspended {fix(ws)}s by the wall clock, not counted]")
+            buf = hn[0]
+            notes = hn[1]
         w = os.waitpid(pid, 1)
         if w[0] == pid:
             rc = os.waitstatus_to_exitcode(w[1])
@@ -492,7 +505,9 @@ def boot(h, attempt):
                 tlast += g
                 t0 += g
                 deadline += g
-                buf += f"[harness: box frozen {fix(g)}s, not counted]"
+                hn = hnote(buf, notes, f"[harness: box frozen {fix(g)}s, not counted]")
+                buf = hn[0]
+                notes = hn[1]
             if stall_expired(now, tlast, h.stall) == 1:
                 kind = "hang"
                 dump = f"{h.log}.hang{attempt}"
@@ -736,6 +751,22 @@ def self_test():
         print("PASS boot-harness hang-probe-parse")
     else:
         print("FAIL boot-harness hang-probe-parse")
+        fail = 1
+    # inv235: a freeze note at a line boundary gets its own line, so the guest line after it still starts the
+    # line (os/kaslr greps ^kexec:); mid-line it waits in the end-of-log notes and the guest line stays whole
+    fn = "[harness: box frozen 3.00s, not counted]"
+    h1 = hnote("sh: kexec after 5 commands, pid 249\n", "", fn)
+    g1 = concat(h1[0], "kexec: new kernel relocatable, 15 relocations\n")
+    h2 = hnote("kexec: new kernel reloc", "", fn)
+    g2 = concat(h2[0], "atable, 15 relocations\n")
+    k1 = 0
+    for l in splitlines(g1):
+        if startswith(l, "kexec: new kernel relocatable, 15"):
+            k1 += 1
+    if k1 == 1 and h1[1] == "" and concat(fn, "\n") in g1 and "kexec: new kernel relocatable, 15 relocations\n" in g2 and h2[1] == concat(fn, "\n") and not (fn in g2):
+        print("PASS boot-harness note-own-line")
+    else:
+        print("FAIL boot-harness note-own-line")
         fail = 1
     exit(fail)
 
