@@ -1,0 +1,6 @@
+# cuditor: no-runtime
+# freestanding: sqrt() takes an f64 or f32; an integer argument needs an explicit f64(x) / f32(x) (inv233)
+@export
+def _start():
+    n: u64 = 16
+    r: u64 = u64(i64(sqrt(n)))

@@ -18,6 +18,8 @@ It has no GC, no libc, no syscall runtime, no bigints, and no prelude. The entry
   - `cli sti hlt pause int3 ud2 mfence lfence sfence wbinvd`
   - `inb/inw/inl outb/outw/outl`
   - `lgdt lidt ltr invlpg read_crN write_crN rdmsr wrmsr rdtsc`
+  - `sqrt(x)` for an `f64` or `f32` (one `sqrtsd` / `sqrtss`, IEEE correctly rounded, NaN for a negative x; an integer
+    needs `f64(x)` first; a program's own `def sqrt` wins). tests/fs/fsqrt, tests/errors/sqrt_int_fs (inv233)
   - `call_ptr(f, ...)` (SysV, up to 6 args) and `call_efi(f, ...)` (Microsoft x64: shadow space, args 5–9 on the stack)
   - Atomics (all `lock`-prefixed or implicitly locked, sequentially consistent; the address is a `u64`):
     `atomic_load32/64`, `atomic_store32/64`, `atomic_xchg32/64`, `atomic_add32/64` (returns the old value),

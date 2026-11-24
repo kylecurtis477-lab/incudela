@@ -18333,6 +18333,21 @@ def fs_intrin(nm):
             fs_ety = FT_VOID
         fs_mode = 0
         return 1
+    if str_eq(nm, "sqrt") and fs_func("sqrt") < 0:
+    # sqrt(x): square root of an f64 or f32 in one instruction (sqrtsd / sqrtss, IEEE correctly rounded; a
+    # negative x gives NaN, no exception). A program's own def sqrt wins, like len() and slice().
+        fp += 1
+        fs_rexpr()
+        fs_expect(")")
+        t = fs_ety
+        if fsk[t] != 6:
+            fs_die("sqrt() needs an f64 or f32 argument: convert with f64(x) / f32(x)")
+        fs_fx(t, "%rax", 0)
+        e(c3("sqrt", fs_fsfx(t), " %xmm0,%xmm0"))
+        fs_xf(t, 0, "%rax")
+        fs_ety = t
+        fs_mode = 0
+        return 1
     if str_eq(nm, "rdtsc"):
         fs_args(0, -1)
         e("rdtsc")

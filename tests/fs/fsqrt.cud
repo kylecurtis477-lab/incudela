@@ -1,0 +1,58 @@
+# cuditor: no-runtime
+# sqrt() intrinsic (freestanding): f64 -> sqrtsd, f32 -> sqrtss, one instruction, no call and no asm in the
+# program. Results are IEEE correctly rounded, printed as bits: sqrt(2), exact squares, -0.0 (stays -0.0),
+# +inf, a subnormal, and a negative argument (NaN: compares unequal to itself). The f32 form stays f32.
+include "linux.cudi"
+
+@unsafe
+def bits64(a: u64) -> u64:
+    return ptr[u64](a)[0]
+
+@unsafe
+def bits32(a: u64) -> u64:
+    return u64(ptr[u32](a)[0])
+
+@unsafe
+def show64(name: ptr[u8], x: f64):
+    r: f64 = sqrt(x)
+    puts(name)
+    puts(" ")
+    put_u64(bits64(u64(addr(r))))
+    nl()
+
+@unsafe
+def show32(name: ptr[u8], x: f32):
+    r: f32 = sqrt(x)
+    puts(name)
+    puts(" ")
+    put_u64(bits32(u64(addr(r))))
+    nl()
+
+# hypotenuse with no asm: the use the benchmarks needed hand-written sqrtsd for
+def hyp(a: f64, b: f64) -> f64:
+    return sqrt(a * a + b * b)
+
+@unsafe
+def main() -> i64:
+    show64("sqrt64(2)", 2.0)
+    show64("sqrt64(16)", 16.0)
+    show64("sqrt64(-0)", -0.0)
+    show64("sqrt64(1e300*1e300)", 1e300 * 1e300)
+    show64("sqrt64(4e-320)", 4e-320)
+    show32("sqrt32(2)", f32(2.0))
+    show32("sqrt32(0.25)", f32(0.25))
+    n: f64 = sqrt(-1.0)
+    puts("sqrt64(-1) is NaN ")
+    put_u64(n != n)
+    nl()
+    m: f32 = sqrt(f32(-4.0))
+    puts("sqrt32(-4) is NaN ")
+    put_u64(m != m)
+    nl()
+    puts("hyp(3,4) == 5 ")
+    put_u64(hyp(3.0, 4.0) == 5.0)
+    nl()
+    puts("i64(sqrt(f64(1000000))) ")
+    put_u64(u64(i64(sqrt(f64(1000000)))))
+    nl()
+    return 0
