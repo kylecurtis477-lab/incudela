@@ -25,6 +25,22 @@ the gate on the development box (pregate, `tests/os/run.sh` alone, then `run_tes
 - **Pinned actions.** Every `uses:` names a full 40-hex commit SHA (`actions/checkout` v7.0.1, `3d3c42e5…`).
 - **Timeouts** on every job; a newer push to the same ref cancels the older run.
 
+## Runner tool versions (open)
+
+The byte-for-byte checks compare against the dev box's tools (Debian 13: GNU as 2.44, mtools 4.0.48); the
+`ubuntu-24.04` runner has GNU as 2.42 and mtools 4.0.43. Run 45432443010 (0a1502d) had 12 tests-o2 FAILs:
+
+- mtools (7, fixed in inv235): `mformat -C` before 4.0.48 wrote the created image's last sector from an
+  uninitialized buffer, so two clean builds' ESP and ISO differed. `tools/repro-mformat` zeroes that sector
+  (docs/SYSTEMS.md, "Reproducible ESP and ISO"). Images from 4.0.43 and 4.0.48 still differ in the boot sector's
+  OEM name (`MTOO4043` / `MTOO4048`); no test compares images across machines.
+- GNU as (4: fas tests-corpus, fas self, fas build/os/boot.s, fas build/kernel-build.s): as 2.42 output differs
+  from 2.44 by 8 bytes. Planned: run tests-o2 in a Debian 13 container pinned by digest with the box's package
+  versions (test tooling only, nothing from it is shipped); pushing a workflow change needs a token with the
+  `workflow` scope.
+- bounds-bench-overhead: median 1.0552 with every pair between 1.0515 and 1.0576, so not noise; earlier runs gave
+  1.0106 to 1.0292, which points at the runner's CPU model. The 5% limit stays.
+
 `tests/ci/run.sh` (a `run_tests.sh` item) checks these rules on the workflow file and checks that a copy breaking
 each one (tag pin, short SHA, write token, extra write permission, a secret, a download, a missing timeout, kept
 credentials, a missing boot job) is refused. It also checks the O0 boot script and the README badge.

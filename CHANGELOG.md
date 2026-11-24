@@ -9,6 +9,14 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `16f9c5d` Fix: the OS boot harness glued its box-freeze and suspension notes to the next guest serial line
+  (inv235 O2 `os/kaslr` counted 4 of 5 kexecs: `[harness: box frozen 3s, not counted]kexec: new kernel
+  relocatable, ...`). A note now gets its own line, or waits in the end-of-log notes when a guest line is still
+  arriving; the result line still reports the freeze. New self-test check `boot-harness note-own-line`.
+- `acf76a3` Fix: the ESP and ISO were not reproducible with mtools before 4.0.48 (Ubuntu 24.04 has 4.0.43; seven
+  public-CI failures). `mformat -C` sizes a new image by writing its last sector, and before 4.0.48 that sector
+  came from an uninitialized buffer; `tools/repro-mformat` now zeroes it, as 4.0.48 does, so box images are
+  unchanged. New `efi-build/mformat-last-sector`. Images from 4.0.43 and 4.0.48 still differ in the OEM name.
 - `cadc75a` Fix: `cudc -g` changed `--fs-*` code. The `-g` line markers were in the output while the `--fs-opt`,
   `--fs-live`, `--fs-temps` and `--fs-ssa` passes ran, and the passes end their windows and SSA blocks at labels,
   so the `--fs-ssa` kernel built with `-g` was 0x110 bytes larger than without it. The markers are now taken out
