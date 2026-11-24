@@ -34,6 +34,9 @@ bash tests/os/boot-early-exit.sh $B $L
 # deleted so firmware never boots from it); the kernel reads \EFI\Incudela\init.elf from its ESP
 cp build/efi/disk.img $L/vdisk.img && mdel -i $L/vdisk.img@@1048576 ::/EFI/BOOT/BOOTX64.EFI
 VD="-drive file=$L/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio-blk-pci,drive=vd"
+# Live QEMU: 6 s delay after KERNEL OK (longer than the kernel's 5 s rdtsc 'q' wait). Fails on the
+# pre-stop harness (dump finds no ppm, same as inv236); the new harness stops the vCPUs first.
+FORGE_BOOT_OK_STOP_FB="$FB" bash tests/os/boot-ok-stop.sh $B $L $Q $VD -boot d -cdrom build/kernel/forge.iso
 # FORGE_BOOT_KEXEC=3: this boot hands over 3 times (kernel -> next -> next -> next) with input at each prompt
 KXR=3
 FORGE_BOOT_PROBE=1 FORGE_BOOT_KEXEC=$KXR $B kernel-bios $L/bios.log 200 "multiboot2 (BIOS)|$K|kexec: generation 3 kernel adopted" "$FB" -- $Q $VD -boot d -cdrom build/kernel/forge.iso

@@ -2,6 +2,10 @@
 # check serial markers and (optionally) OCR the framebuffer.
 # usage: boot NAME LOG TIMEOUT 'marker|marker|...' FBTEXT -- qemu args...
 #        boot --self-test   pipe-drain, stall-predicate and settled-screendump checks (no QEMU)
+# After KERNEL OK the harness issues QEMU monitor `stop` before the screendumps, then queues `q` and
+# `cont`s (inv237): the kernel's 5 s 'q' wait is rdtsc (tsc_per_ms * 5000) and a host suspend can
+# jump guest TSC so the wait expires mid-dump (inv236 os/bootpol-config-strict). Failed screendumps
+# still FAIL. FORGE_BOOT_DELAY_AFTER_OK=N sleeps N s after the stop, for tests/os/boot-ok-stop.sh.
 # Same behaviour and PASS/FAIL/HANG/SLOW lines as boot.py; see its docstring. Differences: QEMU runs via
 # os.fork/os.execv with its serial console on two pipes, and the HMP monitor is a `-chardev pipe` (the FIFOs
 # MON.in / MON.out made with os.mkfifo, opened O_RDWR so neither side blocks) read with os.poll, instead of a
@@ -558,14 +562,34 @@ def boot(h, attempt):
             tprev = clk()
         if not shot_ok and "KERNEL OK\n" in buf:
             shot_ok = True
+            # Freeze vCPUs before the dumps (inv236 / inv237). The kernel's 5 s wait for 'q' is
+            # rdtsc vs tsc_per_ms * 5000; a host suspend can jump guest TSC so the wait expires
+            # and qemu_exits while we still dump. monitor stop keeps the vCPUs paused until we
+            # cont. putc writes serial before the framebuffer, so KERNEL OK\n can appear mid
+            # fb_flush (inv128); if a stopped dump misses the text, briefly cont, stop, retry.
+            monitor(h, "stop", 1.0)
+            hn = delay_after_ok()
+            if hn != "":
+                h2 = hnote(buf, notes, hn)
+                buf = h2[0]
+                notes = h2[1]
             if os.getenv("FORGE_BOOT_PROBE", "") == "1":
             # live check of the hang-dump probe path (os/hang-probe-live): same reads a HANG makes
                 buf = concat(buf, concat("\n", probe_dump(h, buf)))
             if FBTEXT[0] != "":
                 fbmsg = screenshot(h)
+                ntry: int = 1
+                while ntry < SHOT_MAX and fb_has_text(fbmsg) == 0 and not ("screendump failed" in fbmsg):
+                    monitor(h, "cont", 0.5)
+                    time.sleep(0.15)
+                    monitor(h, "stop", 1.0)
+                    fbmsg = screenshot(h)
+                    ntry += 1
+            # 'q' is queued on COM1 while the vCPUs are still stopped, then they run again
             e = send(sin, "q")
             if e != "":
                 buf += f"[harness: 'q' not delivered: {e}]"
+            monitor(h, "cont", 1.0)
             tprev = clk()
         time.sleep(0.05)
     if rc is None:
@@ -628,6 +652,34 @@ def fix1(x):
     t: int = int(x * 10 + 0.5)
     return f"{t // 10}.{t % 10}"
 
+def fb_has_text(msg):
+# 1 if screenshot() found the last FBTEXT segment on a decoded row (the ="..." form in the message)
+    if FBTEXT[0] == "" or msg == "":
+        return 0
+    parts = split(FBTEXT[0], "^")
+    last = parts[len(parts) - 1]
+    needle = concat(concat('="', last), '"')
+    return int(needle in msg)
+
+def delay_after_ok():
+# FORGE_BOOT_DELAY_AFTER_OK=N (seconds): sleep N s after KERNEL OK and (on the new harness) after
+# QEMU monitor `stop`, before the screendump. tests/os/boot-ok-stop.sh uses N=6, longer than the
+# kernel's 5 s rdtsc 'q' wait. SIGSTOP of the QEMU process does not reproduce that wait expiring:
+# guest TSC is pause-aware and does not jump (a probe stayed at debug-exit 1782 ms after a 6 s
+# SIGSTOP). A plain delay with vCPUs still running does: the wait expires, the kernel qemu_exits,
+# and the dump finds no ppm — the inv236 failure. After `stop`, the same delay must not expire the
+# wait, because the vCPUs are paused.
+    s = os.getenv("FORGE_BOOT_DELAY_AFTER_OK", "0")
+    n = 0
+    try:
+        n = int(s)
+    except Exception:
+        n = 0
+    if n <= 0:
+        return ""
+    time.sleep(float(n))
+    return f"[harness: delayed {n}s after KERNEL OK]"
+
 def grab_rows(h):
 # one QEMU monitor screendump, decoded to [w, h, rows] (rows are the rstripped text of each 16-pixel cell row)
     if os.path.exists(h.shot):
@@ -666,8 +718,7 @@ def screenshot(h):
 # Screendump race (inv128 O0 efi-loader-gpt): the kernel writes each character to serial before the
 # framebuffer, and the newline after KERNEL OK scrolls the console, redrawing every changed cell left to
 # right. A single dump taken as soon as the serial line arrived caught row 46 half redrawn ("KERNEL OK"
-# followed by the tail of the previous row). The kernel draws nothing more until the harness sends 'q', so
-# dump until two consecutive dumps decode identically (at most SHOT_MAX = 4, about 3.5 s, inside the kernel's 5 s wait), then check that settled screen.
+# followed by the tail of the previous row). The vCPUs are stopped first (see the KERNEL OK path in boot()), so a host suspend cannot expire the 5 s rdtsc wait during these dumps; if the first stopped dump is mid-flush the caller briefly `cont`s and tries again. Dump until two consecutive dumps decode identically (at most SHOT_MAX = 4), then check that settled screen.
 # A real rendering bug still fails: its wrong text is stable.
     try:
         g = grab_rows(h)
