@@ -9,6 +9,15 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `751c90b` cudc: more bounds checks elided by default (bounds-bench-overhead on slow CI runners). A local written
+  once as `n = len(x)` at the top of a function, x a slice parameter it never writes, now counts as `len(x)`;
+  `while v < n:` / `while v < len(x):` (v unsigned, its `addr()` never taken) drops the check on `x[v]` in that
+  loop's own body until v is written; and `x[v - K]` inside `range(C, ...)` is elided for a literal K <= C. The
+  bench keeps 9 of 17 checked sites instead of 13 (its sieve has none left, about 6.4M to 1M checks a round); the
+  box ratio went from 1.0068 to 0.9998. CI runners near 343 ms per unchecked round gave 1.054-1.056 with the old
+  code while the rest gave 1.009-1.041 (docs/ci.md); the 5% limit is unchanged. Kernel and tests/fs output is
+  byte-identical. New tests/bounds/elide_alias.cud (5 positive and 12 negative functions), oob_while.cud and
+  oob_addr.cud. Reseeded.
 - `16f9c5d` Fix: the OS boot harness glued its box-freeze and suspension notes to the next guest serial line
   (inv235 O2 `os/kaslr` counted 4 of 5 kexecs: `[harness: box frozen 3s, not counted]kexec: new kernel
   relocatable, ...`). A note now gets its own line, or waits in the end-of-log notes when a guest line is still
