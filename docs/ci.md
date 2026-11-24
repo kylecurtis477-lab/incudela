@@ -39,7 +39,14 @@ The byte-for-byte checks compare against the dev box's tools (Debian 13: GNU as 
   versions (test tooling only, nothing from it is shipped); pushing a workflow change needs a token with the
   `workflow` scope.
 - bounds-bench-overhead: median 1.0552 with every pair between 1.0515 and 1.0576, so not noise; earlier runs gave
-  1.0106 to 1.0292, which points at the runner's CPU model. The 5% limit stays.
+  1.0106 to 1.0292, which points at the runner's CPU model. The 5% limit stays. Probe (2026-11-24, 19 runs, the
+  bench assembly byte-identical across them): grouped by the unchecked last-pair time, runners near 262 ms gave
+  1.009-1.018 (10 runs; the dev box, an Emerald Rapids Xeon, is this class at 1.004-1.007), runners near 343 ms
+  gave 1.0538-1.0559 (6 runs, every failure), a third group 1.041 (3 runs), one 179 ms runner 1.029. The logs
+  name no CPU model and reading /proc/cpuinfo needs a workflow change, so the classes are unnamed. The bench's
+  13 checked sites ran about 6.4M checks a round; the elision rules of 2026-11-24 (docs/SYSTEMS.md, bounds)
+  leave 9 checked sites and about 1M checks (only the histogram's `h[s[i] % 256]` in a hot loop), and the box
+  ratio went from 1.0068 to 0.9998. A slow-class runner has not run it yet.
 
 `tests/ci/run.sh` (a `run_tests.sh` item) checks these rules on the workflow file and checks that a copy breaking
 each one (tag pin, short SHA, write token, extra write permission, a secret, a download, a missing timeout, kept

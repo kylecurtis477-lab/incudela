@@ -89,3 +89,12 @@ fs_ssa_names | if FS_SSRPI[j] == ti and contains(s, FS_SSRP[j]): | defensive (st
 fs_ssa_memfold | if fs_ssa_names(chk, ti): | defensive (step 4ai): follows fs_ssa_names; a load into T's full or 32-bit name is allowed before this test
 fs_ssa_cidx | if (s != 1 and s != 2 and s != 4 and s != 8) or (char_at(b, o - 1) != 32 and char_at(b, o - 1) != 44) or find(FS_SSR, 14, rb) < 0 or str_eq(rb, rr) or v * s > 2147483647: | defensive (step 4ak): generated scaled addresses are (%rB,%rI,S) with S 1/2/4/8, a tracked base other than the index, no displacement of their own, and indexes far below 2^31/S
 fs_ssa_cidx | if fs_ssa_names(chk, ri): | defensive (step 4ak): the code generator never names the index register again in the mov that uses it, except as a load's destination
+fs_bsafe | if off < 0: | defensive (2026-11-24 elision): a K_NUM token's value is never negative (a minus is its own operator token, and 18446744073709551615 stays positive: tests/bounds/elide_alias.cud neg_big keeps its check through off > fsb_lo)
+fs_wtok | if fs_isop2(p - 1, "(") and fs_xname(p - 2): | defensive (2026-11-24 elision): take/replace/swap need an own[T]/nown[T] place, and fs_wtok is only asked about slice parameters, length aliases (u64 from len()) and unsigned loop variables, none of which can be an owner
+fs_wtok | if tk[b] == K_ID and fs_isop2(b - 1, "(") and fs_xname(b - 2) and str_eq(tv[b - 2], "swap"): | defensive (2026-11-24 elision): as above, swap(a, nm) needs nm to be an owner place
+fs_fbody | if fs_ucur < 0 or fsf_pos[fs_ucur] < 0: | defensive (2026-11-24 elision): the loop facts are looked up only while a function body with a recorded position is being compiled
+fs_fbody | while tk[p] != K_EOF and not fs_isop2(p, ":"): | defensive (2026-11-24 elision): fsf_pos is recorded with fp on the signature's ':', so the scan starts there
+fs_fbody | if tk[p + 1] != K_NL or tk[p + 2] != K_IND: | defensive (2026-11-24 elision): the helpers are reached only from a for/while loop fact, and a loop cannot sit in a one-line function body
+fs_roslice | if r[1] == 0: | defensive (2026-11-24 elision): follows fs_fbody's one-line case, which a loop fact never reaches
+fs_lenalias | if r[1] == 0: | defensive (2026-11-24 elision): as above
+fs_addrtaken | if r[1] == 0: | defensive (2026-11-24 elision): as above

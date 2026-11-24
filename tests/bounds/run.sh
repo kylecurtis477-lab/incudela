@@ -11,6 +11,8 @@ trap_case() { # name, expected diagnostic
 trap_case oob_slice "bounds check failed: tests/bounds/oob_slice.cud:5: index 3 out of range for length 3"
 trap_case oob_array "bounds check failed: tests/bounds/oob_array.cud:7: index 18446744073709551615 out of range for length 5"
 trap_case oob_sub "bounds check failed: tests/bounds/oob_sub.cud:7: index 6 out of range for length 5"
+trap_case oob_while "bounds check failed: tests/bounds/oob_while.cud:11: index 4 out of range for length 4"
+trap_case oob_addr "bounds check failed: tests/bounds/oob_addr.cud:15: index 4 out of range for length 4"
 # the in-range call before the trap still ran
 grep -qx 0 $T/oob_slice.out && ok bounds-before-trap || no bounds-before-trap
 cf_case() { # name, expected error
@@ -26,6 +28,17 @@ build/cudc $T/bare.cud $T/bare.s && grep -q ud2 $T/bare.s && ok bounds-bare-ud2 
 build/cudc tests/bounds/elide.cud $T/e.s --bounds-stats 2> $T/e.st
 grep -qx "bounds: 8 sites, 5 checked, 3 elided" $T/e.st && ok bounds-elide-count || { no bounds-elide-count; cat $T/e.st; }
 ./cuditor tests/bounds/elide.cud -o $T/e && [ "$($T/e)" = 197 ] && ok bounds-elide-run || no bounds-elide-run
+# elision through n = len(s) aliases, while v < n: / while v < len(s): guards and range(C, ...) lower bounds
+# (X[v - K], K <= C): each pos_* function has no check left, each neg_* keeps its own (a reassigned or
+# conditionally defined alias, a write to v before the index, an index in a nested loop, K > C, <=, a written
+# slice parameter, addr() of v, an alias also written by for or addr(), len() of a local array, a K that wraps)
+# (in range(C, ...), stored negative); -O0 keeps all 29
+fchk() { awk '/^[a-z_]+:$/{f=substr($1,1,length($1)-1)} /call forge_bounds_fail/{c[f]++} /^(pos|neg)_[a-z_]+:$/{n[++k]=substr($1,1,length($1)-1)} END{for(i=1;i<=k;i++) printf "%s=%d ", n[i], c[n[i]]+0}' $1; }
+build/cudc tests/bounds/elide_alias.cud $T/a.s --bounds-stats 2> $T/a.st
+[ "$(fchk $T/a.s)" = "pos_range_alias=0 pos_while=0 pos_while_len=0 pos_nested_while=0 pos_lo=0 neg_reassign=1 neg_cond_def=1 neg_write_before=1 neg_nested=1 neg_lo=1 neg_le=1 neg_param_write=2 neg_addr=1 neg_alias_for=1 neg_alias_addr=1 neg_while_array=1 neg_big=1 " ] && grep -qx "bounds: 29 sites, 23 checked, 6 elided" $T/a.st && ok bounds-elide-alias || { no bounds-elide-alias; fchk $T/a.s; cat $T/a.st; }
+build/cudc tests/bounds/elide_alias.cud $T/a0.s -O0 --bounds-stats 2> $T/a0.st
+grep -qx "bounds: 29 sites, 29 checked, 0 elided" $T/a0.st && ok bounds-elide-alias-O0 || { no bounds-elide-alias-O0; cat $T/a0.st; }
+./cuditor tests/bounds/elide_alias.cud -o $T/a && [ "$($T/a)" = 4732 ] && CUDC_FLAGS=-O0 ./cuditor tests/bounds/elide_alias.cud -o $T/a0 && [ "$($T/a0)" = 4732 ] && ok bounds-elide-alias-run || no bounds-elide-alias-run
 # -O0 turns elision off: every site keeps its check (also for in-range constant indices), same output
 build/cudc tests/bounds/elide.cud $T/e0.s -O0 --bounds-stats 2> $T/e0.st
 grep -qx "bounds: 8 sites, 8 checked, 0 elided" $T/e0.st && ok bounds-elide-off-O0 || { no bounds-elide-off-O0; cat $T/e0.st; }

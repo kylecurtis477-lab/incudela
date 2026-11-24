@@ -15755,6 +15755,13 @@ fs_nnc = 0
 fsb_v = list(256)
 fsb_x = list(256)
 fsb_c = list(256)
+# fsb_lo: the loop variable's lower bound (range start, 0 for while); fsb_k: 0 for a range() fact, 1 for a
+# while v < bound: fact, which holds only in that loop's own body (fsb_d is its nfsloop) and only until the body
+# (from token fsb_p) writes v
+fsb_lo = list(256)
+fsb_k = list(256)
+fsb_d = list(256)
+fsb_p = list(256)
 nfsb = 0
 # expanded-line -> (file, line) map built by fs_include, for precise runtime diagnostics
 # Phase 7.3 `-g`: DWARF 4 line table + one DW_TAG_subprogram per function. Each statement gets a
@@ -18633,13 +18640,25 @@ def fs_bcheck(lenop):
     emit_raw(concat(l, ":\n"))
 
 def fs_bsafe(base, t):
-# 1 if the index at fp+1 (a bare loop variable) is proven in range for base (name) of type t
-    if len(base) == 0 or tk[fp + 1] != K_ID or tk[fp + 2] != K_OP or not str_eq(tv[fp + 2], "]"):
+# 1 if the index at fp+1 (a bare loop variable v, or v - K with literal K no larger than v's lower bound) is
+# proven in range for base (name) of type t
+    if len(base) == 0 or tk[fp + 1] != K_ID:
+        return 0
+    off = 0
+    if fs_isop2(fp + 2, "-") and tk[fp + 3] == K_NUM and fs_isop2(fp + 4, "]"):
+        off = tv[fp + 3]
+        if off < 0:
+            return 0
+    elif not fs_isop2(fp + 2, "]"):
         return 0
     v = tv[fp + 1]
     i = nfsb - 1
     while i >= 0:
         if str_eq(fsb_v[i], v):
+            if off > fsb_lo[i]:
+                return 0
+            if fsb_k[i] == 1 and (nfsloop != fsb_d[i] or fs_wrote(fsb_p[i], fp + 1, v)):
+                return 0
             if str_eq(fsb_x[i], base):
                 return 1
             if fsk[t] == 3 and fsb_c[i] >= 0 and fsb_c[i] <= ftn[t]:
@@ -18679,10 +18698,17 @@ def fs_rngfact():
     elif tk[p] == K_ID and fs_local(tv[p]) < 0 and fs_const(tv[p]) >= 0:
         c = fsc_v[fs_const(tv[p])]
         q = p + 1
+    elif tk[p] == K_ID and len(fs_lenalias(tv[p], p)) > 0:
+    # range(n) with n = len(X) (fs_lenalias): the same as range(len(X))
+        x = fs_lenalias(tv[p], p)
+        q = p + 1
     if q < 0 or not fs_isop2(q, ")") and not fs_isop2(q, ","):
         return -1
     fsb_x[255] = x
     fsb_c[255] = c
+    fsb_lo[255] = 0
+    if p != fp:
+        fsb_lo[255] = tv[fp]
     return 255
 
 def fs_bodyok(vn, x):
@@ -18723,6 +18749,135 @@ def fs_bodyok(vn, x):
                     return 0
         p += 1
     return 1
+
+def fs_wtok(p, nm):
+# 1 if token p (the name nm) is written or escapes there: assigned (any assignment op, or a ': T' declaration),
+# a for variable, addr(nm), the first argument of take/replace/swap, swap(a, nm), or nm.field (conservative)
+    if fs_isop2(p + 1, ":"):
+    # nm: T declares nm only at the start of a statement (while v < nm: is a read)
+        return tk[p - 1] == K_NL or tk[p - 1] == K_IND or tk[p - 1] == K_DED
+    if tk[p + 1] == K_OP and (fs_asgop(tv[p + 1]) or str_eq(tv[p + 1], ".")):
+        return 1
+    if tk[p - 1] == K_ID and str_eq(tv[p - 1], "for"):
+        return 1
+    if fs_isop2(p - 1, "(") and tk[p - 2] == K_ID and str_eq(tv[p - 2], "addr"):
+        return 1
+    if fs_isop2(p - 1, "(") and fs_xname(p - 2):
+        return 1
+    if fs_isop2(p - 1, ","):
+        b = p - 2
+        while b >= 2 and fs_isop2(b - 1, ".") and tk[b - 2] == K_ID:
+            b -= 2
+        if tk[b] == K_ID and fs_isop2(b - 1, "(") and fs_xname(b - 2) and str_eq(tv[b - 2], "swap"):
+            return 1
+    return 0
+
+def fs_wrote(p0, p1, nm):
+# 1 if a token in [p0, p1) writes nm (fs_wtok)
+    p = p0
+    while p < p1:
+        if tk[p] == K_ID and str_eq(tv[p], nm) and fs_wtok(p, nm):
+            return 1
+        p += 1
+    return 0
+
+def fs_fbody():
+# [first, end) token range of the current function's indented body, or [0, 0) for a one-line body
+    r = [0, 0]
+    if fs_ucur < 0 or fsf_pos[fs_ucur] < 0:
+        return r
+    p = fsf_pos[fs_ucur]
+    while tk[p] != K_EOF and not fs_isop2(p, ":"):
+        p += 1
+    if tk[p + 1] != K_NL or tk[p + 2] != K_IND:
+        return r
+    p += 2
+    r[0] = p
+    d = 0
+    while tk[p] != K_EOF:
+        if tk[p] == K_IND:
+            d += 1
+        elif tk[p] == K_DED:
+            d -= 1
+            if d <= 0:
+                break
+        p += 1
+    r[1] = p
+    return r
+
+def fs_roslice(x):
+# 1 if x is a slice parameter of the current function that its body never writes (so len(x) never changes)
+    l = fs_local(x)
+    if l < 0 or l >= fsf_np[fs_ucur] or fsk[fsl_t[l]] != 5:
+        return 0
+    r = fs_fbody()
+    if r[1] == 0:
+        return 0
+    return not fs_wrote(r[0], r[1], x)
+
+def fs_lenalias(nm, at):
+# X if the local nm is a length alias of a read-only slice parameter X (fs_roslice) at token at: nm is not a
+# parameter, the body writes it exactly once, and that write is the statement nm = len(X) at the body's top
+# level (so it runs exactly once, before any later token) and before at. Then nm == len(X) wherever it is read
+# after its definition, so range(nm) and while v < nm: bound an index into X like len(X) does. Else "".
+    l = fs_local(nm)
+    if fs_ucur < 0 or l < 0 or l < fsf_np[fs_ucur]:
+        return ""
+    r = fs_fbody()
+    if r[1] == 0:
+        return ""
+    p = r[0] + 1
+    d = 1
+    nw = 0
+    dp = -1
+    while p < r[1]:
+        if tk[p] == K_IND:
+            d += 1
+        elif tk[p] == K_DED:
+            d -= 1
+        elif tk[p] == K_ID and str_eq(tv[p], nm) and fs_wtok(p, nm):
+            nw += 1
+            dp = p
+            if d != 1 or not (tk[p - 1] == K_NL or tk[p - 1] == K_IND or tk[p - 1] == K_DED):
+                return ""
+        p += 1
+    if nw != 1 or dp >= at:
+        return ""
+    if not (fs_isop2(dp + 1, "=") and tk[dp + 2] == K_ID and str_eq(tv[dp + 2], "len") and fs_isop2(dp + 3, "(") and tk[dp + 4] == K_ID and fs_isop2(dp + 5, ")") and tk[dp + 6] == K_NL):
+        return ""
+    if not fs_roslice(tv[dp + 4]):
+        return ""
+    return tv[dp + 4]
+
+def fs_addrtaken(nm):
+# 1 if addr(nm) appears anywhere in the current function's body (or the body is one line): a pointer to nm
+# could then write it from a call inside the loop, which the token scan of fs_wrote would not see
+    r = fs_fbody()
+    if r[1] == 0:
+        return 1
+    p = r[0]
+    while p < r[1]:
+        if tk[p] == K_ID and str_eq(tv[p], nm) and fs_isop2(p - 1, "(") and tk[p - 2] == K_ID and str_eq(tv[p - 2], "addr"):
+            return 1
+        p += 1
+    return 0
+
+def fs_whilefact():
+# at a while condition: v < n: or v < len(X): with v an unsigned integer local, n a length alias of X
+# (fs_lenalias) or X a read-only slice parameter (fs_roslice). Returns X (the loop body may index X[v] until it
+# writes v), or "".
+    if tk[fp] != K_ID or not fs_isop2(fp + 1, "<"):
+        return ""
+    l = fs_local(tv[fp])
+    if l < 0 or not (fsl_t[l] == FT_U8 or fsl_t[l] == FT_U16 or fsl_t[l] == FT_U32 or fsl_t[l] == FT_U64):
+        return ""
+    if fs_addrtaken(tv[fp]):
+        return ""
+    if tk[fp + 2] == K_ID and fs_isop2(fp + 3, ":"):
+        return fs_lenalias(tv[fp + 2], fp + 2)
+    if tk[fp + 2] == K_ID and str_eq(tv[fp + 2], "len") and fs_isop2(fp + 3, "(") and tk[fp + 4] == K_ID and fs_isop2(fp + 5, ")") and fs_isop2(fp + 6, ":") and fs_roslice(tv[fp + 4]):
+        return tv[fp + 4]
+    return ""
 
 def fs_xname(p):
 # the token at p names the Stage 3c intrinsic take/replace/swap (no user function by that name)
@@ -19782,6 +19937,10 @@ def fs_stmt1():
         lt = fs_newlab()
         lb = fs_newlab()
         emit_raw(concat(lt, ":\n"))
+        wv = tv[fp]
+        wx = ""
+        if fs_elide:
+            wx = fs_whilefact()
         fs_rexpr()
         e("test %rax,%rax")
         e(concat("je ", lb))
@@ -19796,7 +19955,19 @@ def fs_stmt1():
         while k < nc:
             fsl_nn[nl0[k]] = 1
             k += 1
+        nb0 = nfsb
+        if len(wx) > 0:
+        # the body indexes wx[wv] in range until it writes wv; not inside a nested loop (fsb_d)
+            fsb_v[nfsb] = wv
+            fsb_x[nfsb] = wx
+            fsb_c[nfsb] = -1
+            fsb_lo[nfsb] = 0
+            fsb_k[nfsb] = 1
+            fsb_d[nfsb] = nfsloop
+            fsb_p[nfsb] = fp
+            nfsb += 1
         fs_suite()
+        nfsb = nb0
         fs_nnjoin(sv)
         nfsloop -= 1
         fs_loopend(e0)
@@ -19863,17 +20034,23 @@ def fs_stmt1():
             fsb_v[nfsb] = vn
             fsb_x[nfsb] = fsb_x[fx]
             fsb_c[nfsb] = fsb_c[fx]
+            fsb_lo[nfsb] = fsb_lo[fx]
+            fsb_k[nfsb] = 0
             nfsb += 1
         elif fx < 0 or st <= 0:
         # a loop variable shadows any outer fact for the same name
             fsb_v[nfsb] = vn
             fsb_x[nfsb] = " "
             fsb_c[nfsb] = -1
+            fsb_lo[nfsb] = 0
+            fsb_k[nfsb] = 0
             nfsb += 1
         else:
             fsb_v[nfsb] = vn
             fsb_x[nfsb] = " "
             fsb_c[nfsb] = -1
+            fsb_lo[nfsb] = 0
+            fsb_k[nfsb] = 0
             nfsb += 1
         fs_suite()
         nfsb = nb0

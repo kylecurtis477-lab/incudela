@@ -26,7 +26,9 @@ unreachable.
 
 Pass groups: the `--fs-opt` allocator (`fs_regalloc`, `fs_ra_*`), its peepholes (`fs_rapeep`), `--fs-live`
 liveness (`fs_lv_*`), `--fs-temps` (`fs_tmp_*`), `--fs-ssa` (`fs_ssa_*`, step 4d), constant division by magic numbers (`fs_cdiv_try`, used under
-any of the three flags) and bounds-check elision (`fs_bsafe`, always on unless `--no-bounds`).
+any of the three flags) and bounds-check elision (`fs_bsafe`, always on unless `--no-bounds`; since 2026-11-24 with
+its loop-fact helpers `fs_whilefact`, `fs_lenalias`, `fs_roslice`, `fs_addrtaken`, `fs_wrote`, `fs_wtok` and
+`fs_fbody`, 46 of 55 blocks hit, the other 9 on the allow-list as defensive).
 
 `--quick`: two programs, two configurations; it fails if the instrumented compiler does not build, writes no
 counts, or hits no block of a pass group other than bounds-check elision (a smoke test of the tool itself).

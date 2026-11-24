@@ -1,0 +1,18 @@
+# cuditor: no-runtime
+# a write to the while variable before the index ends the while v < n: fact: s[i] keeps its check and traps
+include "../fs/linux.cudi"
+
+def last(s: slice[u64]) -> u64:
+    n = len(s)
+    t: u64 = 0
+    i: u64 = 0
+    while i < n:
+        i += 1
+        t += s[i]
+    return t
+
+def main() -> i64:
+    a: u64[4]
+    put_u64(last(a[:]))
+    nl()
+    return 0
