@@ -25,7 +25,10 @@ file names and contents) is encrypted and authenticated. The code is in `example
   returns 0; see Limits): SHA-256("frge-kek" || passphrase), where the passphrase (8..64 bytes) arrives as the QEMU fw_cfg file
   `opt/forge/userkey` (I/O ports 0x510/0x511, read through the `pio_add`/`pio_rd`/`pio_wr` safe wrappers).
   The user key itself is never written anywhere.
-- **Data key (DK).** Made at first mount from 512 TSC jitter samples hashed with SHA-256. It is stored only
+- **Data key (DK).** Made at first mount from 512 TSC jitter samples hashed with SHA-256; the digest is only a
+  PRF key: DK = HMAC(digest, "dkey") and the wrap salt = HMAC(digest, "wsalt"), so the plaintext salt says nothing
+  about DK (fix, inv228: the salt used to be digest words 0..3 and DK mixed those words with words 4..7, which left
+  DK 128 unknown bits once the salt was read from the disk). It is stored only
   wrapped: `objects.key` (one Incudela FS block) holds magic `FORGEKEY`, uid 1000, a 128-bit salt,
   DK XOR HMAC(KEK, "wrap" || salt) and a 256-bit check value HMAC(KEK, "chk" || salt), compared in constant time.
 - **Working keys, separate for each job.** K_enc = HMAC(DK, "enc") is the ChaCha20 key and K_mac = HMAC(DK, "mac")
@@ -74,6 +77,9 @@ Not protected against:
   and not the passphrase either. The written log slots do not compress with zlib.
 - **os/objstore-wrong-key-locked:** a boot with a wrong passphrase and a boot with no key both report the
   store locked, and `objects.log`/`objects.key` are byte-identical afterwards.
+- **os/objstore-data-key-independent:** the host unwraps DK from `objects.key` with the KEK (openssl), checks the
+  key check value, and checks the old salt-to-DK relation holds for none of the four word pairs (on the old
+  derivation it held for all four).
 - **os/objstore-nonce-unique:** every written slot in the image has a distinct counter, and the durable
   high-water mark in `objects.ctr` is at least the highest of them.
 - **os/objstore-tamper-rejected:** boot 6 runs on a copy of the image with one bit of the newest slot's

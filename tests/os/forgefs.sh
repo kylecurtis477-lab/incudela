@@ -35,6 +35,19 @@ print('outside=%s %s'%(hashlib.sha256(d[:lo]+d[hi:]).hexdigest()[:16],' '.join(o
 P
 }
 KEY=forge-test-passphrase-uid1000
+# host-side key checks (inv228), shell + openssl only: hex of LEN bytes of FILE at OFF; HMAC-SHA256 and SHA-256 of hex
+hx() { od -An -tx1 -v -j "$2" -N "$3" "$1" | tr -d ' \n'; }
+hbin() { printf "$(printf '%s' "$1" | sed 's/../\\x&/g')"; }
+hmac() { hbin "$2" | openssl mac -digest SHA256 -macopt "hexkey:$1" HMAC | tr 'A-F' 'a-f'; }
+sha() { hbin "$1" | openssl dgst -sha256 -r | cut -d' ' -f1; }
+le32() { printf '%s' "$1" | sed 's/\(..\)\(..\)\(..\)\(..\)/\4\3\2\1/'; }  # 4 hex bytes <-> a little-endian u32 value
+x32() { printf '%08x' $(( 0x$1 ^ 0x$2 )); }
+# the data key from objects.key and the KEK (hex): word 4+i holds DK word i XOR HMAC(KEK, "wrap" || salt) word i
+od_dk_hex() {
+  local W=$(hmac "$2" "7772617000000000$(hx "$1" 16 16)") i d=""
+  for i in 0 1 2 3 4 5 6 7; do d="$d$(le32 "$(x32 "$(le32 "$(hx "$1" $((32 + 8 * i)) 4)")" "$(le32 "${W:$((8 * i)):8}")")")"; done
+  printf '%s' "$d"
+}
 . tests/os/frozen.sh
 frz_self_test
 boot() {  # boot [userkey]: the user key reaches the kernel as QEMU fw_cfg file opt/forge/userkey
@@ -114,6 +127,20 @@ print('%d written slots, %d ciphertext bytes'%(len(used),len(ct)) if not bad els
 P
 )
 case "$PT" in BAD*) echo "FAIL os/objstore-no-plaintext: $PT";; *) echo "PASS os/objstore-no-plaintext ($PT)";; esac
+# inv228: the data key is independent of the plaintext wrap salt. The host unwraps DK with the KEK and checks the
+# old derivation's relation (salt = digest words h0..h3, DK word i = bswap(h_i) ^ h_(7-i), so DK word 7-i =
+# bswap(DK_i ^ bswap(h_i)) ^ h_i) holds for none of the four word pairs; the unwrapped DK must also run the store
+KEKH=$(sha "$(printf 'frge-kek' | od -An -tx1 -v | tr -d ' \n')$(printf '%s' "$KEY" | od -An -tx1 -v | tr -d ' \n')")
+DKH=$(od_dk_hex $T/okey.bin "$KEKH"); rel=0
+bs() { le32 "$1"; }
+for i in 0 1 2 3; do
+  h=$(le32 "$(hx $T/okey.bin $((16 + 4 * i)) 4)"); di=$(le32 "${DKH:$((8 * i)):8}"); dj=$(le32 "${DKH:$((8 * (7 - i))):8}")
+  [ "$(x32 "$(bs "$(x32 "$di" "$(bs "$h")")")" "$h")" = "$dj" ] && rel=$((rel + 1))
+done
+CHK=$(hmac "$KEKH" "63686b0000000000$(hx $T/okey.bin 16 16)")
+if [ "${#DKH}" = 64 ] && [ "$CHK" = "$(hx $T/okey.bin 96 32)" ] && [ $rel = 0 ]; then
+  echo "PASS os/objstore-data-key-independent (DK unwrapped on the host, check value matches; salt relation holds for 0 of 4 word pairs)"
+else echo "FAIL os/objstore-data-key-independent (DK ${#DKH} hex, check value $([ "$CHK" = "$(hx $T/okey.bin 96 32)" ] && echo ok || echo bad), salt relation holds for $rel of 4 word pairs)"; fi
 # every slot ever written has its own counter (= nonce with the block number), and objects.ctr's
 # durable high-water mark covers all of them, so no counter can be handed out again after a reboot
 $T/incudela-part read $T/nv.img objects.ctr > $T/octr.bin

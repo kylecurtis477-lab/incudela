@@ -28,6 +28,7 @@ od_dk: u64[8]  # the store's data key (random, stored only wrapped by od_kek)
 od_ek: u64[8]  # ChaCha20 key derived from od_dk
 od_mk: u64[8]  # tag key derived from od_dk
 od_t: u64[8]  # kdf output
+od_pool: u64[8]  # od_key_new: the entropy pool digest (a PRF key, wiped after use)
 od_ksrc: u64  # 0 none, 1 TPM, 2 fw_cfg platform key
 od_badtag: u64  # slots rejected (torn, never written, or tampered) at the last open
 od_hwm: u64  # durable counter high-water mark: no counter above it has been used
@@ -183,11 +184,24 @@ def od_key_new() -> u64:
         sh_u64(t0)
         i += 1
     sh_fin()
-    s0 = sh_h[0] | (sh_h[1] << 32)
-    s1 = sh_h[2] | (sh_h[3] << 32)
+    # the pool digest is only a PRF key: the data key and the wrap salt are independent HMAC outputs of it.
+    # (Before inv228 the salt was digest words 0..3 and the data key mixed the same words with words 4..7,
+    # so the plaintext salt in objects.key left the data key only 128 unknown bits.)
     i = 0
     while i < 8:
-        od_dk[i] = od_be(sh_h[i]) ^ sh_h[7 - i]
+        od_pool[i] = od_be(sh_h[i])
+        i += 1
+    od_kdf(od_pool, 0x79656B64, 0, 0)  # "dkey"
+    i = 0
+    while i < 8:
+        od_dk[i] = od_t[i]
+        i += 1
+    od_kdf(od_pool, 0x746C617377, 0, 0)  # "wsalt"
+    s0 = od_t[0] | (od_t[1] << 32)
+    s1 = od_t[2] | (od_t[3] << 32)
+    i = 0
+    while i < 8:
+        od_pool[i] = 0
         i += 1
     od_kdf(od_kek, 0x70617277, s0, s1)  # "wrap"
     i = 0
