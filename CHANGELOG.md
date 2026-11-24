@@ -9,6 +9,10 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- xHCI fix: the USB keyboard could go silent after the switch to MSI-X when its last polled report (the Enter
+  release) was posted between draining the event ring and enabling the interrupter, which left Event Handler
+  Busy set with no interrupt sent. `xh_irq_init` now enables the interrupter first and drains after. Found by the
+  inv230 OS precheck (`os/drivers`, reproduced under CPU load).
 - Test fix: tests/os/forgefs.sh found the two key-file copies in the disk image with a grep of the slot's first 32
   bytes, which never matches when the random wrap salt holds a newline byte; the passphrase-change crash test then
   failed. It now searches the fixed 16-byte prefix and compares all 32 bytes (`koffs`).

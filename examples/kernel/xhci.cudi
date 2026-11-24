@@ -7,7 +7,9 @@
 # xh_kbd_poll reads the reports (polled, bounded), decoding newly pressed keys to text; tests/os/drivers.sh
 # types into QEMU's usb-kbd through the monitor. HID step 3: the controller then switches to MSI-X (vector
 # 0x52, cpu0): on_xhci drains the event ring under rq_lock and pushes each new key into the tty input path
-# (tty_push_l, like the PS/2 and COM1 handlers), so a USB keyboard types into the shell.
+# (tty_push_l, like the PS/2 and COM1 handlers), so a USB keyboard types into the shell. xh_irq_init turns on
+# IMAN.IE and USBCMD.INTE before it drains what the polled phase left (fix, inv230): an event posted while
+# interrupts are off leaves Event Handler Busy set, and no MSI-X is sent until a drain clears it.
 xh_cap: u64
 xh_op: u64
 xh_rt: u64
@@ -646,12 +648,17 @@ def xh_irq_init():
     pci_wr32(xh_bdf, c, (pci_rd32(xh_bdf, c) | 0x80000000) & ~u64(0x40000000))
     f = irq_save()
     spin_lock(addr(rq_lock))
-    xh_irq_drain()  # anything left from the polled phase
     ir = xh_rt + 0x20
     mmio_wr(ir + 4, 4, 4000)  # IMOD: 1 ms moderation (250 ns units)
     mmio_wr(ir, 4, 3)  # IMAN: IE, clear IP
     mmio_wr(xh_op, 4, mmio_rd(xh_op, 4) | 4)  # USBCMD.INTE
     xh_irq_on = 1
+    # Drain only now, with IE and INTE on (fix, inv230). An event posted while interrupts were off sets EHB and
+    # IP but sends no MSI-X, and while EHB stays set the controller sends no MSI-X for later events either.
+    # Draining first left a window: the Enter release report of the polled check could land between the drain
+    # and IE, and the keyboard went silent for good. The drain's ERDP write clears EHB, and the controller
+    # interrupts again if events are still queued past ERDP.
+    xh_irq_drain()
     spin_unlock(addr(rq_lock))
     irq_restore(f)
     puts("xHCI: HID boot keyboard on MSI-X vector 0x52 -> cpu0; key presses go to the tty\n")
