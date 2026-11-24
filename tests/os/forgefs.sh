@@ -9,7 +9,8 @@
 #   must still unlock, and (inv229) it is upgraded to a v2 slot; boot 7b unlocks the upgraded slot
 #   boot 8 (inv229) runs on the good image with objects.key damaged: it unlocks from objects.keyb and repairs objects.key
 #   boots 9-11 (inv229) change the passphrase and check old and new; boots 12-13 replay a crash halfway through it
-#   boots 14-15 (inv231) rotate the data key; boots 16-21 stop a rotation halfway and at its start and resume it
+#   boots 14-15 (inv231) rotate the data key; boots 16-21 stop a rotation halfway and at its start and resume it;
+#   boots 22-23 (inv231) rotate a host-written pre-fix data key unasked
 # After every boot, every byte outside the Incudela partition (ESP, other partitions, GPT) must be unchanged.
 cd "$(dirname "$0")/../.."
 T=$(mktemp -d /tmp/forge-ffs.XXXXXX)
@@ -364,6 +365,41 @@ if grep -aq "^objstore: data key rotation stopped after 30 of 65 log blocks" $T/
    && grep -aq "^objstore VFS view persisted OK" $T/b20.log && grep -aq "^objstore VFS view persisted OK" $T/b21.log && ! grep -aq 'objstore: \(data key rot\|key slot is mid-rot\)' $T/b21.log; then
   echo "PASS os/objstore-dk-rotate-crash (stopped after 30 and after 0 of 65 blocks: the rotating slot holds both keys, the next boot reads the store under both and finishes, the one after under the new key alone)"
 else echo "FAIL os/objstore-dk-rotate-crash ($(grep -a 'objstore: \(data key rot\|key slot is\|key file\|lock\)\|PANIC\|panic' $T/b16.log $T/b17.log $T/b18.log $T/b19.log $T/b20.log $T/b21.log 2>/dev/null | tail -4))"; fi
+cp $T/nv.good $T/nv.img
+# inv231: a data key made by the derivation before the inv228 fix is rotated without being asked. The host writes
+# both key copies as a slot whose data key comes from the old derivation of random digest words h0..h7 (wrap salt
+# = h0..h3, DK word i = bswap(h_i) ^ h_(7-i)), wrapped and checked under the same KEK. The host cannot re-encrypt the
+# log under that key (no ChaCha20 here), so every log slot fails its tag and the store opens empty. Boot 22 must
+# pass the detector self-test, flag the key and rotate it (both copies generation 3, a host-unwrapped data key
+# without the old relation); boot 23 finds an independent key and rotates nothing. Both boots then stop at the
+# objstore history check ("recovered history wrong"): the crafted store has no readable history, which is expected
+# here; only the key lines and the key file are checked
+cp $T/nv.good $T/nv.img
+HP=$(openssl rand -hex 32); DKP=""; SALTP=""; WRP=""
+for i in 0 1 2 3 4 5 6 7; do DKP="$DKP$(x32 "$(le32 "${HP:$((8 * i)):8}")" "${HP:$((8 * (7 - i))):8}")"; done
+for i in 0 1 2 3; do SALTP="$SALTP$(le32 "${HP:$((8 * i)):8}")"; done
+WP=$(hmac "$KEKH" "7772617000000000$SALTP")
+for i in 0 1 2 3 4 5 6 7; do WRP="$WRP$(le32 "$(x32 "${DKP:$((8 * i)):8}" "$(le32 "${WP:$((8 * i)):8}")")")00000000"; done
+SP="$(hx $T/okey.bin 0 16)$SALTP$WRP$(hmac "$KEKH" "63686b0000000000$SALTP")$(hx $T/okey.bin 128 64)"
+SP="$SP$(sha "$SP")$Z64"
+kput "$SP" "$SP"
+boot $KEY; cp $T/s.log $T/b22.log
+$T/incudela-part read $T/nv.img objects.key > $T/okey22.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb22.bin
+boot $KEY; cp $T/s.log $T/b23.log
+DK22=$(od_dk_hex $T/okey22.bin "$KEKH"); rel22=0
+for i in 0 1 2 3; do
+  h=$(le32 "$(hx $T/okey22.bin $((16 + 4 * i)) 4)"); di=$(le32 "${DK22:$((8 * i)):8}"); dj=$(le32 "${DK22:$((8 * (7 - i))):8}")
+  [ "$(x32 "$(bs "$(x32 "$di" "$(bs "$h")")")" "$h")" = "$dj" ] && rel22=$((rel22 + 1))
+done
+ST='^objstore: pre-fix data key check: detector self-test OK (an old-derivation key is flagged, the same key with one bit changed is not)'
+if [ "$(hx $T/okey.bin 160 8)" = 0100000000000000 ] && grep -aq "$ST; this store's data key was made by the old derivation$" $T/b22.log \
+   && grep -aq "^objstore: data key rotated: 65 log blocks re-encrypted under a fresh independent data key (pre-fix data key), key slot generation 3, both copies" $T/b22.log \
+   && skeq $T/okey22.bin $T/okeyb22.bin && [ "$(hx $T/okey22.bin 160 16)" = "03000000000000000000000000000000" ] && [ "$(hx $T/okey22.bin 224 64)" = "$Z64" ] \
+   && [ "$(hmac "$KEKH" "63686b0000000000$(hx $T/okey22.bin 16 16)")" = "$(hx $T/okey22.bin 96 32)" ] && [ "${#DK22}" = 64 ] && [ $rel22 = 0 ] \
+   && grep -aq "$ST; this store's data key was independent$" $T/b23.log && grep -aq "^objstore: key file: 2 copies, generation 3, current copy objects.key$" $T/b23.log \
+   && ! grep -aq 'objstore: \(data key rot\|key slot is mid-rot\)' $T/b23.log && grep -aq "$ST; this store's data key was independent$" $T/b15.log; then
+  echo "PASS os/objstore-dk-prefix-rotate (a host-written key slot with an old-derivation data key is flagged and rotated at the next open; the new key has no salt relation and is not flagged again)"
+else echo "FAIL os/objstore-dk-prefix-rotate ($(grep -a 'objstore: \(data key rot\|pre-fix\|key file\|lock\)\|PANIC\|panic' $T/b22.log $T/b23.log 2>/dev/null | tail -4))"; fi
 cp $T/nv.good $T/nv.img
 $T/incudela-part read $T/nv.img hello.txt | grep -q "written by the Incudela kernel on its own GPT partition" && echo "PASS os/forgefs-host-read" || echo "FAIL os/forgefs-host-read"
 grep -ah "Incudela FS: remount" $T/b2.log

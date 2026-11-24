@@ -338,6 +338,8 @@ od_rotr: u64  # why the last open rotated: 0 not, 1 operator request, 2 pre-fix 
 od_rotb: u64  # log blocks it re-encrypted
 od_rots: u64  # 1 + the block count it stopped after (rotatedk stop-after), 0 if it did not stop
 od_rold: u64  # the last open found a rotating slot
+od_wk: u64  # the pre-fix data key check (inv231): 0 not run (rotating slot), 1 independent key, 2 pre-fix key
+od_wst: u64  # its detector self-test: 1 passed, 0 failed (then a flagged key is not rotated)
 
 def od_kh(s: u64[36]):
 # od_tv = SHA-256 of the slot's bytes 0..191 (words 0..23, little-endian), then bytes 224..287 (the old data
@@ -1013,16 +1015,71 @@ def od_rk_req() -> u64:
     od_rots = n + 1
     return 1
 
+def od_dkw(w: u64, i: u64) -> u64:
+# word i of od_dk (w = 0) or od_dk1 (w = 1); a u64[8] parameter would be a copy
+    if w == 0:
+        return od_dk[i]
+    return od_dk1[i]
+
+def od_dk_weak(w: u64, s0: u64, s1: u64) -> u64:
+# 1 if data key w has the derivation used before the inv228 fix: wrap salt = SHA-256 words h0..h3 and DK word
+# i = bswap(h_i) ^ h_(7-i), so DK word 7-i = bswap(DK_i ^ bswap(h_i)) ^ h_i for all four i (2^-128 by chance)
+    n: u64 = 0
+    i: u64 = 0
+    while i < 4:
+        h = s0 & 0xFFFFFFFF
+        if i == 1:
+            h = s0 >> 32
+        elif i == 2:
+            h = s1 & 0xFFFFFFFF
+        elif i == 3:
+            h = s1 >> 32
+        if od_dkw(w, 7 - i) == od_be(od_dkw(w, i) ^ od_be(h)) ^ h:
+            n += 1
+        i += 1
+    if n == 4:
+        return 1
+    return 0
+
+def od_wk_h(i: u64) -> u64:
+# the SHA-256 output word h_i of the detector self-test's made-up old-derivation key
+    return ((i + 1) * 0x9E3779B9 + 0x7F4A7C15) & 0xFFFFFFFF
+
+def od_wk_check():
+# od_wk for this store's data key, after a self-test of the detector on a key made the old way in od_dk1: it must be
+# flagged, and with one bit changed it must not be
+    i: u64 = 0
+    while i < 8:
+        od_dk1[i] = od_be(od_wk_h(i)) ^ od_wk_h(7 - i)
+        i += 1
+    s0 = od_wk_h(0) | (od_wk_h(1) << 32)
+    s1 = od_wk_h(2) | (od_wk_h(3) << 32)
+    od_wst = 0
+    if od_dk_weak(1, s0, s1) == 1:
+        od_dk1[5] = od_dk1[5] ^ 16
+        if od_dk_weak(1, s0, s1) == 0:
+            od_wst = 1
+    i = 0
+    while i < 8:
+        od_dk1[i] = 0
+        i += 1
+    od_wk = 1 + od_dk_weak(0, od_kn[2], od_kn[3])
+
 def od_rot_maybe() -> u64:
 # after an open: resume a rotation found on disk, or start one on request. 1 = open (rotated or not),
 # 4 = stopped on request in the middle (the store is left rotating, as after a crash), 0 = I/O error
     od_rotr = 0
     od_rotb = 0
     req = od_rk_req()
+    od_wk = 0
+    if od_rot == 0:
+        od_wk_check()
     if od_rot != 0:
         od_rotr = 3
     elif req != 0:
         od_rotr = 1
+    elif od_wk == 2 and od_wst == 1:  # a data key made before the inv228 fix: rotate it unasked
+        od_rotr = 2
     else:
         return 1
     # begin: a fresh independent data key from a new entropy pool; the old one goes into the slot beside it
@@ -1242,6 +1299,17 @@ def od_keymsg(r: u64):
     if od_rold != 0:
         puts("objstore: key slot is mid-rotation (an interrupted data-key rotation): log and counter slots verified ")
         puts("under the old and the new data key\n")
+    if od_wk != 0:
+        puts("objstore: pre-fix data key check: detector self-test ")
+        if od_wst == 1:
+            puts("OK (an old-derivation key is flagged, the same key with one bit changed is not)")
+        else:
+            puts("FAILED")
+        puts("; this store's data key was ")
+        if od_wk == 2:
+            puts("made by the old derivation\n")
+        else:
+            puts("independent\n")
     if od_rotr != 0 and r == 1:
         puts("objstore: data key rotated: ")
         put_u64(od_rotb)

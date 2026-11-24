@@ -67,6 +67,12 @@ file names and contents) is encrypted and authenticated. The code is in `example
   the last block, the final slot (next generation, old key cleared) is stored. A boot that finds a rotating slot
   (a crash or power loss in the middle) reads the store under both keys and finishes the rotation, and the boot log
   says so. The request is honoured on the boot it is passed; pass it for one boot.
+- **Pre-fix data keys are rotated unasked (inv231).** At each open of a slot that is not rotating, `od_dk_weak`
+  checks the data key for the derivation used before inv228's fix (wrap salt = SHA-256 words h0..h3, DK word i =
+  bswap(h_i) ^ h_(7-i), so DK word 7-i = bswap(DK_i ^ bswap(h_i)) ^ h_i for all four i; by chance 2^-128). A
+  flagged key is rotated as above, with reason "pre-fix data key". Before the check, a self-test builds a key the
+  old way (it must be flagged) and changes one bit of it (it must not be); if the self-test fails, nothing is rotated
+  automatically. The boot log reports the self-test and the verdict.
 - **Working keys, separate for each job.** K_enc = HMAC(DK, "enc") is the ChaCha20 key and K_mac = HMAC(DK, "mac")
   the HMAC key; neither is stored, and they are independent PRF outputs, so the cipher and the MAC never share a key.
 - **No key** (no TPM and no fw_cfg file): the store stays locked. Nothing is read, created or written, and
@@ -156,6 +162,13 @@ Not protected against:
   reports the mid-rotation slot, reads the persisted store under both keys and finishes the rotation (generation 3,
   reason resumed); boot 18 reads it under the new key alone. Boots 19-21 do the same with a stop after 0 blocks.
   With old-key verification removed from the kernel this test fails.
+- **os/objstore-dk-prefix-rotate:** the host writes both key copies as a slot whose data key comes from the old
+  derivation of random digest words, wrapped and checked under the same KEK. The host has no ChaCha20, so it cannot
+  re-encrypt the log under that key: every log slot fails its tag, the store opens empty and the boots end at the
+  objstore history check, which is expected here. Boot 22 passes the detector self-test, flags the key and rotates
+  it (both copies generation 3; the host-unwrapped new data key has none of the four old relations); boot 23
+  reports an independent key and rotates nothing, and so does boot 15. With the automatic rotation disabled in the
+  kernel this test fails.
 - The Phase 9 crash-recovery, rewind and /obj tests all run on the encrypted store.
 
 ### Limits
@@ -170,7 +183,8 @@ Not protected against:
 - **Rotation and old copies.** Rotation (inv231) rewrites each log block into a new slot; the other physical slot
   of a block keeps old-key ciphertext until it is next written, and Incudela FS does not erase freed blocks. A
   rotation or passphrase change does not help against someone who already copied the disk with the old key slot:
-  that copy still opens. Stores made before inv228's data-key fix keep their weaker data key until rotated.
+  that copy still opens. A store made before inv228's data-key fix gets a new data key at its first open since
+  inv231, but its old slots and old disk copies stay under the weak key.
 - **Rollback and weak-passphrase guessing** are possible, see the threat model.
 - **Key wrap.** The wrapped DK is XORed with a PRF output and checked through the KEK check value, not a
   standard AEAD key wrap; tampering with it only makes every tag fail (the store reads as empty / locked).
