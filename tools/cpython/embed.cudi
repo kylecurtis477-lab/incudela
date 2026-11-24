@@ -1,7 +1,7 @@
 # tools/cpython/embed.cudi: hosted CPython embed API, written in Cuditor (Phase 11.5(a) step 2).
 # Calls libpython's exported C API through the 11.2 SysV C ABI. No C shim: macros are
-# avoided by using the function forms CPython also exports (PyRun_SimpleString,
-# PyCMethod_New, PyModule_New, Py_IncRef / Py_DecRef, Py_InitializeFromConfig, …) and
+# avoided by using the function forms CPython also exports (PyCMethod_New,
+# PyModule_New, Py_IncRef / Py_DecRef, Py_InitializeFromConfig, …) and
 # by using PyTuple_Size / PyTuple_GetItem instead of varargs PyArg_ParseTuple.
 # PyConfig / PyStatus / PyWideStringList / PyMethodDef come from pylayout.cudi, which
 # tools/cpython/pylayout.cud generates from the pinned 3.13.5 headers (release build:
@@ -15,8 +15,15 @@
 # A PyMethodDef passed to PyCMethod_New must outlive the method; add_method heap-
 # allocates it with libc malloc.
 # Forge-to-Python (11.5(a) step 3): forge_py_eval, forge_py_main_attr, and
-# forge_py_call_i64 call PyRun_String / PyObject_GetAttrString / PyObject_Call*
+# forge_py_call_i64 compile and run code / call PyObject_GetAttrString / PyObject_Call*
 # (function forms, no varargs).
+# Stable ABI (v1 reservation 5, abi3): every libpython function declared here is in CPython's
+# stable ABI (the pinned Misc/stable_abi.toml, none abi_only) except the four PyConfig init
+# functions of the embedding host, which only forge_py_init calls: forge_py_run and forge_py_eval
+# compile with Py_CompileString and run with PyEval_EvalCode in __main__ (not PyRun_*), and a
+# one-argument call is PyObject_Call on a 1-tuple (not PyObject_CallOneArg); tests/cpython-embed
+# (stable-abi) checks this. The abi3 extension module itself (a shared object that a stock
+# CPython imports) waits for PIC code and shared-object output (docs/BUILD_PLAN.md, reservation 5).
 
 include "pylayout.cudi"
 
@@ -29,7 +36,6 @@ extern def PyConfig_SetBytesString(cfg: ptr[PyConfig], dest: ptr[nptr[u8]], s: p
 extern def PyConfig_Clear(cfg: ptr[PyConfig])
 extern def Py_InitializeFromConfig(cfg: ptr[PyConfig]) -> PyStatus
 extern def Py_FinalizeEx() -> i32
-extern def PyRun_SimpleString(s: ptr[u8]) -> i32
 extern def PyModule_New(name: ptr[u8]) -> nptr[u8]
 extern def PyModule_AddObject(mod: nptr[u8], name: ptr[u8], v: nptr[u8]) -> i32
 extern def PyImport_GetModuleDict() -> nptr[u8]
@@ -54,12 +60,12 @@ extern def Py_GetVersion() -> ptr[u8]
 extern def write(fd: i32, buf: ptr[u8], n: u64) -> i64
 extern def PyObject_Call(callable: nptr[u8], args: nptr[u8], kwargs: nptr[u8]) -> nptr[u8]
 extern def PyObject_CallNoArgs(callable: nptr[u8]) -> nptr[u8]
-extern def PyObject_CallOneArg(callable: nptr[u8], arg: nptr[u8]) -> nptr[u8]
 extern def PyTuple_New(n: i64) -> nptr[u8]
 extern def PyTuple_SetItem(t: nptr[u8], i: i64, v: nptr[u8]) -> i32
 extern def PyImport_AddModule(name: ptr[u8]) -> nptr[u8]
 extern def PyModule_GetDict(mod: nptr[u8]) -> nptr[u8]
-extern def PyRun_String(src: ptr[u8], start: i32, globals: nptr[u8], locals: nptr[u8]) -> nptr[u8]
+extern def Py_CompileString(src: ptr[u8], filename: ptr[u8], start: i32) -> nptr[u8]
+extern def PyEval_EvalCode(co: nptr[u8], globals: nptr[u8], locals: nptr[u8]) -> nptr[u8]
 
 PY_FILE_INPUT = 257
 PY_EVAL_INPUT = 258
@@ -158,8 +164,10 @@ def forge_py_run(src: nptr[u8]) -> i32:
     if src == 0:
         eputs("forge_py_run: missing source\n")
         return 1
-    if PyRun_SimpleString(src) != 0:
+    r = py_exec_main(src, PY_FILE_INPUT)
+    if r == 0:
         return 1
+    Py_DecRef(r)
     return 0
 
 def forge_py_finalize() -> i32:
@@ -247,24 +255,38 @@ def forge_py_main() -> nptr[u8]:
         PyErr_Print()
     return m
 
-def forge_py_eval(src: nptr[u8]) -> nptr[u8]:
-    m: nptr[u8]
-    d: nptr[u8]
-    r: nptr[u8]
-    if src == 0:
-        eputs("forge_py_eval: missing source\n")
-        return src
+# compile src (start PY_FILE_INPUT or PY_EVAL_INPUT, file name "<string>") and run it with __main__'s dict as
+# globals and locals, as PyRun_String did, through the stable-ABI pair Py_CompileString / PyEval_EvalCode.
+# Returns a new reference, or 0 after printing the Python error (a compile error or an exception).
+def py_exec_main(src: ptr[u8], start: i32) -> nptr[u8]:
     m = forge_py_main()
+    d: nptr[u8]
+    co: nptr[u8]
+    r: nptr[u8]
     if m == 0:
         return m
     d = PyModule_GetDict(m)
     if d == 0:
-        eputs("forge_py_eval: no __main__ dict\n")
+        eputs("forge_py: no __main__ dict\n")
         return d
-    r = PyRun_String(src, PY_EVAL_INPUT, d, d)
-    if r == 0:
-        eputs("forge_py_eval: PyRun_String failed\n")
+    co = Py_CompileString(src, "<string>", start)
+    if co == 0:
         PyErr_Print()
+        return co
+    r = PyEval_EvalCode(co, d, d)
+    Py_DecRef(co)
+    if r == 0:
+        PyErr_Print()
+    return r
+
+def forge_py_eval(src: nptr[u8]) -> nptr[u8]:
+    r: nptr[u8]
+    if src == 0:
+        eputs("forge_py_eval: missing source\n")
+        return src
+    r = py_exec_main(src, PY_EVAL_INPUT)
+    if r == 0:
+        eputs("forge_py_eval: evaluation failed\n")
     return r
 
 def forge_py_main_attr(name: ptr[u8]) -> nptr[u8]:
@@ -290,13 +312,24 @@ def forge_py_call_i64(fn: nptr[u8], nargs: i32, a: i64, b: i64, out: ptr[i64]) -
     if nargs == 0:
         r = PyObject_CallNoArgs(fn)
     elif nargs == 1:
+        args = PyTuple_New(1)
+        if args == 0:
+            eputs("forge_py_call_i64: PyTuple_New failed\n")
+            PyErr_Print()
+            return 1
         aa = PyLong_FromLong(a)
         if aa == 0:
             eputs("forge_py_call_i64: PyLong_FromLong failed\n")
             PyErr_Print()
+            Py_DecRef(args)
             return 1
-        r = PyObject_CallOneArg(fn, aa)
-        Py_DecRef(aa)
+        if PyTuple_SetItem(args, 0, aa) != 0:
+            eputs("forge_py_call_i64: PyTuple_SetItem failed\n")
+            PyErr_Print()
+            Py_DecRef(args)
+            return 1
+        r = PyObject_Call(fn, args, nptr[u8](u64(0)))
+        Py_DecRef(args)
     elif nargs == 2:
         args = PyTuple_New(2)
         if args == 0:

@@ -2,7 +2,8 @@
 # tests/cpython-embed/main.cud: register the Forge @export functions in api.cud
 # as Python module "forge" through tools/cpython/embed.cudi, run Python-to-Forge
 # assertions, then call Python from Forge (eval, 0/1/2-arg object calls, and a
-# Python function that calls back into Forge). Also checks the libpython guard
+# Python function that calls back into Forge), and the error paths of forge_py_run / forge_py_eval.
+# Also checks the libpython guard
 # (forge_py_lib_kind / forge_py_lib_check): the linked library is the pinned release build, and
 # synthetic 3.13.4, 3.13.50 and free-threaded version strings are refused with a clear error.
 # gcc -no-pie links this with api.o and libpython3.13.a; there is no C file. @export main is the gcc crt entry point.
@@ -149,6 +150,23 @@ def main() -> i64:
         return 7
     Py_DecRef(fn)
     printf("forge-to-python-to-forge twice_add(20,22)=%lld\n", u64(v))
+    # error paths of the stable-ABI compile-and-run pair (Py_CompileString / PyEval_EvalCode): a script that
+    # raises, an expression that raises and one that does not compile all fail, with the Python error on stderr
+    if forge_py_run("raise ValueError('forge-run-error')\n") == 0:
+        printf("forge-to-python error paths: a raising script succeeded (%lld)\n", u64(0))
+        forge_py_finalize()
+        return 8
+    ev = forge_py_eval("1 // 0")
+    if ev != 0:
+        printf("forge-to-python error paths: 1 // 0 gave a value (%lld)\n", u64(0))
+        forge_py_finalize()
+        return 8
+    ev = forge_py_eval("6 *")
+    if ev != 0:
+        printf("forge-to-python error paths: '6 *' gave a value (%lld)\n", u64(0))
+        forge_py_finalize()
+        return 8
+    printf("forge-to-python error paths=%lld\n", u64(3))
     if forge_py_finalize() != 0:
         return 6
     return 0

@@ -5,6 +5,9 @@
 # the 11.2 C ABI. Also: tools/cpython/pylayout.cudi must match what tools/cpython/pylayout.cud
 # generates from the pinned headers (and the generator refuses non-pinned, free-threaded and debug
 # header sets), and the libpython guard refuses non-pinned and free-threaded Py_GetVersion strings.
+# stable-abi (v1 reservation 5, abi3): every libpython function embed.cudi declares is in the pinned
+# source's Misc/stable_abi.toml (and not abi_only), except the embedding host's four PyConfig init
+# functions, which must really be outside it and are called only in forge_py_init.
 # Builds the pinned CPython if needed (warm when the prefix is current), compiles
 # api.cud and main.cud with cudc/fas, and links with gcc -no-pie against
 # prefix/lib/libpython3.13.a and the box libc (not fld). SKIP if there is no
@@ -48,6 +51,30 @@ mkinc; sed -i 's|^/\* #undef Py_GIL_DISABLED \*/|#define Py_GIL_DISABLED 1|' $T/
 refuse free-threaded 4 'free-threaded CPython (Py_GIL_DISABLED) is not supported'
 mkinc; printf '#define Py_DEBUG 1\n' >> $T/inc/pyconfig.h
 refuse debug 5 'debug CPython (Py_DEBUG) is not supported'
+# stable-abi: the libpython functions embed.cudi declares (extern def Py...) against the pinned stable_abi.toml
+SA=$W/Python-3.13.5/Misc/stable_abi.toml
+E=tools/cpython/embed.cudi
+HOST="PyConfig_InitPythonConfig PyConfig_SetBytesString PyConfig_Clear Py_InitializeFromConfig"
+sa_added() { # function name -> its 'added' version if it is in the stable ABI and not abi_only, else nothing
+  awk -v h="[function.$1]" '$0 == h { s = 1; next } s && /^\[/ { exit } s && /^ *added *=/ { a = $0; gsub(/[^0-9.]/, "", a) }
+    s && /^ *abi_only *= *true/ { o = 1 } END { if (a != "" && !o) print a }' $SA
+}
+if [ -f $SA ]; then
+  bad=""; n=0; floor=3.2
+  for f in $(sed -n 's/^extern def \(Py[A-Za-z_]*\)(.*/\1/p' $E); do
+    a=$(sa_added $f)
+    case " $HOST " in
+      *" $f "*) [ -z "$a" ] || bad="$bad $f(host-list-but-stable-$a)" ;;
+      *) if [ -z "$a" ]; then bad="$bad $f"; else n=$((n + 1)); floor=$(printf '%s\n%s\n' $floor $a | sort -V | tail -1); fi ;;
+    esac
+  done
+  out=$(awk -v hl="$HOST" 'BEGIN { split(hl, H, " ") } /^(@unsafe|@export)/ { next } /^def / { d = $2; sub(/\(.*/, "", d) }
+    /^extern / { next } { for (i in H) if (index($0, H[i] "(") && d != "forge_py_init") print H[i] "@" d }' $E)
+  [ -n "$out" ] && bad="$bad $(echo $out)"
+  [ $n -ge 20 ] || bad="$bad only-$n-stable"
+  if [ -z "$bad" ]; then echo "PASS cpython-embed/stable-abi ($n functions in the stable ABI, abi3 floor $floor; host init: $HOST)"
+  else echo "FAIL cpython-embed/stable-abi (not in the pinned stable ABI or misplaced:$bad)"; fail=1; fi
+else echo "FAIL cpython-embed/stable-abi (no $SA: the pinned source tree is missing)"; fail=1; fi
 build/cudc tests/cpython-embed/api.cud $T/api.s $CUDC_FLAGS && build/fas -o $T/api.o $T/api.s \
   || { echo "FAIL cpython-embed compile-api"; exit 1; }
 build/cudc tests/cpython-embed/main.cud $T/main.s $CUDC_FLAGS && build/fas -o $T/main.o $T/main.s \
@@ -79,6 +106,10 @@ if [ $rc = 0 ] \
    && grep -Fq 'forge-to-python mul(6,7)=42' $T/o \
    && grep -Fq 'forge-to-python neg(42)=-42' $T/o \
    && grep -Fq 'forge-to-python answer()=42' $T/o \
-   && grep -Fq 'forge-to-python-to-forge twice_add(20,22)=84' $T/o
+   && grep -Fq 'forge-to-python-to-forge twice_add(20,22)=84' $T/o \
+   && grep -Fq 'forge-to-python error paths=3' $T/o \
+   && grep -Fq 'ValueError: forge-run-error' $T/e \
+   && grep -Fq 'ZeroDivisionError' $T/e \
+   && grep -Fq 'SyntaxError' $T/e
 then echo "PASS cpython-embed/forge-to-python"; else echo "FAIL cpython-embed/forge-to-python (rc $rc)"; cat $T/o $T/e; fail=1; fi
 exit $fail
