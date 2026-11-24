@@ -1572,7 +1572,8 @@ get vectorized, `parallel for` spreads work over all cores, and every speed clai
      (87,642 to 84,336 for the batch, -3.8%); compile about 2.39 s (base 2.48 s, under 3 s). Two functions
      (tss_install 2 pairs, sha_compress 1) keep push/pop pairs they lost before: the extra fold rounds use up
      the 12-round limit (FS_SSRND) before the round in which fs_ssa_pushpop runs; 16 rounds would give 84,293
-     (not changed here). Code built without `--fs-ssa` is byte-identical. Check fs-ssa-memfold-shape (ssa_idx).
+     (not changed here; the stop rule and its measured cost are documented in docs/SYSTEMS.md, "SSA stop rule",
+     inv233). Code built without `--fs-ssa` is byte-identical. Check fs-ssa-memfold-shape (ssa_idx).
    - *Step 4aj, `ud2` ends a path (2026-11-19).* Re-measured after step 4ai against w224/cudc-base (84,336 kernel
      instructions at 3ea3a9f): 696 bounds checks still copy the index to %rcx (`mov %rB,%rcx; cmp $N,%rB`) and
      address the element through the copy. Copy propagation (steps 4f/4n) could not reach the use: the SSA form

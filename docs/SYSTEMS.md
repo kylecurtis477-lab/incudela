@@ -309,6 +309,22 @@ vs 1667 by default); before, the O0 kernel was `--fs-ssa -O0`, so the O0 gate ne
 code. An `--fs-*` flag in `$CUDC_FLAGS` still applies. The user programs, modules and EFI loader keep `--fs-ssa`. Until 2026-11-13 `-O0` was ignored in
 freestanding mode. New optimizer passes follow the landing rule in docs/tools-optcov.md.
 
+**SSA stop rule.** After register allocation and the temporaries peepholes, `--fs-ssa` rebuilds the SSA form of
+each function and applies its rewrites (`fs_ssa_run`) again and again, because a fold can expose another. It
+stops at the first round that rewrites nothing, or after `FS_SSRND` rounds (12; selfhost/compiler.cud), whichever
+comes first. The cap bounds compile time and the output still depends only on the source and flags; every round
+applies only rewrites that are correct on their own, so stopping early leaves correct but less folded code. Inside
+a round the order is fixed: constant folds (`fs_ssa_fold`), copy propagation only if nothing folded, then dead
+writes, unreachable lines and jumps to the next line; retargeting (`fs_ssa_retarget`) and the push/pop round-trips
+(`fs_ssa_pushpop`) run only in a round where neither folds nor copies changed anything. So a function that keeps
+folding until round 12 never reaches the push/pop rewrite and keeps pairs a later round would remove. Measured at
+inv233 (selfhost at 89305ae; kernel instruction lines `^    [a-z]` of `cudc kernel.cud --fs-ssa`): 45 kernel
+functions still rewrite in round 12; 12 rounds give 87,350 instructions, 16 give 87,240 (-110 in 31 functions, 10
+of them with fewer push/pop lines: sys_kexec 40 to 30, od_open 5 to 1, tss_install 5 to 3, sha_compress 27 to
+25), 24 give 87,232; kernel compile about 2.53 s at 12 and 2.59 s at 16 rounds (3 s budget). 12 is kept for now:
+raising it, or running the push/pop rewrite in every round, changes kernel code and is an SSA step of its own
+(optcov, fsfuzz --combos, the full fs-ssa section).
+
 Limits: one fs function holds at most 4096 locals (FSLMAX; every block's names, compiler temporaries and own-field
 slots count, nothing is reused); past that the compiler stops with "too many locals in one function" at the
 offending line (tests/limits).
