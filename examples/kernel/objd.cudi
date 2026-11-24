@@ -262,12 +262,187 @@ def od_mkfile(name: ptr[u8], nb: u64) -> u64:
         return 0
     return st
 
-def od_key_new() -> u64:
-# first mount: a random data key, stored only wrapped by the user key, in objects.key. The pool: 512 TSC jitter
-# samples, then the CPU RNG words of od_hw_pool (inv228)
-    st = od_mkfile("objects.key", 1)
-    if st == 0:
+# ---- the key file: two copies (inv229) ----
+# objects.key and objects.keyb each hold one copy of the key slot (words 0..27 of their one block). A slot written
+# since inv229 carries a generation (word 20) and a SHA-256 of its bytes 0..191 (words 24..27, torn-write and
+# corruption detection, not a MAC: the check value authenticates the key). A rewrite goes first to the copy
+# that is not current and is flushed before the other copy is touched, so a crash at any point leaves one
+# intact copy of either the old or the new slot, never only a torn one. At unlock the intact copy with the
+# higher generation is current (an older copy is superseded: its key is not tried), and a missing, torn or
+# older other copy is rewritten from it.
+OD_KW = 28  # slot words in each copy
+OD_KG = 20  # generation word; 0 on slots written before inv229 (words 20..27 zero)
+OD_KH = 24  # words 24..27: SHA-256 of slot bytes 0..191
+od_ka: u64[28]  # copy A (objects.key) as read at the last open
+od_kb: u64[28]  # copy B (objects.keyb)
+od_kn: u64[28]  # the current slot (unlocked, or being written)
+od_kast: u64  # objects.key block (0 if absent)
+od_kbst: u64  # objects.keyb block (0 if absent)
+od_kcur: u64  # copy holding the current slot: 0 = objects.key, 1 = objects.keyb
+od_krep: u64  # the last open rewrote the other copy: 0 no, 1 it was older or damaged, 2 it was missing
+
+def od_kh(s: u64[28]):
+# od_tv = SHA-256 of the slot's bytes 0..191 (words 0..23, little-endian) as four words
+    sh_init()
+    i: u64 = 0
+    while i < OD_KH:
+        sh_u64(s[i])
+        i += 1
+    sh_fin()
+    i = 0
+    while i < 8:
+        od_t[i] = od_be(sh_h[i])
+        i += 1
+    i = 0
+    while i < 4:
+        od_tv[i] = od_t[i * 2] | (od_t[i * 2 + 1] << 32)
+        i += 1
+
+def od_kintact(s: u64[28]) -> u64:
+# 1 if the copy is a whole slot: magic, owner, and the SHA-256 over its bytes (or words 20..27 all 0 for a
+# slot from before inv229, which has no generation or hash)
+    if s[0] != OD_KMAGIC or s[1] != OD_UID:
         return 0
+    z: u64 = 0
+    i: u64 = OD_KG
+    while i < OD_KW:
+        z = z | s[i]
+        i += 1
+    if z == 0:
+        return 1
+    od_kh(s)
+    i = 0
+    while i < 4:
+        od_tr[i] = s[OD_KH + i]
+        i += 1
+    return ct_eq4(od_tv, od_tr)
+
+def od_kread(name: ptr[u8], w: u64) -> u64:
+# the file's block (0 if the file is absent); copy w (0 = od_ka, 1 = od_kb) = its first OD_KW words (all 0 if
+# absent or unreadable). (Array parameters are copies, so the copy is named, not passed.)
+    i: u64 = 0
+    while i < 512:
+        ffs_b[i] = 0
+        i += 1
+    st: u64 = 0
+    f = ffs_find(name)
+    if f != FFS_NI and ffs_it[f * 8 + 7] >= 1:
+        st = ffs_it[f * 8 + 6]
+        if ffs_get(st, 0) == 0:
+            i = 0
+            while i < 512:
+                ffs_b[i] = 0
+                i += 1
+    i = 0
+    while i < OD_KW:
+        if w == 0:
+            od_ka[i] = ffs_b[i]
+        else:
+            od_kb[i] = ffs_b[i]
+        i += 1
+    return st
+
+def od_kput(st: u64, s: u64[28]) -> u64:
+# write one copy and flush it
+    i: u64 = 0
+    while i < 512:
+        ffs_b[i] = 0
+        i += 1
+    i = 0
+    while i < OD_KW:
+        ffs_b[i] = s[i]
+        i += 1
+    if ffs_put(st, 0) == 0 or nvme_flush() == 0:
+        return 0
+    return 1
+
+def od_kset(w: u64):
+# copy w (0 = od_ka, 1 = od_kb) = od_kn
+    i: u64 = 0
+    while i < OD_KW:
+        if w == 0:
+            od_ka[i] = od_kn[i]
+        else:
+            od_kb[i] = od_kn[i]
+        i += 1
+
+def od_kget(w: u64):
+# od_kn = copy w
+    i: u64 = 0
+    while i < OD_KW:
+        if w == 0:
+            od_kn[i] = od_ka[i]
+        else:
+            od_kn[i] = od_kb[i]
+        i += 1
+
+def od_ksame(a: u64[28], b: u64[28]) -> u64:
+    d: u64 = 0
+    i: u64 = 0
+    while i < OD_KW:
+        d = d | (a[i] ^ b[i])
+        i += 1
+    if d == 0:
+        return 1
+    return 0
+
+def od_key_store() -> u64:
+# make od_kn (its generation already set) current: hash it, write the copy that is not current and flush,
+# then the other copy. objects.keyb is created first if it does not exist yet
+    od_kh(od_kn)
+    i: u64 = 0
+    while i < 4:
+        od_kn[OD_KH + i] = od_tv[i]
+        i += 1
+    if od_kbst == 0:
+        od_kbst = od_mkfile("objects.keyb", 1)
+        if od_kbst == 0:
+            return 0
+    if od_kcur == 0:
+        if od_kput(od_kbst, od_kn) == 0:
+            return 0
+        od_kset(1)
+        od_kcur = 1
+        if od_kput(od_kast, od_kn) == 0:
+            return 0
+        od_kset(0)
+    else:
+        if od_kput(od_kast, od_kn) == 0:
+            return 0
+        od_kset(0)
+        od_kcur = 0
+        if od_kput(od_kbst, od_kn) == 0:
+            return 0
+        od_kset(1)
+    return 1
+
+def od_key_fix() -> u64:
+# after an unlock: rewrite the other copy from the current one if it is missing, damaged or older
+    od_krep = 0
+    if od_kcur == 0:
+        if od_kbst != 0 and od_ksame(od_kb, od_kn) != 0:
+            return 1
+        od_krep = 1
+        if od_kbst == 0:
+            od_krep = 2
+            od_kbst = od_mkfile("objects.keyb", 1)
+            if od_kbst == 0:
+                return 0
+        if od_kput(od_kbst, od_kn) == 0:
+            return 0
+        od_kset(1)
+        return 1
+    if od_ksame(od_ka, od_kn) != 0:
+        return 1
+    od_krep = 1
+    if od_kput(od_kast, od_kn) == 0:
+        return 0
+    od_kset(0)
+    return 1
+
+def od_pool_new():
+# od_pool = SHA-256 of 512 TSC jitter samples and the CPU RNG words of od_hw_pool (inv228): a PRF key for fresh
+# key material, wiped by the caller after use
     sh_init()
     i: u64 = 0
     while i < 512:
@@ -280,93 +455,127 @@ def od_key_new() -> u64:
         i += 1
     od_hw_pool()
     sh_fin()
-    # the pool digest is only a PRF key: the data key and the wrap salt are independent HMAC outputs of it.
-    # (Before inv228 the salt was digest words 0..3 and the data key mixed the same words with words 4..7,
-    # so the plaintext salt in objects.key left the data key only 128 unknown bits.)
     i = 0
     while i < 8:
         od_pool[i] = od_be(sh_h[i])
         i += 1
-    od_kdf(od_pool, 0x79656B64, 0, 0)  # "dkey"
-    i = 0
+
+def od_pool_wipe():
+    i: u64 = 0
     while i < 8:
-        od_dk[i] = od_t[i]
+        od_pool[i] = 0
         i += 1
+
+def od_slot_build(gen: u64) -> u64:
+# od_kn = a v2 slot of generation gen wrapping od_dk under a passphrase KEK with fresh salts from od_pool
+# (od_uk must hold the passphrase); the caller stores it with od_key_store. Returns the KDF salt's first word
     od_kdf(od_pool, 0x746C617377, 0, 0)  # "wsalt"
     s0 = od_t[0] | (od_t[1] << 32)
     s1 = od_t[2] | (od_t[3] << 32)
     od_kdf(od_pool, 0x746C61736B, 0, 0)  # "ksalt": the passphrase KDF salt, independent of DK and the wrap salt
     ks0 = od_t[0] | (od_t[1] << 32)
     ks1 = od_t[2] | (od_t[3] << 32)
-    i = 0
-    while i < 8:
-        od_pool[i] = 0
-        i += 1
     od_kek_pbkdf2(ks0, ks1, OD_KDF_ITERS)
     od_kver = OD_KVER
     od_kiter = OD_KDF_ITERS
+    i: u64 = 0
+    while i < OD_KW:
+        od_kn[i] = 0
+        i += 1
+    od_kn[0] = OD_KMAGIC
+    od_kn[1] = OD_UID
+    od_kn[2] = s0
+    od_kn[3] = s1
     od_kdf(od_kek, 0x70617277, s0, s1)  # "wrap"
     i = 0
-    while i < 512:
-        ffs_b[i] = 0
-        i += 1
-    ffs_b[0] = OD_KMAGIC
-    ffs_b[1] = OD_UID
-    ffs_b[2] = s0
-    ffs_b[3] = s1
-    ffs_b[16] = OD_KVER
-    ffs_b[17] = ks0
-    ffs_b[18] = ks1
-    ffs_b[19] = OD_KDF_ITERS
-    i = 0
     while i < 8:
-        ffs_b[4 + i] = od_dk[i] ^ od_t[i]
+        od_kn[4 + i] = od_dk[i] ^ od_t[i]
         i += 1
     od_kdf(od_kek, 0x6B6863, s0, s1)  # "chk": a 256-bit key check value
     i = 0
     while i < 4:
-        ffs_b[12 + i] = od_t[i * 2] | (od_t[i * 2 + 1] << 32)
+        od_kn[12 + i] = od_t[i * 2] | (od_t[i * 2 + 1] << 32)
         i += 1
-    if ffs_put(st, 0) == 0 or nvme_flush() == 0:
+    od_kn[16] = OD_KVER
+    od_kn[17] = ks0
+    od_kn[18] = ks1
+    od_kn[19] = OD_KDF_ITERS
+    od_kn[OD_KG] = gen
+    return ks0
+
+def od_key_new() -> u64:
+# first mount: a random data key, stored only wrapped by the user key, in both copies of the key file
+# (generation 1). The pool digest is only a PRF key: the data key, the wrap salt and the KDF salt are
+# independent HMAC outputs of it. (Before inv228 the salt was digest words 0..3 and the data key mixed the same
+# words with words 4..7, so the plaintext salt in objects.key left the data key only 128 unknown bits.)
+    od_kast = od_mkfile("objects.key", 1)
+    if od_kast == 0:
+        return 0
+    od_kbst = od_mkfile("objects.keyb", 1)
+    if od_kbst == 0:
+        return 0
+    od_pool_new()
+    od_kdf(od_pool, 0x79656B64, 0, 0)  # "dkey"
+    i: u64 = 0
+    while i < 8:
+        od_dk[i] = od_t[i]
+        i += 1
+    od_slot_build(1)
+    od_pool_wipe()
+    od_kcur = 1
+    od_krep = 0
+    if od_key_store() == 0:
         return 0
     od_keys_from_dk()
     return 1
 
 def od_key_load() -> u64:
-# 1 = data key unwrapped, 3 = wrong user key / bad or unknown key slot
-    i = ffs_find("objects.key")
-    if i == FFS_NI or ffs_get(ffs_it[i * 8 + 6], 0) == 0:
+# 1 = data key unwrapped (and the other copy repaired), 3 = wrong user key / no intact or a bad or unknown
+# key slot, 0 = the repair write failed
+    od_kast = od_kread("objects.key", 0)
+    od_kbst = od_kread("objects.keyb", 1)
+    ia: u64 = 0
+    ib: u64 = 0
+    if od_kast != 0:
+        ia = od_kintact(od_ka)
+    if od_kbst != 0:
+        ib = od_kintact(od_kb)
+    if ia == 0 and ib == 0:
         return 3
-    if ffs_b[0] != OD_KMAGIC or ffs_b[1] != OD_UID:
-        return 3
+    od_kcur = 0
+    if ib != 0 and (ia == 0 or od_kb[OD_KG] > od_ka[OD_KG]):
+        od_kcur = 1
+    od_kget(od_kcur)
     # the KDF the slot names: v2 = PBKDF2 with its own salt and iteration count, v1 (all four words 0) = legacy;
     # anything else is a damaged or unknown slot and stays locked
-    if ffs_b[16] == OD_KVER and ffs_b[19] != 0 and ffs_b[19] <= OD_KDF_MAX:
+    if od_kn[16] == OD_KVER and od_kn[19] != 0 and od_kn[19] <= OD_KDF_MAX:
         od_kver = OD_KVER
-        od_kiter = ffs_b[19]
-        od_kek_pbkdf2(ffs_b[17], ffs_b[18], od_kiter)
-    elif ffs_b[16] == 0 and ffs_b[17] == 0 and ffs_b[18] == 0 and ffs_b[19] == 0:
+        od_kiter = od_kn[19]
+        od_kek_pbkdf2(od_kn[17], od_kn[18], od_kiter)
+    elif od_kn[16] == 0 and od_kn[17] == 0 and od_kn[18] == 0 and od_kn[19] == 0:
         od_kver = 1
         od_kiter = 0
         od_kek_legacy()
     else:
         return 3
-    s0 = ffs_b[2]
-    s1 = ffs_b[3]
+    s0 = od_kn[2]
+    s1 = od_kn[3]
     od_kdf(od_kek, 0x6B6863, s0, s1)
     k: u64 = 0
     while k < 4:
         od_tv[k] = od_t[k * 2] | (od_t[k * 2 + 1] << 32)
-        od_tr[k] = ffs_b[12 + k]
+        od_tr[k] = od_kn[12 + k]
         k += 1
     if ct_eq4(od_tv, od_tr) == 0:
         return 3
     od_kdf(od_kek, 0x70617277, s0, s1)
     k = 0
     while k < 8:
-        od_dk[k] = ffs_b[4 + k] ^ od_t[k]
+        od_dk[k] = od_kn[4 + k] ^ od_t[k]
         k += 1
     od_keys_from_dk()
+    if od_key_fix() == 0:
+        return 0
     return 1
 
 # ---- encrypted, tagged log blocks ----
@@ -565,8 +774,9 @@ def od_open() -> u64:
     if ffs_it[i * 8 + 7] != OD_NB * 2:
         return 0
     od_st = ffs_it[i * 8 + 6]
-    if od_key_load() != 1:
-        return 3
+    kl = od_key_load()
+    if kl != 1:
+        return kl
     if od_ctr_load() == 0:
         return 0
     od_wc = 0
@@ -752,6 +962,16 @@ def od_keymsg(r: u64):
         puts(" ms)\n")
     else:
         puts("objstore: key slot v1 (legacy): passphrase KDF unsalted SHA-256; rotation to a v2 slot is planned (inv229)\n")
+    puts("objstore: key file: 2 copies, generation ")
+    put_u64(od_kn[OD_KG])
+    puts(", current copy objects.key")
+    if od_kcur == 1:
+        putc(98)
+    if od_krep == 1:
+        puts("; the other copy was older or damaged and was rewritten from it")
+    elif od_krep == 2:
+        puts("; objects.keyb was missing and was written from it")
+    putc(10)
     if r == 2:
         puts("objstore: data key entropy: ")
         put_u64(od_rs)

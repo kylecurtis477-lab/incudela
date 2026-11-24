@@ -41,6 +41,14 @@ file names and contents) is encrypted and authenticated. The code is in `example
   wrapped: `objects.key` (one Incudela FS block) holds magic `FORGEKEY`, uid 1000, a 128-bit salt,
   DK XOR HMAC(KEK, "wrap" || salt) and a 256-bit check value HMAC(KEK, "chk" || salt), compared in constant time,
   then the v2 KDF parameters above.
+- **Two copies of the key file (inv229).** `objects.keyb` holds a second copy of the slot (made at first mount;
+  on a store from before inv229 it is written from `objects.key` at the first unlock). A slot written since inv229
+  also carries a generation (word 20) and the SHA-256 of its bytes 0..191 (words 24..27), which detects a torn or
+  corrupted copy; it is not a MAC, the check value authenticates the key. Every rewrite goes first to the copy that
+  is not current and is flushed before the other copy is written, so a crash leaves at least one intact copy of the
+  old or the new slot. At unlock the intact copy with the higher generation is current, its key is the only one
+  tried, and a missing, damaged or older other copy is rewritten from it (the boot log names the current copy and
+  any rewrite). The slot fits in the first 512-byte sector of its block.
 - **Working keys, separate for each job.** K_enc = HMAC(DK, "enc") is the ChaCha20 key and K_mac = HMAC(DK, "mac")
   the HMAC key; neither is stored, and they are independent PRF outputs, so the cipher and the MAC never share a key.
 - **No key** (no TPM and no fw_cfg file): the store stays locked. Nothing is read, created or written, and
@@ -104,7 +112,13 @@ Not protected against:
   ciphertext flipped; the HMAC rejects exactly one more slot than on the clean boot.
 - **os/objstore-legacy-slot:** the host rewrites `objects.key` as the v1 slot for the same data key (wrapped and
   checked under the unsalted KEK, words 16..19 zero); boot 7 reports the legacy slot, unlocks it and reads the
-  persisted store, and the slot is still v1 afterwards.
+  persisted store, and the slot is still v1 afterwards. `objects.keyb` is zeroed in the same image (a damaged
+  copy), and the boot rewrites it from `objects.key`.
+- **os/objstore-key-two-copies:** after boots 1-3, `objects.key` and `objects.keyb` hold the same generation-1
+  slot whose bytes 192..223 are the SHA-256 of bytes 0..191, and no boot rewrote a copy.
+- **os/objstore-key-copy-repair:** boot 8 runs with one byte of `objects.key`'s wrapped data key flipped; it
+  unlocks from `objects.keyb`, reads the persisted store and rewrites `objects.key`, so both copies are the
+  original slot again.
 - The Phase 9 crash-recovery, rewind and /obj tests all run on the encrypted store.
 
 ### Limits
@@ -117,8 +131,8 @@ Not protected against:
 - **DK entropy.** RDSEED and RDRAND are mixed in when the CPU has them (inv228); on a CPU with neither, the data
   key rests on TSC jitter alone, which is weak. The CPU RNG is trusted only as one input of the pool.
 - **No rotation.** Neither the passphrase nor the data key can be rotated yet, and v1 slots are not upgraded to
-  v2; both are planned for inv229 (a crash-safe two-slot rewrite). Stores made before inv228's data-key fix keep
-  their weaker data key until then.
+  v2 yet; the two-copy key file (inv229) is what makes those rewrites crash-safe, and they come next. Stores made
+  before inv228's data-key fix keep their weaker data key until data-key rotation re-encrypts them.
 - **Rollback and weak-passphrase guessing** are possible, see the threat model.
 - **Key wrap.** The wrapped DK is XORed with a PRF output and checked through the KEK check value, not a
   standard AEAD key wrap; tampering with it only makes every tag fail (the store reads as empty / locked).

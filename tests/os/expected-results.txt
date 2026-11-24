@@ -36,6 +36,7 @@ os/objstore-rewind-persists
 os/objfs-vfs-view
 os/objfs-persists
 os/objstore-key-wrap
+os/objstore-key-two-copies
 os/objstore-key-entropy
 os/objstore-no-plaintext
 os/objstore-kdf-salted
@@ -44,6 +45,7 @@ os/objstore-nonce-unique
 os/objstore-wrong-key-locked
 os/objstore-tamper-rejected
 os/objstore-legacy-slot
+os/objstore-key-copy-repair
 os/forgefs-host-read
 dwarf/image-unchanged-by-g
 dwarf/line-table

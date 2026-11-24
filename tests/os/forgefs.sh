@@ -5,7 +5,9 @@
 #   create the partition (host, explicit flag); boot 1 formats + writes; boot 2 finds the files again; boot 3 checks the 9.4 rewind persisted
 #   (boots 1-3 get the user key through fw_cfg; Phase 10.1) boot 4 has a wrong key and boot 5 none: the store stays locked and untouched
 #   boot 6 runs on a copy with one ciphertext bit flipped: the HMAC rejects that slot (the good image is restored after)
-#   boot 7 (inv228) runs on the good image with objects.key rewritten as a legacy v1 key slot: it must still unlock
+#   boot 7 (inv228) runs on the good image with objects.key rewritten as a legacy v1 key slot (objects.keyb zeroed): it
+#   must still unlock
+#   boot 8 (inv229) runs on the good image with objects.key damaged: it unlocks from objects.keyb and repairs objects.key
 # After every boot, every byte outside the Incudela partition (ESP, other partitions, GPT) must be unchanged.
 cd "$(dirname "$0")/../.."
 T=$(mktemp -d /tmp/forge-ffs.XXXXXX)
@@ -48,6 +50,19 @@ od_dk_hex() {
   local W=$(hmac "$2" "7772617000000000$(hx "$1" 16 16)") i d=""
   for i in 0 1 2 3 4 5 6 7; do d="$d$(le32 "$(x32 "$(le32 "$(hx "$1" $((32 + 8 * i)) 4)")" "$(le32 "${W:$((8 * i)):8}")")")"; done
   printf '%s' "$d"
+}
+# inv229: the two key copies objects.key and objects.keyb begin with the same 32 bytes; kput A B writes copy A and
+# copy B (hex, from byte 0) into nv.img at KOFFS, the two offsets of those bytes, telling them apart by reading
+# objects.key back through the partition tool
+kput() {
+  local o=($KOFFS)
+  [ ${#o[@]} = 2 ] || return 1
+  hbin "$1" | dd of=$T/nv.img bs=1 seek=${o[0]} conv=notrunc status=none
+  hbin "$2" | dd of=$T/nv.img bs=1 seek=${o[1]} conv=notrunc status=none
+  [ "$($T/incudela-part read $T/nv.img objects.key | od -An -tx1 -v -N $((${#1} / 2)) | tr -d ' \n')" = "$1" ] && return 0
+  hbin "$1" | dd of=$T/nv.img bs=1 seek=${o[1]} conv=notrunc status=none
+  hbin "$2" | dd of=$T/nv.img bs=1 seek=${o[0]} conv=notrunc status=none
+  [ "$($T/incudela-part read $T/nv.img objects.key | od -An -tx1 -v -N $((${#1} / 2)) | tr -d ' \n')" = "$1" ]
 }
 . tests/os/frozen.sh
 frz_self_test
@@ -113,6 +128,15 @@ grep -aq "objstore: encrypted at rest (ChaCha20, encrypt-then-MAC HMAC-SHA256), 
 EN=$(grep -aoE "^objstore: data key entropy: [0-9]+ RDSEED \+ [0-9]+ RDRAND words mixed with 512 TSC jitter samples \([0-9]+ CPU RNG results refused\)" $T/b1.log)
 case "$EN" in *": 32 RDSEED + 32 RDRAND words "*"(0 CPU RNG results refused)") echo "PASS os/objstore-key-entropy (${EN#objstore: data key entropy: })";; *) echo "FAIL os/objstore-key-entropy (${EN:-no entropy line in boot 1})";; esac
 $T/incudela-part read $T/nv.img objects.log > $T/olog.bin; $T/incudela-part read $T/nv.img objects.key > $T/okey.bin
+# inv229: the key file has two copies. After boots 1-3 objects.key and objects.keyb hold the same slot of
+# generation 1 whose bytes 192..223 are the SHA-256 of bytes 0..191, and no boot had to rewrite a copy
+$T/incudela-part read $T/nv.img objects.keyb > $T/okeyb.bin
+if [ "$(hx $T/okey.bin 0 224)" = "$(hx $T/okeyb.bin 0 224)" ] && [ "$(hx $T/okey.bin 160 8)" = 0100000000000000 ] \
+   && [ "$(sha "$(hx $T/okey.bin 0 192)")" = "$(hx $T/okey.bin 192 32)" ] \
+   && grep -aq "^objstore: key file: 2 copies, generation 1, current copy objects.key$" $T/b1.log \
+   && grep -aq "^objstore: key file: 2 copies, generation 1, current copy objects.key$" $T/b3.log; then
+  echo "PASS os/objstore-key-two-copies (objects.key = objects.keyb, generation 1, SHA-256 of the slot matches)"
+else echo "FAIL os/objstore-key-two-copies ($(hx $T/okey.bin 160 8) / $(hx $T/okeyb.bin 160 8), $(grep -a 'key file' $T/b1.log $T/b3.log | tail -2))"; fi
 PT=$(python3 - $T/nv.img $T/olog.bin $KEY <<'P'
 import sys,zlib,struct
 import uuid
@@ -177,6 +201,7 @@ boot; cp $T/s.log $T/b5.log
 $T/incudela-part read $T/nv.img objects.log > $T/olog.bin; $T/incudela-part read $T/nv.img objects.key > $T/okey.bin
 if grep -aq "objstore: locked: wrong user key for uid 1000, nothing decrypted or written" $T/b4.log && grep -aq "objstore: locked: no user key" $T/b5.log && [ "$(cat $T/olog.bin $T/okey.bin | sha256sum)" = "$O0" ]; then
   echo "PASS os/objstore-wrong-key-locked"; else echo "FAIL os/objstore-wrong-key-locked: $(grep -a 'objstore: lock\|PANIC' $T/b4.log $T/b5.log | tail -2)"; fi
+KOFFS=$(LC_ALL=C grep -obUaP "$(hx $T/okey.bin 0 32 | sed 's/../\\x&/g')" $T/nv.img | cut -d: -f1 | tr '\n' ' ')
 # tamper: flip one ciphertext bit of the newest slot in a copy of the image; HMAC must reject that slot
 cp $T/nv.img $T/nv.good
 python3 - $T/nv.img $T/olog.bin <<'P'
@@ -194,20 +219,36 @@ R6=$(grep -ao "[0-9]* never written or superseded-and-torn slots rejected" $T/b6
 cp $T/nv.good $T/nv.img
 # inv228: a v1 key slot (before inv228: unsalted KEK, words 16..19 zero) still unlocks the same data key. The host
 # rewrites objects.key in place as the v1 slot for the same DK (wrapped and checked under SHA-256("frge-kek" ||
-# passphrase)); the boot must unwrap it, report the legacy slot, read the persisted store, and leave the slot v1
+# passphrase)), with words 20..27 zero as before inv229, and zeroes objects.keyb; the boot must unwrap it, report
+# the legacy slot, read the persisted store, rewrite the damaged objects.keyb from it, and leave the slot v1
 KW=$(hmac "$KOLD" "7772617000000000$SALTW"); V1=""
 for i in 0 1 2 3 4 5 6 7; do V1="$V1$(le32 "$(x32 "$(le32 "${DKH:$((8 * i)):8}")" "$(le32 "${KW:$((8 * i)):8}")")")00000000"; done
-V1="$(hx $T/okey.bin 0 32)$V1$(hmac "$KOLD" "63686b0000000000$SALTW")$(printf '0%.0s' $(seq 64))"
-KOFF=$(LC_ALL=C grep -obUaP "$(hx $T/okey.bin 0 32 | sed 's/../\\x&/g')" $T/nv.img | cut -d: -f1)
-if [ "$(printf '%s\n' "$KOFF" | grep -c .)" = 1 ] && [ "${#V1}" = 320 ]; then
-  hbin "$V1" | dd of=$T/nv.img bs=1 seek="$KOFF" conv=notrunc status=none
+V1="$(hx $T/okey.bin 0 32)$V1$(hmac "$KOLD" "63686b0000000000$SALTW")$(printf '0%.0s' $(seq 192))"
+Z224=$(printf '0%.0s' $(seq 448))
+if [ "${#V1}" = 448 ] && kput "$V1" "$Z224"; then
   boot $KEY; cp $T/s.log $T/b7.log
-  $T/incudela-part read $T/nv.img objects.key > $T/okey7.bin
+  $T/incudela-part read $T/nv.img objects.key > $T/okey7.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb7.bin
 fi
 if [ -s $T/b7.log ] && grep -aq "data key unwrapped with the platform key" $T/b7.log && grep -aq "^objstore: key slot v1 (legacy): passphrase KDF unsalted SHA-256" $T/b7.log \
-   && grep -aq "^objstore system rewind persisted OK" $T/b7.log && grep -aq "^objstore VFS view persisted OK" $T/b7.log && [ "$(hx $T/okey7.bin 128 32)" = "$(printf '0%.0s' $(seq 64))" ]; then
-  echo "PASS os/objstore-legacy-slot (a host-written v1 slot for the same data key unlocks the persisted store; the slot stays v1)"
-else echo "FAIL os/objstore-legacy-slot (offsets '$(printf '%s' "$KOFF" | tr '\n' ' ')', $(grep -a 'objstore: \(key slot\|lock\)\|PANIC' $T/b7.log 2>/dev/null | tail -2))"; fi
+   && grep -aq "^objstore system rewind persisted OK" $T/b7.log && grep -aq "^objstore VFS view persisted OK" $T/b7.log && [ "$(hx $T/okey7.bin 0 224)" = "$V1" ] \
+   && grep -aq "^objstore: key file: 2 copies, generation 0, current copy objects.key; the other copy was older or damaged and was rewritten from it$" $T/b7.log \
+   && [ "$(hx $T/okeyb7.bin 0 224)" = "$V1" ]; then
+  echo "PASS os/objstore-legacy-slot (a host-written v1 slot for the same data key unlocks the persisted store; the slot stays v1, the zeroed copy is rewritten from it)"
+else echo "FAIL os/objstore-legacy-slot (offsets '$KOFFS', $(grep -a 'objstore: \(key slot\|key file\|lock\)\|PANIC' $T/b7.log 2>/dev/null | tail -2))"; fi
+cp $T/nv.good $T/nv.img
+# inv229: a damaged copy is never used and is rewritten from the intact one. One byte of objects.key's wrapped data
+# key is flipped (its SHA-256 no longer matches); the boot must unlock from objects.keyb, read the persisted store,
+# and rewrite objects.key, so both copies are the original slot again
+KA=$(hx $T/okey.bin 0 224); KD="${KA:0:80}$(printf '%02x' $(( 0x${KA:80:2} ^ 1 )))${KA:82}"
+if kput "$KD" "$KA"; then
+  boot $KEY; cp $T/s.log $T/b8.log
+  $T/incudela-part read $T/nv.img objects.key > $T/okey8.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb8.bin
+fi
+if [ -s $T/b8.log ] && grep -aq "^objstore: key file: 2 copies, generation 1, current copy objects.keyb; the other copy was older or damaged and was rewritten from it$" $T/b8.log \
+   && grep -aq "^objstore system rewind persisted OK" $T/b8.log && grep -aq "^objstore VFS view persisted OK" $T/b8.log \
+   && [ "$(hx $T/okey8.bin 0 224)" = "$KA" ] && [ "$(hx $T/okeyb8.bin 0 224)" = "$KA" ]; then
+  echo "PASS os/objstore-key-copy-repair (objects.key damaged: unlocked from objects.keyb, objects.key rewritten, store intact)"
+else echo "FAIL os/objstore-key-copy-repair ($(grep -a 'objstore: \(key file\|lock\)\|PANIC' $T/b8.log 2>/dev/null | tail -2))"; fi
 cp $T/nv.good $T/nv.img
 $T/incudela-part read $T/nv.img hello.txt | grep -q "written by the Incudela kernel on its own GPT partition" && echo "PASS os/forgefs-host-read" || echo "FAIL os/forgefs-host-read"
 grep -ah "Incudela FS: remount" $T/b2.log
