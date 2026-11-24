@@ -10,7 +10,8 @@
 # --release (inv213) builds only the release kernel, build/kernel-release/kernel.elf: kernel.cud with
 # krelease.cudi in place of kdebug.cudi (no hang probe, no KASLR layout lines). build/kernel (the test/debug kernel
 # the OS tests boot) keeps its files.
-# $CUDC_FLAGS is passed to cudc for both kernels (and inherited by the user and module builds).
+# $CUDC_FLAGS is passed to cudc for both kernels (and inherited by the user and module builds); the kernels get
+# --fs-ssa first unless $CUDC_FLAGS has -O0 (inv233: the O0 variant had kept the SSA backend).
 import os
 import sys
 
@@ -20,6 +21,14 @@ def cudc_flags():
     if v is None:
         return ""
     return v
+
+def kflags(v):
+# the kernel's cudc flags: --fs-ssa then $CUDC_FLAGS, or $CUDC_FLAGS alone when it has -O0 (inv233)
+    ex = v.split()
+    for f in ex:
+        if f == "-O0":
+            return ex
+    return ["--fs-ssa"] + ex
 
 def step(args):
     r = os.run(args)
@@ -90,9 +99,9 @@ def main():
     # the stack; it only rewrites compiler-generated pushes, so the asm audit still covers it
     # Step 4d: --fs-ssa (implies --fs-temps) folds constants, compares and branches by SSA use counts; like every
     # --fs-* pass it never runs on a function with an asm() statement, so the asm audit still covers it
-    flags = ["--fs-ssa"]
-    for f in cudc_flags().split():
-        flags.append(f)
+    # -O0 in $CUDC_FLAGS (the O0 gate, CI's boot-o0) drops the default --fs-ssa, so the O0 kernel is the plain
+    # freestanding code generator with every bounds check kept; an --fs-* flag in $CUDC_FLAGS still applies (inv233)
+    flags = kflags(cudc_flags())
     # the user programs and BusyBox (examples/user/build.cud, tools/busybox/build.cud)
     step(["../../cuditor", "../../tools/busybox/build.cud", "-o", "../../build/busybox-build"])
     step(["../../cuditor", "../user/build.cud", "-o", "../../build/user-build"])

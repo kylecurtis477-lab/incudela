@@ -402,6 +402,13 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
      The -O0 kernel was boot-checked with `CUDC_FLAGS=-O0 tests/os/run.sh` outside the gate. optcov GATES gained
      `fs_elide`. Its first gate (inv149) failed one O0 check, efi-build/esp-reproducible: the test compared a
      `CUDC_FLAGS=""` build with one that inherited -O0 (fixed in the next commit, the test pins the flags).
+   - *O0 kernel without `--fs-ssa`: done (inv233).* The kernel build put `--fs-ssa` before `$CUDC_FLAGS`, so the O0
+     gate pass (and CI's boot-o0 job) booted `--fs-ssa -O0` code: bounds checks kept, but the SSA backend still on,
+     and the plain freestanding code generator never ran on the kernel in any gate. examples/kernel/build.cud
+     (`kflags`) and build.sh now drop the default `--fs-ssa` when `$CUDC_FLAGS` has `-O0` (kernel, kernel-next and
+     the release kernel); an explicit `--fs-*` in `$CUDC_FLAGS` still applies. kernel-build/O0-no-fs-ssa checks
+     that the O0 build's kernel.s is exactly `cudc -O0` output for both the script and the Cuditor build (fails
+     on the old flags). Kernel at -O0: 2275 bounds sites, all checked (1667 by default).
    - *Fix (2026-11-13, found while filling the pin table for part c):* more than 4096 locals in one fs function
      (every name of every block, frame temporaries and own-field slots count; none is reused) crashed the compiler
      with its own internal error, "error: line 16339: list assignment index 4096 out of range" (a compiler source

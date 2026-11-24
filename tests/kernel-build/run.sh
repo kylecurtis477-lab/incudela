@@ -7,7 +7,7 @@
 # clean builds. kernel-build/iso-reproducible runs the wrapper twice on the same iso/ tree and compares
 # sha256, also against the ISO from the script build. xorriso's extract tree is read-only; isot and the
 # EXIT trap chmod -R u+w before rm -rf so cleanup is silent.
-# Cases: default, O0, and missing-input (grub.cfg hidden: the same cp error and exit code, the same partial tree).
+# Cases: default, O0 (plus O0-no-fs-ssa: CUDC_FLAGS=-O0 gives plain cudc -O0 output), and missing-input (grub.cfg hidden: the same cp error and exit code, the same partial tree).
 # Needs build/ (cudc, fas, fld, forge): run after build.sh.
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'chmod -R u+w "$T" 2>/dev/null; rm -rf "$T"' EXIT
@@ -50,6 +50,9 @@ else
   fail=1
 fi
 chk O0 "-O0" 18
+# inv233: the O0 kernel is the plain code generator (exactly cudc -O0, no default --fs-ssa)
+(cd examples/kernel && ../../build/cudc kernel.cud $T/k0.s -O0) && cmp -s $T/k0.s $T/fg/kernel.s && cmp -s $T/k0.s $T/sh/kernel.s \
+  && echo "PASS kernel-build/O0-no-fs-ssa" || { echo "FAIL kernel-build/O0-no-fs-ssa (build/kernel/kernel.s is not cudc -O0 output)"; fail=1; }
 mv examples/kernel/grub.cfg $T/grub.cfg
 chk missing-input "" 14
 mv $T/grub.cfg examples/kernel/grub.cfg

@@ -302,8 +302,11 @@ The full phased plan is in docs/BUILD_PLAN.md; the items below are the kernel su
 | `--no-bounds` | no bounds checks at all (nothing to elide) |
 
 The `--fs-*` passes are opt-in, so naming one wins over `-O0`; the kernel build names `--fs-ssa` (since the step
-4d kernel switch; `--fs-temps` before), and the O0 gate pass (`CUDC_FLAGS=-O0 ./run_tests.sh`) builds it with
-every bounds check kept (2080 of 2080 sites checked vs 1496 by default). Until 2026-11-13 `-O0` was ignored in
+4d kernel switch; `--fs-temps` before) unless `$CUDC_FLAGS` has `-O0`: since inv233 the O0 gate pass
+(`CUDC_FLAGS=-O0 ./run_tests.sh`) and CI's boot-o0 job build the kernel with the plain freestanding code generator
+(exactly `cudc -O0`, checked by kernel-build/O0-no-fs-ssa) and every bounds check kept (2275 of 2275 sites checked
+vs 1667 by default); before, the O0 kernel was `--fs-ssa -O0`, so the O0 gate never booted unoptimized kernel
+code. An `--fs-*` flag in `$CUDC_FLAGS` still applies. The user programs, modules and EFI loader keep `--fs-ssa`. Until 2026-11-13 `-O0` was ignored in
 freestanding mode. New optimizer passes follow the landing rule in docs/tools-optcov.md.
 
 Limits: one fs function holds at most 4096 locals (FSLMAX; every block's names, compiler temporaries and own-field

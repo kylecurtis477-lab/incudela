@@ -6,6 +6,10 @@ cd "$(dirname "$0")"
 B=../../build/kernel; mkdir -p $B/iso/boot/grub
 # image KASLR: tools/fld --format kernel lays the image out (low boot stub at 1 MiB, the rest at
 # -2 GiB + phys) and writes the self-relocation table (.krel, last) from the relocations it applies
+# the kernels: --fs-ssa then $CUDC_FLAGS, or $CUDC_FLAGS alone when it has -O0 (inv233: the O0 variant is the
+# plain freestanding code generator, every bounds check kept; an --fs-* flag in $CUDC_FLAGS still applies)
+KF=--fs-ssa
+case " $CUDC_FLAGS " in *" -O0 "*) KF= ;; esac
 klink() {
     ../../build/fld --format kernel -o $1.elf $1.o
 }
@@ -23,21 +27,21 @@ if [ "${1:-}" = --release ]; then
     R=../../build/kernel-release; mkdir -p $R
     sed 's/^include "kdebug.cudi"$/include "krelease.cudi"/' kernel.cud > .kernel_release.cud
     grep -q '^include "krelease.cudi"$' .kernel_release.cud
-    ../../build/cudc .kernel_release.cud $R/kernel.s --fs-ssa $CUDC_FLAGS; rm -f .kernel_release.cud
+    ../../build/cudc .kernel_release.cud $R/kernel.s $KF $CUDC_FLAGS; rm -f .kernel_release.cud
     ../../build/fas -I ../../build/user -o $R/kernel.o $R/kernel.s
     klink $R/kernel
     grub-file --is-x86-multiboot2 $R/kernel.elf
     echo "built $R/kernel.elf (release)"
     exit 0
 fi
-../../build/cudc kernel.cud $B/kernel.s --fs-ssa $CUDC_FLAGS
+../../build/cudc kernel.cud $B/kernel.s $KF $CUDC_FLAGS
 ../../build/fas -I ../../build/user -o $B/kernel.o $B/kernel.s
 klink $B/kernel
 grub-file --is-x86-multiboot2 $B/kernel.elf
 # a genuinely different build for the kexec test (\EFI\Incudela\kernel-next.elf): another version string
 sed 's/"incudela-kernel 0.2.6"/"incudela-kernel 0.2.6-next"/' kernel.cud > .kernel_next.cud
 grep -q '"incudela-kernel 0.2.6-next"' .kernel_next.cud
-../../build/cudc .kernel_next.cud $B/kernel-next.s --fs-ssa $CUDC_FLAGS; rm -f .kernel_next.cud
+../../build/cudc .kernel_next.cud $B/kernel-next.s $KF $CUDC_FLAGS; rm -f .kernel_next.cud
 ../../build/fas -I ../../build/user -o $B/kernel-next.o $B/kernel-next.s
 klink $B/kernel-next
 cmp -s $B/kernel.elf $B/kernel-next.elf && { echo "kernel-next.elf is identical to kernel.elf"; exit 1; }
