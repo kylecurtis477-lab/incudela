@@ -9,10 +9,24 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- Migration (0.23.0): since `93f788d` a v1 key slot is upgraded to v2 at its first unlock, and since `7e04ddb` a
+  store from before inv229 gets its second key copy `objects.keyb` at its first unlock; both are written through
+  the crash-safe two-copy order. Data keys made before `87b91fb` stay until data-key rotation (inv230).
+- `93f788d` A v1 key slot (unsalted SHA-256 KEK) is upgraded at its first unlock: the same data key under PBKDF2 of
+  the same passphrase with fresh salts, as the next key slot generation. `os/objstore-legacy-slot` checks the
+  upgraded slot on the host and a second boot.
+- `84d094d` Passphrase change: boot with the current passphrase as fw_cfg `opt/forge/userkey` and the new one as
+  `opt/forge/newkey`; the data key is rewrapped under the new passphrase (fresh salts, next generation) and the
+  object log is not rewritten. Once the first copy is flushed the old passphrase opens nothing. New
+  `os/objstore-passphrase-change` and `os/objstore-passphrase-change-crash`; tests/os expected results 58 to 60.
+- `7e04ddb` The key file has two copies, `objects.key` and `objects.keyb`, and a slot carries a generation and a
+  SHA-256 of its bytes. A rewrite goes to the copy that is not current first and is flushed before the other, the
+  intact copy with the higher generation is current, and a missing, damaged or older copy is rewritten from it.
+  New `os/objstore-key-two-copies` and `os/objstore-key-copy-repair`; expected results 56 to 58.
 - Migration (0.23.0): stores made before `2417854` keep their v1 key slot (unsalted SHA-256 passphrase key) and
   stores made before `87b91fb` keep their weaker data key; both still unlock, and the boot log names a v1 slot.
-  Neither is upgraded in place; key rotation (passphrase change, v1-to-v2 upgrade, data-key rotation) is planned
-  for inv229. Making a new store gives a v2 slot and an independent data key.
+  Neither is upgraded in place by that batch; the passphrase change and the v1-to-v2 upgrade came in inv229
+  (above), and data-key rotation is planned for inv230. Making a new store gives a v2 slot and an independent data key.
 - `2417854` The object store's passphrase key is PBKDF2-HMAC-SHA256 with a 128-bit salt and 20000 iterations (key
   slot v2: version, KDF salt and count in `objects.key` words 16..19; about 0.5 s on QEMU TCG), replacing one
   unsalted SHA-256. `pb_kdf` is in crypt.cudi with known-answer tests in tests/fs/crypt.cud. The raw passphrase is
