@@ -5,6 +5,7 @@
 #   create the partition (host, explicit flag); boot 1 formats + writes; boot 2 finds the files again; boot 3 checks the 9.4 rewind persisted
 #   (boots 1-3 get the user key through fw_cfg; Phase 10.1) boot 4 has a wrong key and boot 5 none: the store stays locked and untouched
 #   boot 6 runs on a copy with one ciphertext bit flipped: the HMAC rejects that slot (the good image is restored after)
+#   boot 7 (inv228) runs on the good image with objects.key rewritten as a legacy v1 key slot: it must still unlock
 # After every boot, every byte outside the Incudela partition (ESP, other partitions, GPT) must be unchanged.
 cd "$(dirname "$0")/../.."
 T=$(mktemp -d /tmp/forge-ffs.XXXXXX)
@@ -131,10 +132,23 @@ print('%d written slots, %d ciphertext bytes'%(len(used),len(ct)) if not bad els
 P
 )
 case "$PT" in BAD*) echo "FAIL os/objstore-no-plaintext: $PT";; *) echo "PASS os/objstore-no-plaintext ($PT)";; esac
+# inv228: key slot v2. objects.key words 16..19 = 2, a 128-bit KDF salt (not the wrap salt), the iteration count;
+# the host derives KEK = PBKDF2-HMAC-SHA256(passphrase, salt, c) with openssl and it must give the stored key
+# check value, which the old unsalted KEK must not
+le64() { printf '%d' "0x$(printf '%s' "$1" | sed 's/\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)/\8\7\6\5\4\3\2\1/')"; }
+KV=$(le64 "$(hx $T/okey.bin 128 8)"); KS=$(hx $T/okey.bin 136 16); KI=$(le64 "$(hx $T/okey.bin 152 8)")
+KEKH=$(openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt "pass:$KEY" -kdfopt "hexsalt:$KS" -kdfopt "iter:$KI" PBKDF2 2>/dev/null | tr -d ':' | tr 'A-F' 'a-f')
+KOLD=$(sha "$(printf 'frge-kek' | od -An -tx1 -v | tr -d ' \n')$(printf '%s' "$KEY" | od -An -tx1 -v | tr -d ' \n')")
+CHKS=$(hx $T/okey.bin 96 32); SALTW=$(hx $T/okey.bin 16 16)
+if [ "$KV" = 2 ] && [ "$KI" = 20000 ] && [ "$KS" != 00000000000000000000000000000000 ] && [ "$KS" != "$SALTW" ] \
+   && [ "$(hmac "$KEKH" "63686b0000000000$SALTW")" = "$CHKS" ] && [ "$(hmac "$KOLD" "63686b0000000000$SALTW")" != "$CHKS" ] \
+   && grep -aq "^objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256, 128-bit salt, 20000 iterations" $T/b1.log \
+   && grep -aq "^objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256, 128-bit salt, 20000 iterations" $T/b3.log; then
+  echo "PASS os/objstore-kdf-salted (slot v2, $KI iterations, salt $(printf '%s' "$KS" | cut -c1-8)...; openssl PBKDF2 KEK gives the check value, the unsalted KEK does not; $(grep -ao 'iterations ([0-9?]* ms)' $T/b1.log | head -1))"
+else echo "FAIL os/objstore-kdf-salted (version '$KV', iterations '$KI', salt '$KS', KEK ${#KEKH} hex)"; fi
 # inv228: the data key is independent of the plaintext wrap salt. The host unwraps DK with the KEK and checks the
 # old derivation's relation (salt = digest words h0..h3, DK word i = bswap(h_i) ^ h_(7-i), so DK word 7-i =
-# bswap(DK_i ^ bswap(h_i)) ^ h_i) holds for none of the four word pairs; the unwrapped DK must also run the store
-KEKH=$(sha "$(printf 'frge-kek' | od -An -tx1 -v | tr -d ' \n')$(printf '%s' "$KEY" | od -An -tx1 -v | tr -d ' \n')")
+# bswap(DK_i ^ bswap(h_i)) ^ h_i) holds for none of the four word pairs (KEK: the PBKDF2 one derived above)
 DKH=$(od_dk_hex $T/okey.bin "$KEKH"); rel=0
 bs() { le32 "$1"; }
 for i in 0 1 2 3; do
@@ -177,6 +191,23 @@ boot $KEY; cp $T/s.log $T/b6.log
 R3=$(grep -ao "[0-9]* never written or superseded-and-torn slots rejected" $T/b3.log | cut -d' ' -f1)
 R6=$(grep -ao "[0-9]* never written or superseded-and-torn slots rejected" $T/b6.log | cut -d' ' -f1)
 [ -n "$R3" ] && [ "$R6" = "$((R3 + 1))" ] && echo "PASS os/objstore-tamper-rejected (rejected slots $R3 -> $R6)" || echo "FAIL os/objstore-tamper-rejected: '$R3' -> '$R6' $(grep -a PANIC $T/b6.log)"
+cp $T/nv.good $T/nv.img
+# inv228: a v1 key slot (before inv228: unsalted KEK, words 16..19 zero) still unlocks the same data key. The host
+# rewrites objects.key in place as the v1 slot for the same DK (wrapped and checked under SHA-256("frge-kek" ||
+# passphrase)); the boot must unwrap it, report the legacy slot, read the persisted store, and leave the slot v1
+KW=$(hmac "$KOLD" "7772617000000000$SALTW"); V1=""
+for i in 0 1 2 3 4 5 6 7; do V1="$V1$(le32 "$(x32 "$(le32 "${DKH:$((8 * i)):8}")" "$(le32 "${KW:$((8 * i)):8}")")")00000000"; done
+V1="$(hx $T/okey.bin 0 32)$V1$(hmac "$KOLD" "63686b0000000000$SALTW")$(printf '0%.0s' $(seq 64))"
+KOFF=$(LC_ALL=C grep -obUaP "$(hx $T/okey.bin 0 32 | sed 's/../\\x&/g')" $T/nv.img | cut -d: -f1)
+if [ "$(printf '%s\n' "$KOFF" | grep -c .)" = 1 ] && [ "${#V1}" = 320 ]; then
+  hbin "$V1" | dd of=$T/nv.img bs=1 seek="$KOFF" conv=notrunc status=none
+  boot $KEY; cp $T/s.log $T/b7.log
+  $T/incudela-part read $T/nv.img objects.key > $T/okey7.bin
+fi
+if [ -s $T/b7.log ] && grep -aq "data key unwrapped with the platform key" $T/b7.log && grep -aq "^objstore: key slot v1 (legacy): passphrase KDF unsalted SHA-256" $T/b7.log \
+   && grep -aq "^objstore system rewind persisted OK" $T/b7.log && grep -aq "^objstore VFS view persisted OK" $T/b7.log && [ "$(hx $T/okey7.bin 128 32)" = "$(printf '0%.0s' $(seq 64))" ]; then
+  echo "PASS os/objstore-legacy-slot (a host-written v1 slot for the same data key unlocks the persisted store; the slot stays v1)"
+else echo "FAIL os/objstore-legacy-slot (offsets '$(printf '%s' "$KOFF" | tr '\n' ' ')', $(grep -a 'objstore: \(key slot\|lock\)\|PANIC' $T/b7.log 2>/dev/null | tail -2))"; fi
 cp $T/nv.good $T/nv.img
 $T/incudela-part read $T/nv.img hello.txt | grep -q "written by the Incudela kernel on its own GPT partition" && echo "PASS os/forgefs-host-read" || echo "FAIL os/forgefs-host-read"
 grep -ah "Incudela FS: remount" $T/b2.log

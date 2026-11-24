@@ -211,3 +211,112 @@ def ct_eq4(a: u64[4], b: u64[4]) -> u64:
 # 1 if the two 256-bit values are equal; examines every word, no early exit (constant time)
     d = (a[0] ^ b[0]) | (a[1] ^ b[1]) | (a[2] ^ b[2]) | (a[3] ^ b[3])
     return 1 - ((d | (0 - d)) >> 63)
+
+# ---- PBKDF2-HMAC-SHA256 (RFC 8018 5.2), one 32-byte output block (inv228: the passphrase KDF) ----
+# The password is the HMAC key: set hm_k as for HMAC (bytes, zero padded; hashed first if longer than 64 bytes),
+# the salt in pb_s[0..pb_sn-1], then pb_kdf(c): pb_out = U_1 ^ ... ^ U_c, U_1 = HMAC(P, S || INT(1)),
+# U_i = HMAC(P, U_(i-1)). The SHA-256 states after the ipad and opad blocks are computed once, so each
+# iteration costs two compressions. pb_wipe clears every key-dependent value.
+pb_is: u64[8]  # SHA-256 state after (K ^ ipad)
+pb_os: u64[8]  # SHA-256 state after (K ^ opad)
+pb_u: u64[8]  # U_i (big-endian words)
+pb_out: u64[8]  # the derived key (big-endian words, like sh_h)
+pb_s: u8[64]  # salt
+pb_sn: u64
+
+def pb_from_is():
+# continue from the ipad state: one 64-byte block already hashed
+    i: u64 = 0
+    while i < 8:
+        sh_h[i] = pb_is[i]
+        i += 1
+    sh_n = 0
+    sh_tot = 64
+
+def pb_from_os():
+    i: u64 = 0
+    while i < 8:
+        sh_h[i] = pb_os[i]
+        i += 1
+    sh_n = 0
+    sh_tot = 64
+
+def pb_feed_u():
+# U (32 bytes, big-endian words) into the hash, then finish; the digest becomes the new U
+    i: u64 = 0
+    while i < 8:
+        sh_byte((pb_u[i] >> 24) & 255)
+        sh_byte((pb_u[i] >> 16) & 255)
+        sh_byte((pb_u[i] >> 8) & 255)
+        sh_byte(pb_u[i] & 255)
+        i += 1
+    sh_fin()
+    i = 0
+    while i < 8:
+        pb_u[i] = sh_h[i]
+        i += 1
+
+def pb_kdf(c: u64):
+    sh_init()
+    i: u64 = 0
+    while i < 64:
+        sh_byte(u64(hm_k[i]) ^ 0x36)
+        i += 1
+    i = 0
+    while i < 8:
+        pb_is[i] = sh_h[i]
+        i += 1
+    sh_init()
+    i = 0
+    while i < 64:
+        sh_byte(u64(hm_k[i]) ^ 0x5c)
+        i += 1
+    i = 0
+    while i < 8:
+        pb_os[i] = sh_h[i]
+        i += 1
+    pb_from_is()
+    i = 0
+    while i < pb_sn:
+        sh_byte(u64(pb_s[i]))
+        i += 1
+    # INT(1): the block index, 4 bytes big-endian
+    sh_byte(0)
+    sh_byte(0)
+    sh_byte(0)
+    sh_byte(1)
+    sh_fin()
+    i = 0
+    while i < 8:
+        pb_u[i] = sh_h[i]
+        i += 1
+    pb_from_os()
+    pb_feed_u()
+    i = 0
+    while i < 8:
+        pb_out[i] = pb_u[i]
+        i += 1
+    n: u64 = 1
+    while n < c:
+        pb_from_is()
+        pb_feed_u()
+        pb_from_os()
+        pb_feed_u()
+        i = 0
+        while i < 8:
+            pb_out[i] = pb_out[i] ^ pb_u[i]
+            i += 1
+        n += 1
+
+def pb_wipe():
+    i: u64 = 0
+    while i < 8:
+        pb_is[i] = 0
+        pb_os[i] = 0
+        pb_u[i] = 0
+        pb_out[i] = 0
+        i += 1
+    i = 0
+    while i < 64:
+        hm_k[i] = u8(0)
+        i += 1

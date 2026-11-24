@@ -17,6 +17,16 @@ OD_CMAGIC = 0x52544345474F46  # "FOGECTR"
 OD_NB = (OB_NL + OD_PW - 1) / OD_PW  # logical log blocks; each has two physical slots (A/B)
 OD_UID = 1000  # the store owner (one user per store)
 OD_KMAGIC = 0x59454B4547524F46  # "FORGEKEY"
+# key slot v2 (inv228), objects.key words 16..19: OD_KVER, the 128-bit KDF salt, the iteration count. A v1 slot
+# (made before inv228) has zeros there and the unsalted KEK; it still unlocks (od_kek_legacy).
+OD_KVER = 2
+OD_KDF_ITERS = 20000  # PBKDF2 iterations for a new slot (stored in the slot, so a later raise keeps old slots)
+OD_KDF_MAX = 0x1000000  # a slot asking for more (or 0) is refused as damaged
+od_uk: u8[64]  # the passphrase from fw_cfg, wiped once od_kek is derived
+od_ukn: u64
+od_kver: u64  # key slot version of the last create or unlock (1 legacy, 2 PBKDF2)
+od_kiter: u64  # its PBKDF2 iterations
+od_kdf_tsc: u64  # TSC ticks the last PBKDF2 took
 od_st: u64
 od_synced: u64
 od_torn: u64
@@ -44,7 +54,8 @@ def od_tpm_present() -> u64:
     return 0
 
 def od_fwcfg_key() -> u64:
-# read fw_cfg file opt/forge/userkey (8..64 bytes) and hash it into od_kek; 0 if absent
+# read fw_cfg file opt/forge/userkey (8..64 bytes) into od_uk; 0 if absent. od_kek is derived from it once the
+# key slot (new or on disk) gives the KDF: od_kek_pbkdf2, or od_kek_legacy for a v1 slot
     pio_add(0x510, 2)
     pio_wr(0x510, 2, 0)
     if pio_rd(0x511, 1) != 81 or pio_rd(0x511, 1) != 69 or pio_rd(0x511, 1) != 77 or pio_rd(0x511, 1) != 85:
@@ -90,18 +101,57 @@ def od_fwcfg_key() -> u64:
     if sel == 0 or sz < 8 or sz > 64:
         return 0
     pio_wr(0x510, 2, sel)
+    i = 0
+    while i < 64:
+        od_uk[i] = u8(0)
+        if i < sz:
+            od_uk[i] = u8(pio_rd(0x511, 1))
+        i += 1
+    od_ukn = sz
+    return 1
+
+def od_uk_wipe():
+# the passphrase is needed only to derive od_kek
+    i: u64 = 0
+    while i < 64:
+        od_uk[i] = u8(0)
+        i += 1
+    od_ukn = 0
+
+def od_kek_legacy():
+# key slot v1 (before inv228): KEK = SHA-256("frge-kek" || passphrase), no salt, one hash
     sh_init()
     sh_u64(0x6B656B2D65677266)  # "frge-kek" domain label
-    i = 0
-    while i < sz:
-        sh_byte(pio_rd(0x511, 1))
+    i: u64 = 0
+    while i < od_ukn:
+        sh_byte(u64(od_uk[i]))
         i += 1
     sh_fin()
     i = 0
     while i < 8:
         od_kek[i] = od_be(sh_h[i])
         i += 1
-    return 1
+
+def od_kek_pbkdf2(ks0: u64, ks1: u64, c: u64):
+# key slot v2 (inv228): KEK = PBKDF2-HMAC-SHA256(passphrase, 128-bit salt ks0 || ks1 little-endian, c iterations)
+    i: u64 = 0
+    while i < 64:
+        hm_k[i] = od_uk[i]
+        i += 1
+    i = 0
+    while i < 8:
+        pb_s[i] = u8((ks0 >> (i * 8)) & 255)
+        pb_s[8 + i] = u8((ks1 >> (i * 8)) & 255)
+        i += 1
+    pb_sn = 16
+    t0 = rdtsc()
+    pb_kdf(c)
+    od_kdf_tsc = rdtsc() - t0
+    i = 0
+    while i < 8:
+        od_kek[i] = od_be(pb_out[i])
+        i += 1
+    pb_wipe()
 
 def od_be(v: u64) -> u64:
 # a SHA-256 output word (big-endian) as a little-endian key word
@@ -245,10 +295,16 @@ def od_key_new() -> u64:
     od_kdf(od_pool, 0x746C617377, 0, 0)  # "wsalt"
     s0 = od_t[0] | (od_t[1] << 32)
     s1 = od_t[2] | (od_t[3] << 32)
+    od_kdf(od_pool, 0x746C61736B, 0, 0)  # "ksalt": the passphrase KDF salt, independent of DK and the wrap salt
+    ks0 = od_t[0] | (od_t[1] << 32)
+    ks1 = od_t[2] | (od_t[3] << 32)
     i = 0
     while i < 8:
         od_pool[i] = 0
         i += 1
+    od_kek_pbkdf2(ks0, ks1, OD_KDF_ITERS)
+    od_kver = OD_KVER
+    od_kiter = OD_KDF_ITERS
     od_kdf(od_kek, 0x70617277, s0, s1)  # "wrap"
     i = 0
     while i < 512:
@@ -258,6 +314,10 @@ def od_key_new() -> u64:
     ffs_b[1] = OD_UID
     ffs_b[2] = s0
     ffs_b[3] = s1
+    ffs_b[16] = OD_KVER
+    ffs_b[17] = ks0
+    ffs_b[18] = ks1
+    ffs_b[19] = OD_KDF_ITERS
     i = 0
     while i < 8:
         ffs_b[4 + i] = od_dk[i] ^ od_t[i]
@@ -273,11 +333,23 @@ def od_key_new() -> u64:
     return 1
 
 def od_key_load() -> u64:
-# 1 = data key unwrapped, 3 = wrong user key / bad keyslot
+# 1 = data key unwrapped, 3 = wrong user key / bad or unknown key slot
     i = ffs_find("objects.key")
     if i == FFS_NI or ffs_get(ffs_it[i * 8 + 6], 0) == 0:
         return 3
     if ffs_b[0] != OD_KMAGIC or ffs_b[1] != OD_UID:
+        return 3
+    # the KDF the slot names: v2 = PBKDF2 with its own salt and iteration count, v1 (all four words 0) = legacy;
+    # anything else is a damaged or unknown slot and stays locked
+    if ffs_b[16] == OD_KVER and ffs_b[19] != 0 and ffs_b[19] <= OD_KDF_MAX:
+        od_kver = OD_KVER
+        od_kiter = ffs_b[19]
+        od_kek_pbkdf2(ffs_b[17], ffs_b[18], od_kiter)
+    elif ffs_b[16] == 0 and ffs_b[17] == 0 and ffs_b[18] == 0 and ffs_b[19] == 0:
+        od_kver = 1
+        od_kiter = 0
+        od_kek_legacy()
+    else:
         return 3
     s0 = ffs_b[2]
     s1 = ffs_b[3]
@@ -669,6 +741,17 @@ def od_keymsg(r: u64):
         puts("TPM-sealed key\n")
     else:
         puts("platform key (no TPM)\n")
+    if od_kver == OD_KVER:
+        puts("objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256, 128-bit salt, ")
+        put_u64(od_kiter)
+        puts(" iterations (")
+        if tsc_per_ms != 0:
+            put_u64(od_kdf_tsc / tsc_per_ms)
+        else:
+            putc(63)
+        puts(" ms)\n")
+    else:
+        puts("objstore: key slot v1 (legacy): passphrase KDF unsalted SHA-256; rotation to a v2 slot is planned (inv229)\n")
     if r == 2:
         puts("objstore: data key entropy: ")
         put_u64(od_rs)
@@ -686,6 +769,7 @@ def od_keymsg(r: u64):
 
 def objstore_test():
     r = od_open()
+    od_uk_wipe()
     if r == 0:
         panic("objstore: objects.log unavailable")
     if r == 3:

@@ -7,5 +7,9 @@ sha256 fips 1M a: 1
 hmac-sha256 rfc4231 tc1: 1
 hmac-sha256 rfc4231 tc2: 1
 hmac-sha256 rfc4231 tc6 (131-byte key): 1
+pbkdf2-hmac-sha256 rfc7914 11 (passwd, salt, c=1): 1
+pbkdf2-hmac-sha256 (password, salt, c=4096): 1
+pbkdf2-hmac-sha256 (64-byte password, 16-byte salt, c=1000): 1
+pbkdf2 wipe: 1
 ct_eq4 equal: 1
 ct_eq4 one bit off: 1

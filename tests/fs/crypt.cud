@@ -3,6 +3,8 @@
 #   ChaCha20: RFC 8439 2.3.2 block function and 2.4.2 encryption ("Ladies and Gentlemen ..." sunscreen text)
 #   SHA-256: FIPS 180-2 / NIST examples ("abc", the 448-bit two-block message, 1M 'a') and the empty string
 #   HMAC-SHA256: RFC 4231 test cases 1, 2 and 6 (hashed long key)
+#   PBKDF2-HMAC-SHA256 (inv228): RFC 7914 section 11 (c=1), and c=4096 and a 64-byte password + 16-byte binary salt
+#   at c=1000 (both checked against OpenSSL), then pb_wipe
 #   ct_eq4: the constant-time 256-bit compare, equal and single-bit-different
 include "linux.cudi"
 include "../../examples/kernel/crypt.cudi"
@@ -65,6 +67,28 @@ def hmac_bytes(kb: u64, kn: u64):
         if i < kn:
             hm_k[i] = u8(kb)
         i += 1
+
+@unsafe
+def pb_set(p: ptr[u8], pn: u64, s: ptr[u8], sn: u64):
+# PBKDF2 password (as the HMAC key, <= 64 bytes) and salt
+    i: u64 = 0
+    while i < 64:
+        hm_k[i] = u8(0)
+        if i < pn:
+            hm_k[i] = p[i]
+        i += 1
+    i = 0
+    while i < sn:
+        pb_s[i] = s[i]
+        i += 1
+    pb_sn = sn
+
+def pb_is_hex(x: ptr[u8]) -> u64:
+    i: u64 = 0
+    while i < 8:
+        sh_h[i] = pb_out[i]
+        i += 1
+    return sh_is(x)
 
 @unsafe
 def main() -> i64:
@@ -152,6 +176,18 @@ def main() -> i64:
     feed("Test Using Larger Than Block-Size Key - Hash Key First")
     hm_end()
     show("hmac-sha256 rfc4231 tc6 (131-byte key): ", sh_is("60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"))
+    pb_set("passwd", 6, "salt", 4)
+    pb_kdf(1)
+    show("pbkdf2-hmac-sha256 rfc7914 11 (passwd, salt, c=1): ", pb_is_hex("55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc"))
+    pb_set("password", 8, "salt", 4)
+    pb_kdf(4096)
+    show("pbkdf2-hmac-sha256 (password, salt, c=4096): ", pb_is_hex("c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"))
+    # a 64-byte (block-size) password and a 16-byte binary salt, as objd uses them
+    pb_set("KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK", 64, "\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\xcc\xdd\xee\xff", 16)
+    pb_kdf(1000)
+    show("pbkdf2-hmac-sha256 (64-byte password, 16-byte salt, c=1000): ", pb_is_hex("8d2c61144018586b00c1d1a226421214cee6a8d7422b3d8da8d39e2b2a2ac474"))
+    pb_wipe()
+    show("pbkdf2 wipe: ", u64(pb_out[0] == 0 and pb_is[0] == 0 and hm_k[0] == 0))
     ta: u64[4]
     tb: u64[4]
     i = 0

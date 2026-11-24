@@ -22,8 +22,15 @@ file names and contents) is encrypted and authenticated. The code is in `example
 
 ### Keys
 - **User key (KEK).** The platform key (`od_tpm_present` is a placeholder for TPM sealing and always
-  returns 0; see Limits): SHA-256("frge-kek" || passphrase), where the passphrase (8..64 bytes) arrives as the QEMU fw_cfg file
-  `opt/forge/userkey` (I/O ports 0x510/0x511, read through the `pio_add`/`pio_rd`/`pio_wr` safe wrappers).
+  returns 0; see Limits): PBKDF2-HMAC-SHA256(passphrase, 128-bit salt, 20000 iterations) since inv228 (key slot
+  v2, `pb_kdf` in crypt.cudi; known-answer vectors from RFC 7914 section 11 and openssl in tests/fs/crypt.cud). The passphrase (8..64 bytes) arrives as
+  the QEMU fw_cfg file `opt/forge/userkey` (I/O ports 0x510/0x511, read through the `pio_add`/`pio_rd`/`pio_wr` safe
+  wrappers) and is wiped from kernel memory once the store is opened. The KDF salt is a fourth independent PRF output
+  of the entropy digest (HMAC(digest, "ksalt")), stored with the iteration count in `objects.key` words 16..19
+  (version 2, salt, iterations), so a later, higher count leaves old slots readable. A **v1 slot** (made before
+  inv228: those words are 0) still unlocks with the old KEK, SHA-256("frge-kek" || passphrase), and the boot log
+  says so; any other version, or a count of 0 or above 2^24, is refused as a damaged slot. Slots are not upgraded in
+  place: rewriting the only key block is not crash-safe, so v1-to-v2 rotation is planned with key rotation (inv229).
   The user key itself is never written anywhere.
 - **Data key (DK).** Made at first mount from a SHA-256 pool of 512 TSC jitter samples and, since inv228, up to 32
   RDSEED and 32 RDRAND words when CPUID reports them (`hw_rand` in cpux.cudi; a missing, 0, all-ones or repeated
@@ -32,7 +39,8 @@ file names and contents) is encrypted and authenticated. The code is in `example
   about DK (fix, inv228: the salt used to be digest words 0..3 and DK mixed those words with words 4..7, which left
   DK 128 unknown bits once the salt was read from the disk). It is stored only
   wrapped: `objects.key` (one Incudela FS block) holds magic `FORGEKEY`, uid 1000, a 128-bit salt,
-  DK XOR HMAC(KEK, "wrap" || salt) and a 256-bit check value HMAC(KEK, "chk" || salt), compared in constant time.
+  DK XOR HMAC(KEK, "wrap" || salt) and a 256-bit check value HMAC(KEK, "chk" || salt), compared in constant time,
+  then the v2 KDF parameters above.
 - **Working keys, separate for each job.** K_enc = HMAC(DK, "enc") is the ChaCha20 key and K_mac = HMAC(DK, "mac")
   the HMAC key; neither is stored, and they are independent PRF outputs, so the cipher and the MAC never share a key.
 - **No key** (no TPM and no fw_cfg file): the store stays locked. Nothing is read, created or written, and
@@ -67,8 +75,11 @@ Not protected against:
 - **Rollback.** Each slot is authenticated on its own, so an attacker can put back an older copy of the
   whole image, or destroy the newer slot of a block so the older authentic one is used. Detecting that needs
   a monotonic counter outside the disk (a TPM NV counter), which the test setup does not have.
-- **Weak passphrases.** The platform key is one SHA-256 of the passphrase, with no salt or work factor, so a
-  stolen disk allows offline guessing; a TPM-sealed key or a memory-hard KDF would fix this.
+- **Weak passphrases.** Since inv228 the KEK is salted (no precomputed tables, and the same passphrase on two disks
+  gives two KEKs) and costs 20000 HMAC-SHA256 iterations per guess (about 0.5 s on QEMU TCG). That slows offline
+  guessing on a stolen disk but does not stop it for a weak passphrase: PBKDF2 is not memory-hard, so GPUs guess
+  fast. A v1 (pre-inv228) slot still has the unsalted single SHA-256 until it is rotated. A TPM-sealed key or a
+  memory-hard KDF would fix this.
 - **A running, compromised kernel**, physical memory attacks (keys live in kernel memory while mounted), and
   side channels other than tag comparison timing.
 - **Denial of service.** Corrupting the disk can always make data unreadable; it cannot make forged data be accepted.
@@ -81,6 +92,9 @@ Not protected against:
   store locked, and `objects.log`/`objects.key` are byte-identical afterwards.
 - **os/objstore-key-entropy:** boot 1 reports 32 RDSEED and 32 RDRAND words mixed into the new data key (QEMU
   `-cpu max` has both) and none refused.
+- **os/objstore-kdf-salted:** `objects.key` is a v2 slot with 20000 iterations and a nonzero KDF salt that is not
+  the wrap salt; the host derives the KEK with `openssl kdf ... PBKDF2`, which gives the stored check value, and the
+  old unsalted KEK does not; boots 1 and 3 report the v2 KDF.
 - **os/objstore-data-key-independent:** the host unwraps DK from `objects.key` with the KEK (openssl), checks the
   key check value, and checks the old salt-to-DK relation holds for none of the four word pairs (on the old
   derivation it held for all four).
@@ -88,6 +102,9 @@ Not protected against:
   high-water mark in `objects.ctr` is at least the highest of them.
 - **os/objstore-tamper-rejected:** boot 6 runs on a copy of the image with one bit of the newest slot's
   ciphertext flipped; the HMAC rejects exactly one more slot than on the clean boot.
+- **os/objstore-legacy-slot:** the host rewrites `objects.key` as the v1 slot for the same data key (wrapped and
+  checked under the unsalted KEK, words 16..19 zero); boot 7 reports the legacy slot, unlocks it and reads the
+  persisted store, and the slot is still v1 afterwards.
 - The Phase 9 crash-recovery, rewind and /obj tests all run on the encrypted store.
 
 ### Limits
@@ -99,7 +116,9 @@ Not protected against:
   Incudela FS self-test files) is not encrypted. Only the object store is.
 - **DK entropy.** RDSEED and RDRAND are mixed in when the CPU has them (inv228); on a CPU with neither, the data
   key rests on TSC jitter alone, which is weak. The CPU RNG is trusted only as one input of the pool.
-- **No rotation.** Neither the passphrase nor the data key can be rotated yet.
+- **No rotation.** Neither the passphrase nor the data key can be rotated yet, and v1 slots are not upgraded to
+  v2; both are planned for inv229 (a crash-safe two-slot rewrite). Stores made before inv228's data-key fix keep
+  their weaker data key until then.
 - **Rollback and weak-passphrase guessing** are possible, see the threat model.
 - **Key wrap.** The wrapped DK is XORed with a PRF output and checked through the KEK check value, not a
   standard AEAD key wrap; tampering with it only makes every tag fail (the store reads as empty / locked).
