@@ -29,6 +29,8 @@ od_nkn: u64
 od_kchg: u64  # the last open changed the passphrase (inv229)
 od_kg0: u64  # generation of the slot the last open unlocked
 od_kc0: u64  # the copy it was in (0 = objects.key, 1 = objects.keyb)
+od_kv0: u64  # its slot version (1 legacy, 2 PBKDF2)
+od_kup: u64  # the last open upgraded a v1 slot to v2 (inv229)
 od_kver: u64  # key slot version of the last create or unlock (1 legacy, 2 PBKDF2)
 od_kiter: u64  # its PBKDF2 iterations
 od_kdf_tsc: u64  # TSC ticks the last PBKDF2 took
@@ -595,9 +597,11 @@ def od_key_load() -> u64:
     od_keys_from_dk()
     od_kg0 = od_kn[OD_KG]
     od_kc0 = od_kcur
+    od_kv0 = od_kver
     if od_key_fix() == 0:
         return 0
     od_kchg = 0
+    od_kup = 0
     # passphrase change: the same data key, wrapped under the new passphrase with fresh salts, as the next
     # generation in both copies; once the first copy is flushed, the old passphrase opens nothing
     if od_fwcfg_key(1) != 0:
@@ -612,6 +616,13 @@ def od_key_load() -> u64:
         if od_key_store() == 0:
             return 0
         od_kchg = 1
+    elif od_kv0 == 1:
+        od_pool_new()  # v1 (unsalted KEK) -> v2 at the first unlock: the same DK, PBKDF2 of the same passphrase
+        od_slot_build(od_kn[OD_KG] + 1)
+        od_pool_wipe()
+        if od_key_store() == 0:
+            return 0
+        od_kup = 1
     return 1
 
 # ---- encrypted, tagged log blocks ----
@@ -987,7 +998,7 @@ def od_keymsg(r: u64):
         puts("TPM-sealed key\n")
     else:
         puts("platform key (no TPM)\n")
-    if od_kver == OD_KVER:
+    if r == 2 or od_kv0 == OD_KVER:
         puts("objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256, 128-bit salt, ")
         put_u64(od_kiter)
         puts(" iterations (")
@@ -997,7 +1008,7 @@ def od_keymsg(r: u64):
             putc(63)
         puts(" ms)\n")
     else:
-        puts("objstore: key slot v1 (legacy): passphrase KDF unsalted SHA-256; rotation to a v2 slot is planned (inv229)\n")
+        puts("objstore: key slot v1 (legacy): passphrase KDF unsalted SHA-256\n")
     puts("objstore: key file: 2 copies, generation ")
     put_u64(od_kg0)
     puts(", current copy objects.key")
@@ -1008,6 +1019,12 @@ def od_keymsg(r: u64):
     elif od_krep == 2:
         puts("; objects.keyb was missing and was written from it")
     putc(10)
+    if od_kup != 0:
+        puts("objstore: key slot v1 upgraded to v2: PBKDF2-HMAC-SHA256, ")
+        put_u64(od_kiter)
+        puts(" iterations, fresh salts, key slot generation ")
+        put_u64(od_kn[OD_KG])
+        puts(", both copies; the unsalted KEK no longer opens the store\n")
     if od_kchg != 0:
         puts("objstore: passphrase changed: the data key is rewrapped under the new passphrase, key slot ")
         puts("generation ")

@@ -29,8 +29,9 @@ file names and contents) is encrypted and authenticated. The code is in `example
   of the entropy digest (HMAC(digest, "ksalt")), stored with the iteration count in `objects.key` words 16..19
   (version 2, salt, iterations), so a later, higher count leaves old slots readable. A **v1 slot** (made before
   inv228: those words are 0) still unlocks with the old KEK, SHA-256("frge-kek" || passphrase), and the boot log
-  says so; any other version, or a count of 0 or above 2^24, is refused as a damaged slot. Slots are not upgraded in
-  place: rewriting the only key block is not crash-safe, so v1-to-v2 rotation is planned with key rotation (inv229).
+  says so; any other version, or a count of 0 or above 2^24, is refused as a damaged slot. Since inv229 a v1 slot is
+  upgraded at its first unlock: the same data key under PBKDF2 of the same passphrase with fresh salts, as the next
+  generation through the two-copy write below, and the boot log says so.
   The user key itself is never written anywhere.
 - **Data key (DK).** Made at first mount from a SHA-256 pool of 512 TSC jitter samples and, since inv228, up to 32
   RDSEED and 32 RDRAND words when CPUID reports them (`hw_rand` in cpux.cudi; a missing, 0, all-ones or repeated
@@ -93,7 +94,8 @@ Not protected against:
 - **Weak passphrases.** Since inv228 the KEK is salted (no precomputed tables, and the same passphrase on two disks
   gives two KEKs) and costs 20000 HMAC-SHA256 iterations per guess (about 0.5 s on QEMU TCG). That slows offline
   guessing on a stolen disk but does not stop it for a weak passphrase: PBKDF2 is not memory-hard, so GPUs guess
-  fast. A v1 (pre-inv228) slot still has the unsalted single SHA-256 until it is rotated. A TPM-sealed key or a
+  fast. A v1 (pre-inv228) slot has the unsalted single SHA-256 until its first unlock upgrades it (inv229); a copy of the
+  disk taken before that keeps the v1 slot. A TPM-sealed key or a
   memory-hard KDF would fix this.
 - **A running, compromised kernel**, physical memory attacks (keys live in kernel memory while mounted), and
   side channels other than tag comparison timing.
@@ -119,8 +121,10 @@ Not protected against:
   ciphertext flipped; the HMAC rejects exactly one more slot than on the clean boot.
 - **os/objstore-legacy-slot:** the host rewrites `objects.key` as the v1 slot for the same data key (wrapped and
   checked under the unsalted KEK, words 16..19 zero); boot 7 reports the legacy slot, unlocks it and reads the
-  persisted store, and the slot is still v1 afterwards. `objects.keyb` is zeroed in the same image (a damaged
-  copy), and the boot rewrites it from `objects.key`.
+  persisted store. `objects.keyb` is zeroed in the same image (a damaged copy), and the boot rewrites it from
+  `objects.key`, then upgrades the slot: both copies become a generation-1 v2 slot whose check value is the host's
+  PBKDF2 of the same passphrase with the new salt and which unwraps to the same data key; boot 7b unlocks it as v2
+  and rewrites nothing.
 - **os/objstore-key-two-copies:** after boots 1-3, `objects.key` and `objects.keyb` hold the same generation-1
   slot whose bytes 192..223 are the SHA-256 of bytes 0..191, and no boot rewrote a copy.
 - **os/objstore-key-copy-repair:** boot 8 runs with one byte of `objects.key`'s wrapped data key flipped; it
@@ -145,7 +149,7 @@ Not protected against:
 - **DK entropy.** RDSEED and RDRAND are mixed in when the CPU has them (inv228); on a CPU with neither, the data
   key rests on TSC jitter alone, which is weak. The CPU RNG is trusted only as one input of the pool.
 - **No data-key rotation.** The passphrase can be changed (inv229), but the data key itself cannot be rotated
-  yet, and v1 slots are not upgraded to v2 yet. Stores made before inv228's data-key fix keep their weaker data key
+  yet. Stores made before inv228's data-key fix keep their weaker data key
   until data-key rotation re-encrypts the object log. A passphrase change does not help against someone who
   already copied the disk while the old passphrase was in use: the old slot opens that copy.
 - **Rollback and weak-passphrase guessing** are possible, see the threat model.

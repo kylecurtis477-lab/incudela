@@ -6,7 +6,7 @@
 #   (boots 1-3 get the user key through fw_cfg; Phase 10.1) boot 4 has a wrong key and boot 5 none: the store stays locked and untouched
 #   boot 6 runs on a copy with one ciphertext bit flipped: the HMAC rejects that slot (the good image is restored after)
 #   boot 7 (inv228) runs on the good image with objects.key rewritten as a legacy v1 key slot (objects.keyb zeroed): it
-#   must still unlock
+#   must still unlock, and (inv229) it is upgraded to a v2 slot; boot 7b unlocks the upgraded slot
 #   boot 8 (inv229) runs on the good image with objects.key damaged: it unlocks from objects.keyb and repairs objects.key
 #   boots 9-11 (inv229) change the passphrase and check old and new; boots 12-13 replay a crash halfway through it
 # After every boot, every byte outside the Incudela partition (ESP, other partitions, GPT) must be unchanged.
@@ -223,7 +223,9 @@ cp $T/nv.good $T/nv.img
 # inv228: a v1 key slot (before inv228: unsalted KEK, words 16..19 zero) still unlocks the same data key. The host
 # rewrites objects.key in place as the v1 slot for the same DK (wrapped and checked under SHA-256("frge-kek" ||
 # passphrase)), with words 20..27 zero as before inv229, and zeroes objects.keyb; the boot must unwrap it, report
-# the legacy slot, read the persisted store, rewrite the damaged objects.keyb from it, and leave the slot v1
+# the legacy slot, read the persisted store and rewrite the damaged objects.keyb. inv229: it then upgrades the
+# slot: both copies become a generation-1 v2 slot (PBKDF2 of the same passphrase, fresh salts, the same data key),
+# and the next boot unlocks it as v2 without rewriting anything
 KW=$(hmac "$KOLD" "7772617000000000$SALTW"); V1=""
 for i in 0 1 2 3 4 5 6 7; do V1="$V1$(le32 "$(x32 "$(le32 "${DKH:$((8 * i)):8}")" "$(le32 "${KW:$((8 * i)):8}")")")00000000"; done
 V1="$(hx $T/okey.bin 0 32)$V1$(hmac "$KOLD" "63686b0000000000$SALTW")$(printf '0%.0s' $(seq 192))"
@@ -231,13 +233,21 @@ Z224=$(printf '0%.0s' $(seq 448))
 if [ "${#V1}" = 448 ] && kput "$V1" "$Z224"; then
   boot $KEY; cp $T/s.log $T/b7.log
   $T/incudela-part read $T/nv.img objects.key > $T/okey7.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb7.bin
+  boot $KEY; cp $T/s.log $T/b7b.log
 fi
+KS7=$(hx $T/okey7.bin 136 16 2>/dev/null); SW7=$(hx $T/okey7.bin 16 16 2>/dev/null)
+KEK7=$(openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt "pass:$KEY" -kdfopt "hexsalt:$KS7" -kdfopt "iter:20000" PBKDF2 2>/dev/null | tr -d ':' | tr 'A-F' 'a-f')
 if [ -s $T/b7.log ] && grep -aq "data key unwrapped with the platform key" $T/b7.log && grep -aq "^objstore: key slot v1 (legacy): passphrase KDF unsalted SHA-256" $T/b7.log \
-   && grep -aq "^objstore system rewind persisted OK" $T/b7.log && grep -aq "^objstore VFS view persisted OK" $T/b7.log && [ "$(hx $T/okey7.bin 0 224)" = "$V1" ] \
+   && grep -aq "^objstore system rewind persisted OK" $T/b7.log && grep -aq "^objstore VFS view persisted OK" $T/b7.log \
    && grep -aq "^objstore: key file: 2 copies, generation 0, current copy objects.key; the other copy was older or damaged and was rewritten from it$" $T/b7.log \
-   && [ "$(hx $T/okeyb7.bin 0 224)" = "$V1" ]; then
-  echo "PASS os/objstore-legacy-slot (a host-written v1 slot for the same data key unlocks the persisted store; the slot stays v1, the zeroed copy is rewritten from it)"
-else echo "FAIL os/objstore-legacy-slot (offsets '$KOFFS', $(grep -a 'objstore: \(key slot\|key file\|lock\)\|PANIC' $T/b7.log 2>/dev/null | tail -2))"; fi
+   && grep -aq "^objstore: key slot v1 upgraded to v2: PBKDF2-HMAC-SHA256, 20000 iterations, fresh salts, key slot generation 1, both copies" $T/b7.log \
+   && [ "$(hx $T/okey7.bin 0 224)" = "$(hx $T/okeyb7.bin 0 224)" ] && [ "$(hx $T/okey7.bin 128 8)" = 0200000000000000 ] \
+   && [ "$(hx $T/okey7.bin 160 8)" = 0100000000000000 ] && [ "$(sha "$(hx $T/okey7.bin 0 192)")" = "$(hx $T/okey7.bin 192 32)" ] \
+   && [ "$SW7" != "$SALTW" ] && [ "$(hmac "$KEK7" "63686b0000000000$SW7")" = "$(hx $T/okey7.bin 96 32)" ] && [ "$(od_dk_hex $T/okey7.bin "$KEK7")" = "$DKH" ] \
+   && grep -aq "^objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256" $T/b7b.log && grep -aq "^objstore: key file: 2 copies, generation 1, current copy objects.key$" $T/b7b.log \
+   && grep -aq "^objstore VFS view persisted OK" $T/b7b.log; then
+  echo "PASS os/objstore-legacy-slot (a host-written v1 slot for the same data key unlocks the persisted store, the zeroed copy is rewritten, and the slot is upgraded to v2 generation 1 under the same passphrase)"
+else echo "FAIL os/objstore-legacy-slot (offsets '$KOFFS', $(grep -a 'objstore: \(key slot\|key file\|lock\)\|PANIC' $T/b7.log $T/b7b.log 2>/dev/null | tail -3))"; fi
 cp $T/nv.good $T/nv.img
 # inv229: a damaged copy is never used and is rewritten from the intact one. One byte of objects.key's wrapped data
 # key is flipped (its SHA-256 no longer matches); the boot must unlock from objects.keyb, read the persisted store,
