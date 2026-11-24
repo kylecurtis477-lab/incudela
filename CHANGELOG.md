@@ -9,6 +9,21 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- Migration (0.23.0): stores made before `2417854` keep their v1 key slot (unsalted SHA-256 passphrase key) and
+  stores made before `87b91fb` keep their weaker data key; both still unlock, and the boot log names a v1 slot.
+  Neither is upgraded in place; key rotation (passphrase change, v1-to-v2 upgrade, data-key rotation) is planned
+  for inv229. Making a new store gives a v2 slot and an independent data key.
+- `2417854` The object store's passphrase key is PBKDF2-HMAC-SHA256 with a 128-bit salt and 20000 iterations (key
+  slot v2: version, KDF salt and count in `objects.key` words 16..19; about 0.5 s on QEMU TCG), replacing one
+  unsalted SHA-256. `pb_kdf` is in crypt.cudi with known-answer tests in tests/fs/crypt.cud. The raw passphrase is
+  wiped after the store is opened. New `os/objstore-kdf-salted` and `os/objstore-legacy-slot`; tests/os expected
+  results 54 to 56.
+- `e6cbdce` The data key's entropy pool mixes up to 32 RDSEED and 32 RDRAND words (`hw_rand`, cpux.cudi) with the
+  512 TSC jitter samples when CPUID reports them; a missing, 0, all-ones or repeated value is refused and counted.
+  New `os/objstore-key-entropy`; expected results 53 to 54.
+- `87b91fb` The data key and the plaintext wrap salt are independent PRF outputs of the entropy digest (fix: the
+  salt was digest words 0..3 and the data key mixed those words with words 4..7, so reading the salt left the data
+  key 128 unknown bits). New `os/objstore-data-key-independent`; expected results 52 to 53.
 - `63c4d7f` Release kernel hardening (the plan's 0.23.1 items): the release kernel is booted on the BIOS path from
   its own GRUB ISO (`os/kernel-release-bios`, KERNEL OK and one kexec) and its generation prints no test/debug line
   (`os/kernel-release-quiet`); tests/os expected results 50 to 52. `page tables built: pml4 at`, `higher half:
