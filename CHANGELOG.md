@@ -9,6 +9,10 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `f73b94e` Reservation 6 batch 1: `tools/build.cud` (built to `build/forge-build`) is a Cuditor port
+  of the repo-root `build.sh`, which stays as the reference. `tests/forge-build/run.sh` requires
+  identical stdout, stderr, exit code and bootstrap artifacts on a default run, and the same
+  failure when `selfhost/runtime.cud` is hidden. The `run_tests.sh` port stays a later batch.
 - `af6e510` Item 7 batch 4: multi-hour soak support. `syssoak` takes an optional fourth argument, a
   wall-clock budget in `sys_ticks()` units (the 100 Hz LAPIC tick, 10 ms; 0 means run every
   requested seed; 360000 ticks is one hour). When the budget expires after a completed seed, it
