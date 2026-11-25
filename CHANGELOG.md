@@ -10,7 +10,21 @@
 
 ## 0.24.0 (open)
 
-## 0.23.1 (open)
+## 0.23.1 (open): KDF hardening and key-temporary wipes (no git tag)
+
+- `5dbbda2` After unlock, `od_open` ends with `od_tmp_done`, which wipes passphrases, the KEK, `od_t`,
+  the entropy pool, and the SHA-256 / HMAC / PBKDF2 working state, then counts any words still set;
+  live store keys stay. `os/objstore-no-kdf-residue` requires the clean boot-log line on the create
+  and reopen boots. `tests/os/expected-results.txt` grows from 67 to 68 entries. The kernel unsafe
+  cap stays 709.
+- `4bd6e3c` `od_kdf` now calls `sh_wipe` (new in `crypt.cudi`: zeroes `sh_h`, `sh_w`, `sh_buf`, `sh_n`
+  and `sh_tot`) after copying the HMAC-SHA256 digest into `od_t`, and also clears `hm_k` and `hm_ih`.
+- `9575ad6` New v2 key slots pick their PBKDF2 iteration count with `od_kdf_calibrate`: a 1000-iteration
+  dummy PBKDF2 times the rate, and the count is scaled to about 500 ms, never below 20000, and at
+  least 600000 when 600000 iterations are estimated to finish within 2 s (real hardware). QEMU TCG
+  stays near 20000 and ~0.5 s. The chosen count is stored in the slot, so existing slots still unlock
+  at their own count. `os/objstore-kdf-salted` and the upgrade/passphrase tests use the stored count
+  rather than requiring exactly 20000. On-disk markers unchanged.
 
 ## 0.23.0 (2026-11-25): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server; package manager; data-at-rest keys and soak/fault testing; All-Cuditor build and test drivers (no git tag)
 
