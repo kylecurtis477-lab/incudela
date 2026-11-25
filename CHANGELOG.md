@@ -9,6 +9,15 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `3f6ad9f` Item-9 remainder: `tools/repro-mformat.cud` (built to `build/repro-mformat`) is a
+  Cuditor port of `tools/repro-mformat`, which stays as the reference and is still
+  what `examples/efi/build.sh`, `examples/efi/build.cud` and `tools/repro-mkrescue`
+  call. When `SOURCE_DATE_EPOCH` is set and `-N` was not already passed, it adds
+  `-N` with the low 32 bits of the epoch as 8 hex digits; with `-C` and `-i FILE`
+  it zeroes the new image's last 512-byte sector. `tests/repro-mformat/run.sh`
+  requires identical images, stdout, stderr and exit code, plus argv, last-sector
+  and missing-mformat checks. Wired as item 68 (lane X). The test does not start
+  QEMU. The kernel unsafe cap stays 709.
 - `e29018f` Item-9 remainder: `tools/usb-image.cud` (built to `build/usb-image`) is a
   Cuditor port of `tools/usb-image.sh`, which stays as the reference. It writes
   the same USB smoke image (kernel ISO plus `incudela.smoke`, packed by
