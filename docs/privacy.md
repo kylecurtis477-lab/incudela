@@ -22,8 +22,13 @@ file names and contents) is encrypted and authenticated. The code is in `example
 
 ### Keys
 - **User key (KEK).** The platform key (`od_tpm_present` is a placeholder for TPM sealing and always
-  returns 0; see Limits): PBKDF2-HMAC-SHA256(passphrase, 128-bit salt, 20000 iterations) since inv228 (key slot
-  v2, `pb_kdf` in crypt.cudi; known-answer vectors from RFC 7914 section 11 and openssl in tests/fs/crypt.cud). The passphrase (8..64 bytes) arrives as
+  returns 0; see Limits): PBKDF2-HMAC-SHA256(passphrase, 128-bit salt, a per-slot iteration count) since inv228
+  (key slot v2, `pb_kdf` in crypt.cudi; known-answer vectors from RFC 7914 section 11 and openssl in
+  tests/fs/crypt.cud). A new slot's count is chosen at create time by `od_kdf_calibrate` (inv248): a short dummy
+  PBKDF2 times the rate, then the count is scaled to about 500 ms, never below 20000, and at least 600000 when
+  that many iterations are estimated to finish within 2 s (real hardware; QEMU TCG stays near 20000 and ~0.5 s).
+  The count is stored in the slot, so existing slots (including pre-inv248 20000-iteration ones) and the TCG
+  tests keep the count they were created with. The passphrase (8..64 bytes) arrives as
   the QEMU fw_cfg file `opt/forge/userkey` (I/O ports 0x510/0x511, read through the `pio_add`/`pio_rd`/`pio_wr` safe
   wrappers) and is wiped from kernel memory once the store is opened. The KDF salt is a fourth independent PRF output
   of the entropy digest (HMAC(digest, "ksalt")), stored with the iteration count in `objects.key` words 16..19
@@ -108,10 +113,12 @@ Not protected against:
   whole image, or destroy the newer slot of a block so the older authentic one is used. Detecting that needs
   a monotonic counter outside the disk (a TPM NV counter), which the test setup does not have.
 - **Weak passphrases.** Since inv228 the KEK is salted (no precomputed tables, and the same passphrase on two disks
-  gives two KEKs) and costs 20000 HMAC-SHA256 iterations per guess (about 0.5 s on QEMU TCG). That slows offline
-  guessing on a stolen disk but does not stop it for a weak passphrase: PBKDF2 is not memory-hard, so GPUs guess
-  fast. A v1 (pre-inv228) slot has the unsalted single SHA-256 until its first unlock upgrades it (inv229); a copy of the
-  disk taken before that keeps the v1 slot. A TPM-sealed key or a
+  gives two KEKs) and costs the slot's stored iteration count of HMAC-SHA256 per guess. New slots (inv248) aim
+  for about 500 ms of work, never below 20000 iterations, and at least 600000 on hardware where 600000 finishes
+  within 2 s (QEMU TCG stays near 20000 and ~0.5 s; a slot created earlier keeps the count it stores, often
+  20000). That slows offline guessing on a stolen disk but does not stop it for a weak passphrase: PBKDF2 is
+  not memory-hard, so GPUs guess fast. A v1 (pre-inv228) slot has the unsalted single SHA-256 until its first
+  unlock upgrades it (inv229); a copy of the disk taken before that keeps the v1 slot. A TPM-sealed key or a
   memory-hard KDF would fix this.
 - **A running, compromised kernel**, physical memory attacks (keys live in kernel memory while mounted), and
   side channels other than tag comparison timing.
@@ -125,9 +132,10 @@ Not protected against:
   store locked, and `objects.log`/`objects.key` are byte-identical afterwards.
 - **os/objstore-key-entropy:** boot 1 reports 32 RDSEED and 32 RDRAND words mixed into the new data key (QEMU
   `-cpu max` has both) and none refused.
-- **os/objstore-kdf-salted:** `objects.key` is a v2 slot with 20000 iterations and a nonzero KDF salt that is not
-  the wrap salt; the host derives the KEK with `openssl kdf ... PBKDF2`, which gives the stored check value, and the
-  old unsalted KEK does not; boots 1 and 3 report the v2 KDF.
+- **os/objstore-kdf-salted:** `objects.key` is a v2 slot whose stored iteration count is at least 20000 and at
+  most 2^24, with a nonzero KDF salt that is not the wrap salt; the host derives the KEK with
+  `openssl kdf ... PBKDF2` at that stored count, which gives the stored check value, and the old unsalted KEK
+  does not; boots 1 and 3 report the same count in the v2 KDF line.
 - **os/objstore-data-key-independent:** the host unwraps DK from `objects.key` with the KEK (openssl), checks the
   key check value, and checks the old salt-to-DK relation holds for none of the four word pairs (on the old
   derivation it held for all four).

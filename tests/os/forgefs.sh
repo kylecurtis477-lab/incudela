@@ -180,10 +180,10 @@ KV=$(le64 "$(hx $T/okey.bin 128 8)"); KS=$(hx $T/okey.bin 136 16); KI=$(le64 "$(
 KEKH=$(openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt "pass:$KEY" -kdfopt "hexsalt:$KS" -kdfopt "iter:$KI" PBKDF2 2>/dev/null | tr -d ':' | tr 'A-F' 'a-f')
 KOLD=$(sha "$(printf 'frge-kek' | od -An -tx1 -v | tr -d ' \n')$(printf '%s' "$KEY" | od -An -tx1 -v | tr -d ' \n')")
 CHKS=$(hx $T/okey.bin 96 32); SALTW=$(hx $T/okey.bin 16 16)
-if [ "$KV" = 2 ] && [ "$KI" = 20000 ] && [ "$KS" != 00000000000000000000000000000000 ] && [ "$KS" != "$SALTW" ] \
+if [ "$KV" = 2 ] && [ "$KI" -ge 20000 ] && [ "$KI" -le 16777216 ] && [ "$KS" != 00000000000000000000000000000000 ] && [ "$KS" != "$SALTW" ] \
    && [ "$(hmac "$KEKH" "63686b0000000000$SALTW")" = "$CHKS" ] && [ "$(hmac "$KOLD" "63686b0000000000$SALTW")" != "$CHKS" ] \
-   && grep -aq "^objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256, 128-bit salt, 20000 iterations" $T/b1.log \
-   && grep -aq "^objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256, 128-bit salt, 20000 iterations" $T/b3.log; then
+   && grep -aq "^objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256, 128-bit salt, $KI iterations" $T/b1.log \
+   && grep -aq "^objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256, 128-bit salt, $KI iterations" $T/b3.log; then
   echo "PASS os/objstore-kdf-salted (slot v2, $KI iterations, salt $(printf '%s' "$KS" | cut -c1-8)...; openssl PBKDF2 KEK gives the check value, the unsalted KEK does not; $(grep -ao 'iterations ([0-9?]* ms)' $T/b1.log | head -1))"
 else echo "FAIL os/objstore-kdf-salted (version '$KV', iterations '$KI', salt '$KS', KEK ${#KEKH} hex)"; fi
 # inv228: the data key is independent of the plaintext wrap salt. The host unwraps DK with the KEK and checks the
@@ -249,11 +249,13 @@ if [ "${#V1}" = 448 ] && kput "$V1" "$Z224"; then
   boot $KEY; cp $T/s.log $T/b7b.log
 fi
 KS7=$(hx $T/okey7.bin 136 16 2>/dev/null); SW7=$(hx $T/okey7.bin 16 16 2>/dev/null)
-KEK7=$(openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt "pass:$KEY" -kdfopt "hexsalt:$KS7" -kdfopt "iter:20000" PBKDF2 2>/dev/null | tr -d ':' | tr 'A-F' 'a-f')
+KI7=$(le64 "$(hx $T/okey7.bin 152 8 2>/dev/null)")
+KEK7=$(openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt "pass:$KEY" -kdfopt "hexsalt:$KS7" -kdfopt "iter:$KI7" PBKDF2 2>/dev/null | tr -d ':' | tr 'A-F' 'a-f')
 if [ -s $T/b7.log ] && grep -aq "data key unwrapped with the platform key" $T/b7.log && grep -aq "^objstore: key slot v1 (legacy): passphrase KDF unsalted SHA-256" $T/b7.log \
    && grep -aq "^objstore system rewind persisted OK" $T/b7.log && grep -aq "^objstore VFS view persisted OK" $T/b7.log \
    && grep -aq "^objstore: key file: 2 copies, generation 0, current copy objects.key; the other copy was older or damaged and was rewritten from it$" $T/b7.log \
-   && grep -aq "^objstore: key slot v1 upgraded to v2: PBKDF2-HMAC-SHA256, 20000 iterations, fresh salts, key slot generation 1, both copies" $T/b7.log \
+   && [ "$KI7" -ge 20000 ] && [ "$KI7" -le 16777216 ] \
+   && grep -aq "^objstore: key slot v1 upgraded to v2: PBKDF2-HMAC-SHA256, $KI7 iterations, fresh salts, key slot generation 1, both copies" $T/b7.log \
    && [ "$(hx $T/okey7.bin 0 224)" = "$(hx $T/okeyb7.bin 0 224)" ] && [ "$(hx $T/okey7.bin 128 8)" = 0200000000000000 ] \
    && [ "$(hx $T/okey7.bin 160 8)" = 0100000000000000 ] && [ "$(sha "$(hx $T/okey7.bin 0 192)")" = "$(hx $T/okey7.bin 192 32)" ] \
    && [ "$SW7" != "$SALTW" ] && [ "$(hmac "$KEK7" "63686b0000000000$SW7")" = "$(hx $T/okey7.bin 96 32)" ] && [ "$(od_dk_hex $T/okey7.bin "$KEK7")" = "$DKH" ] \
@@ -284,13 +286,15 @@ KEY2=changed-passphrase-uid1000-inv229
 boot $KEY $KEY2; cp $T/s.log $T/b9.log
 $T/incudela-part read $T/nv.img objects.key > $T/okey9.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb9.bin
 KS9=$(hx $T/okey9.bin 136 16); SW9=$(hx $T/okey9.bin 16 16)
-KEK9=$(openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt "pass:$KEY2" -kdfopt "hexsalt:$KS9" -kdfopt "iter:20000" PBKDF2 2>/dev/null | tr -d ':' | tr 'A-F' 'a-f')
+KI9=$(le64 "$(hx $T/okey9.bin 152 8)")
+KEK9=$(openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt "pass:$KEY2" -kdfopt "hexsalt:$KS9" -kdfopt "iter:$KI9" PBKDF2 2>/dev/null | tr -d ':' | tr 'A-F' 'a-f')
 boot $KEY; cp $T/s.log $T/b10.log
 $T/incudela-part read $T/nv.img objects.key > $T/okey10.bin; $T/incudela-part read $T/nv.img objects.keyb > $T/okeyb10.bin
 boot $KEY2; cp $T/s.log $T/b11.log
 if grep -aq "^objstore: passphrase changed: the data key is rewrapped under the new passphrase, key slot generation 2, both copies; the old passphrase no longer opens the store$" $T/b9.log \
    && grep -aq "^objstore: key file: 2 copies, generation 1, current copy objects.key$" $T/b9.log \
    && [ "$(hx $T/okey9.bin 0 224)" = "$(hx $T/okeyb9.bin 0 224)" ] && [ "$(hx $T/okey9.bin 160 8)" = 0200000000000000 ] \
+   && [ "$KI9" -ge 20000 ] && [ "$KI9" -le 16777216 ] \
    && [ "$(sha "$(hx $T/okey9.bin 0 192)")" = "$(hx $T/okey9.bin 192 32)" ] && [ "$KS9" != "$KS" ] && [ "$SW9" != "$SALTW" ] \
    && [ "$(hmac "$KEK9" "63686b0000000000$SW9")" = "$(hx $T/okey9.bin 96 32)" ] && [ "$(od_dk_hex $T/okey9.bin "$KEK9")" = "$DKH" ] \
    && grep -aq "objstore: locked: wrong user key for uid 1000, nothing decrypted or written" $T/b10.log \

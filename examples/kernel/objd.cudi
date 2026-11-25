@@ -19,8 +19,16 @@ OD_UID = 1000  # the store owner (one user per store)
 OD_KMAGIC = 0x59454B4547524F46  # "FORGEKEY"
 # key slot v2 (inv228), objects.key words 16..19: OD_KVER, the 128-bit KDF salt, the iteration count. A v1 slot
 # (made before inv228) has zeros there and the unsalted KEK; it still unlocks (od_kek_legacy).
+# New slots (inv248) pick the count with od_kdf_calibrate: about OD_KDF_TARGET_MS of work, never below
+# OD_KDF_ITERS, and at least OD_KDF_FLOOR when that many iterations are estimated to finish within
+# OD_KDF_FLOOR_MS (real hardware; QEMU TCG stays near 20000 and ~0.5 s). The chosen count is stored in
+# the slot, so existing slots and the TCG tests keep the count they were created with.
 OD_KVER = 2
-OD_KDF_ITERS = 20000  # PBKDF2 iterations for a new slot (stored in the slot, so a later raise keeps old slots)
+OD_KDF_ITERS = 20000  # minimum PBKDF2 iterations for a new slot (also the pre-inv248 default)
+OD_KDF_FLOOR = 600000  # floor on hardware fast enough that this many finish within OD_KDF_FLOOR_MS
+OD_KDF_FLOOR_MS = 2000
+OD_KDF_TARGET_MS = 500  # aim for about this many ms on a new slot
+OD_KDF_PROBE = 1000  # iterations used only to measure the rate (dummy key and salt, then wiped)
 OD_KDF_MAX = 0x1000000  # a slot asking for more (or 0) is refused as damaged
 od_uk: u8[64]  # the passphrase from fw_cfg, wiped once od_kek is derived
 od_ukn: u64
@@ -34,6 +42,7 @@ od_kup: u64  # the last open upgraded a v1 slot to v2 (inv229)
 od_kver: u64  # key slot version of the last create or unlock (1 legacy, 2 PBKDF2)
 od_kiter: u64  # its PBKDF2 iterations
 od_kdf_tsc: u64  # TSC ticks the last PBKDF2 took
+od_kcal: u64  # calibrated iteration count for a new slot this boot (0 = not yet measured)
 od_st: u64
 od_synced: u64
 od_torn: u64
@@ -159,6 +168,40 @@ def od_kek_legacy():
     while i < 8:
         od_kek[i] = od_be(sh_h[i])
         i += 1
+
+def od_kdf_calibrate() -> u64:
+# iteration count for a new v2 slot: time OD_KDF_PROBE dummy PBKDF2 iterations and scale to
+# OD_KDF_TARGET_MS, then apply OD_KDF_ITERS as a floor and OD_KDF_FLOOR when 600k iterations would
+# finish within OD_KDF_FLOOR_MS (so real hardware is never weaker than 600k, and QEMU TCG stays
+# near 20000). Cached in od_kcal for the rest of the boot. Existing slots keep the count they store.
+    if od_kcal != 0:
+        return od_kcal
+    i: u64 = 0
+    while i < 64:
+        hm_k[i] = u8(0)
+        pb_s[i] = u8(0)
+        i += 1
+    hm_k[0] = u8(1)
+    pb_s[0] = u8(2)
+    pb_sn = 16
+    t0 = rdtsc()
+    pb_kdf(OD_KDF_PROBE)
+    dt = rdtsc() - t0
+    pb_wipe()
+    n: u64 = OD_KDF_ITERS
+    if tsc_per_ms != 0 and dt != 0:
+        n = (OD_KDF_PROBE * OD_KDF_TARGET_MS * tsc_per_ms) / dt
+        if n < OD_KDF_ITERS:
+            n = OD_KDF_ITERS
+        if n > OD_KDF_MAX:
+            n = OD_KDF_MAX
+        est = (OD_KDF_FLOOR * dt) / (OD_KDF_PROBE * tsc_per_ms)
+        if est <= OD_KDF_FLOOR_MS and n < OD_KDF_FLOOR:
+            n = OD_KDF_FLOOR
+    if n == 0:
+        n = OD_KDF_ITERS
+    od_kcal = n
+    return n
 
 def od_kek_pbkdf2(ks0: u64, ks1: u64, c: u64):
 # key slot v2 (inv228): KEK = PBKDF2-HMAC-SHA256(passphrase, 128-bit salt ks0 || ks1 little-endian, c iterations)
@@ -541,9 +584,10 @@ def od_slot_build(gen: u64) -> u64:
     od_kdf(od_pool, 0x746C61736B, 0, 0)  # "ksalt": the passphrase KDF salt, independent of DK and the wrap salt
     ks0 = od_t[0] | (od_t[1] << 32)
     ks1 = od_t[2] | (od_t[3] << 32)
-    od_kek_pbkdf2(ks0, ks1, OD_KDF_ITERS)
+    c = od_kdf_calibrate()
+    od_kek_pbkdf2(ks0, ks1, c)
     od_kver = OD_KVER
-    od_kiter = OD_KDF_ITERS
+    od_kiter = c
     i: u64 = 0
     while i < OD_KW:
         od_kn[i] = 0
@@ -554,7 +598,7 @@ def od_slot_build(gen: u64) -> u64:
     od_kn[16] = OD_KVER
     od_kn[17] = ks0
     od_kn[18] = ks1
-    od_kn[19] = OD_KDF_ITERS
+    od_kn[19] = c
     od_kn[OD_KG] = gen
     if od_rot != 0:
         od_slot_rot()

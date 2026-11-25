@@ -1855,13 +1855,23 @@ Directive: everything that can be Forge is Forge. One tool per commit, verified 
   (`pb_kdf`, the inner/outer HMAC states computed once and restored for each of the c iterations; known-answer
   vectors in tests/fs/crypt.cud at default, -O0, --fs-opt and --fs-ssa) and a new store's slot is v2: objects.key
   words 16..19 = 2, a 128-bit KDF salt (HMAC(digest, "ksalt"), independent of DK and the wrap salt), and
-  `OD_KDF_ITERS` = 20000 (about 0.5 s on QEMU TCG; the boot log prints the ms). The count is read from the slot, so
-  a later raise keeps old slots readable; 0 or above 2^24 is refused. `od_fwcfg_key` now keeps the raw passphrase
+  `OD_KDF_ITERS` = 20000 (about 0.5 s on QEMU TCG at the time; the boot log prints the ms). The count is read
+  from the slot, so a later raise keeps old slots readable; 0 or above 2^24 is refused. New slots since inv248
+  use a time-calibrated count (see the 0.23.1 KDF calibration item below) instead of always 20000. `od_fwcfg_key` now keeps the raw passphrase
   in `od_uk`, which is wiped after `od_open`. A v1 slot (words 16..19 zero) still unlocks with the old KEK and the
   boot log names it legacy; it is not rewritten in place (a one-block rewrite of the only key slot is not
   crash-safe). Tests: `os/objstore-kdf-salted` (openssl PBKDF2 on the host gives the stored check value, the
   unsalted KEK does not) and `os/objstore-legacy-slot` (a host-written v1 slot for the same DK unlocks the persisted
   store; a mutation that drops the v1 path fails it); expected results 54 to 56. Kernel unsafe report unchanged.
+- Data-at-rest keys, 0.23.1 KDF calibration — *Status: done (2026-11-25, inv248).* New v2 slots no longer always
+  use `OD_KDF_ITERS` = 20000. `od_kdf_calibrate` times 1000 dummy PBKDF2 iterations (dummy key and salt, then
+  wiped) and scales the count to about 500 ms, with a floor of 20000 and a 600000-iteration floor when 600000
+  is estimated to finish within 2 s (real hardware; QEMU TCG stays near 20000 and ~0.5 s so the TCG tests stay
+  fast). The chosen count is stored in the slot (word 19), so existing slots, including pre-inv248 20000-iteration
+  ones, still unlock at their own count; 0 or above 2^24 is still refused. `os/objstore-kdf-salted`,
+  `os/objstore-legacy-slot` and `os/objstore-passphrase-change` now check the stored count (at least 20000, at
+  most 2^24) and feed that count to openssl, rather than requiring exactly 20000. On-disk markers and the kernel
+  unsafe cap (709) are unchanged.
 - Data-at-rest keys, batch 2a: two-copy key file — *Status: done (2026-11-23, inv229).* The key slot was one block,
   `objects.key`, so any rewrite (passphrase change, v1-to-v2 upgrade) would have overwritten the only copy in
   place. Now `objects.keyb` is a second copy; a slot written since inv229 has a generation (word 20) and a SHA-256
