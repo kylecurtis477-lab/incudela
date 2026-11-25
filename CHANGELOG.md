@@ -9,6 +9,14 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `e29018f` Item-9 remainder: `tools/usb-image.cud` (built to `build/usb-image`) is a
+  Cuditor port of `tools/usb-image.sh`, which stays as the reference. It writes
+  the same USB smoke image (kernel ISO plus `incudela.smoke`, packed by
+  `tools/repro-mkrescue` with `SOURCE_DATE_EPOCH` pinned) and refuses any
+  `/dev` path or non-regular file. `tests/usb-image/run.sh` requires identical
+  stdout, stderr, exit code and image bytes, plus the refusals. Wired as item
+  67 (alone lane). The test does not start QEMU. `tests/os/usb.sh` now uses
+  `build/usb-image`. The kernel unsafe cap stays 709.
 - `cc2a775` Item-9 remainder: `tests/count-store-reload/count_store_reload.cud` (built
   to `build/count_store_reload`) is a Cuditor port of `tests/fs/count_store_reload.py`,
   which stays as the reference. It prints the same count of consecutive
