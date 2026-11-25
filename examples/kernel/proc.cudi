@@ -72,7 +72,9 @@ struct Proc:
     sig_pend: u64  # process-directed pending signals (kill)
 
 procs: u64[64]
-reap_code: u64  # exit code of the child last reaped by sys_wait_ex
+reap_code: u64  # exit code of the child last found by sys_wait_ex
+reap_found: u64  # Proc* unlinked but not yet destroyed (0 if none)
+reap_slot: u64  # procs[] index to put the zombie back on a failed status copy
 kx_freeze: u64  # a kexec handoff is collecting every user process at a syscall boundary
 kx_caller: u64  # the Proc doing the handoff (it is not parked)
 
@@ -1162,7 +1164,10 @@ def sys_wait_ex(pid: u64, kstatus: u64, options: u64) -> u64:
             c = ptr[Proc](found)
             cpid = c.pid
             reap_code = c.exit_code
-            proc_destroy(c)
+            # leave the zombie unlinked but not destroyed until wait_commit;
+            # wait_abort puts it back if the status pointer is bad (badptr)
+            reap_found = found
+            reap_slot = i
             return cpid
         if any == 0:
             spin_unlock(addr(rq_lock))
@@ -1182,12 +1187,30 @@ def sys_wait_ex(pid: u64, kstatus: u64, options: u64) -> u64:
         wq_block_l(addr(me.childq))
     return 0
 
+def wait_commit():
+# destroy the zombie sys_wait_ex unlinked
+    if reap_found != 0:
+        proc_destroy(as_proc(reap_found))
+        reap_found = 0
+
+def wait_abort():
+# status was not delivered: put the zombie back so a later wait can still reap it
+    if reap_found != 0:
+        f = irq_save()
+        spin_lock(addr(rq_lock))
+        procs[reap_slot] = reap_found
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        reap_found = 0
+
 def sys_wait(pid: u64, ustatus: u64) -> u64:
     r = sys_wait_ex(pid, 1, 0)
     if r == 0 or r == ECHILD or (r >> 63) != 0:
         return r
     if ustatus != 0 and (user_ptr_ok(ustatus, 8) == 0 or copy_user(ustatus, u64(addr(reap_code)), 8) != 0):
+        wait_abort()
         return EFAULT
+    wait_commit()
     return r
 
 def sys_brk(nb: u64) -> u64:

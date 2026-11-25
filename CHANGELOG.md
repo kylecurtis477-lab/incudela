@@ -21,6 +21,13 @@
   like lxtest, launched with `run lxipc`) covers those calls. The application pass/fail
   list is in `docs/linux-compat.md`. Ash pipelines are not yet in the boot script.
   Syscalls 408/409 stay `ktest_hooks` gated. The kernel unsafe cap stays 709.
+- `sys_wait` / `lx_wait4`: a bad status pointer returns EFAULT and the zombie
+  stays waitable (the previous `sys_wait` behavior). `0862dc4`'s `sys_wait_ex`
+  had destroyed the child before the copy, so `badptr` saw ECHILD on the later
+  wait probes. `badptr` is unchanged. `lxipc` also checks Linux `wait4`. The
+  `lxthreads` boot pattern is `PASS (11 checks)` after fork-style clone grew
+  by a wait4 check. The kernel unsafe cap stays 709.
+
 
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 

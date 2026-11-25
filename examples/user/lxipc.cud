@@ -121,6 +121,15 @@ def lx_main(sp: u64):
     status[0] = 0
     w = lsys(61, pid, u64(addr(status[0])), 0, 0, 0)
     check(w == pid and status[0] == 0, "wait4 clone status 0")
+    pid = lsys(57, 0, 0, 0, 0, 0)
+    if pid == 0:
+        lsys(231, 3, 0, 0, 0, 0)
+    check((pid >> 63) == 0 and pid != 0, "fork for wait4 EFAULT")
+    r = lsys(61, pid, 0xFFFF800000001000, 0, 0, 0)
+    check(r == EFAULT, "wait4 bad pointer -> EFAULT")
+    status[0] = 0
+    w = lsys(61, pid, u64(addr(status[0])), 0, 0, 0)
+    check(w == pid and status[0] == (3 << 8), "wait4 reaps after EFAULT")
     put("lxipc: fork and clone(SIGCHLD) children reaped by wait4\n")
     flush()
     pth = "/efi/incudela/docs/hello.sh"

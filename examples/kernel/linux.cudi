@@ -344,7 +344,9 @@ def lx_wait4(pid: u64, ustatus: u64, options: u64, urusage: u64) -> u64:
     st[0] = (reap_code & 0xFF) << 8
     if ustatus != 0:
         if user_ptr_ok(ustatus, 4) == 0 or copy_user(ustatus, u64(addr(st[0])), 4) != 0:
+            wait_abort()
             return EFAULT
+    wait_commit()
     return r
 
 def lx_clone(frame: u64, flags: u64, stack: u64, ptid: u64, ctid: u64, tls: u64) -> u64:
