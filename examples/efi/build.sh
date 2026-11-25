@@ -18,7 +18,7 @@ mcopy -i $B/esp.fat ../../build/kernel/kernel-next.elf ::/EFI/Incudela/kernel-ne
 mcopy -i $B/esp.fat ../../build/user/hello.elf ::/EFI/Incudela/init.elf
 mmd -i $B/esp.fat ::/EFI/Incudela/bin ::/EFI/Incudela/docs ::/EFI/Incudela/mod
 for m in hello badabi unresolved newer tty1 tty2 getpid2 unsealed tty1u tampered userimg; do mcopy -i $B/esp.fat ../../build/modules/$m.ko ::/EFI/Incudela/mod/$m.ko; done
-for p in sh hello cat forktest fault blkd crash sum bg captest chantest sbtest grtest wxtest capdeny badptr sysfuzz kbdd kbdd2 nvmed nvmed2 gfxapp gfxdeny unsealed tampered forged hellov2 algbad proofset linuxabi lxtest lxthreads lxfs lxexec lxsig; do mcopy -i $B/esp.fat ../../build/user/$p.elf ::/EFI/Incudela/bin/$p; done
+for p in sh hello cat forktest fault blkd crash sum bg captest chantest sbtest grtest wxtest capdeny badptr sysfuzz syssoak kbdd kbdd2 nvmed nvmed2 gfxapp gfxdeny unsealed tampered forged hellov2 algbad proofset linuxabi lxtest lxthreads lxfs lxexec lxsig; do mcopy -i $B/esp.fat ../../build/user/$p.elf ::/EFI/Incudela/bin/$p; done
 [ -f ../../build/user/busybox.elf ] && mcopy -i $B/esp.fat ../../build/user/busybox.elf ::/EFI/Incudela/bin/busybox
 printf 'Forge long file name test: this file lives at \\EFI\\Incudela\\docs\\Long File Name Notes.txt\nIt spans more than one 13-character LFN entry and is read with open/read/stat/close.\n' > $B/notes.txt
 mcopy -i $B/esp.fat $B/notes.txt "::/EFI/Incudela/docs/Long File Name Notes.txt"

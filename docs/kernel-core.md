@@ -175,6 +175,12 @@ syscall, four bad addresses, all `EFAULT`).
 `EACCES`, numbers outside the native table (including the Linux-only 15, 56, 158 and 322) `ENOSYS`, and then
 3000 calls with random arguments (huge lengths, kernel, non-canonical and straddling pointers, random path
 bytes) must leave its canary, pid and console intact (`sysfuzz: PASS`).
+The item 7 batch 2 soak harness (`examples/user/syssoak.cud`, `tools/syssoak.cud`) runs that fuzzer
+across many seeds and records the results (`syssoak-results v1`). `os/syssoak` boots once with
+`incudela.syssoak` (16 seeds x 100 calls, results in `build/os/syssoak-results.txt`) and fails on
+the tree before the harness; it skips the long shell and kexec sessions so the gated test stays
+short. A later batch covers fault injection and multi-hour runs. The kernel unsafe cap is unchanged
+(709).
 
 **Scheduler, IPC and capabilities (§§1–4).** The legal thread states, wait queues, mutexes and
 condvars are exercised by the kernel sync self-test (`wait queues + sleeping mutexes + condvars OK`,

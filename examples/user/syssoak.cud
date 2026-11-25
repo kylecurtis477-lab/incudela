@@ -1,0 +1,114 @@
+# cuditor: safe
+# cuditor: no-runtime
+# cuditor: caps(fs, spawn)
+# Item 7 batch 2 (sustained adversarial testing): a soak harness that runs the seeded
+# syscall and capability fuzzer (examples/user/sysfuzz.cud) across many seeds and prints
+# a stable per-seed record plus a summary.
+#   syssoak [START [NSEEDS [N]]]
+# Defaults: start 1, 16 seeds, 100 calls each (the short tests/os/syssoak.sh path).
+# A later multi-hour batch can pass a larger seed count or N; this program does not
+# raise the kernel unsafe cap and does not itself inject faults.
+include "ulib.cudi"
+
+def num(p: ptr[u8], i: ptr[u64]) -> u64:
+    v: u64 = 0
+    while mem_get8(u64(p) + i[0]) == 32:
+        i[0] += 1
+    while mem_get8(u64(p) + i[0]) >= 48 and mem_get8(u64(p) + i[0]) <= 57:
+        v = v * 10 + mem_get8(u64(p) + i[0]) - 48
+        i[0] += 1
+    return v
+
+def put_num(dst: ptr[u8], i: u64, v: u64) -> u64:
+    d: u8[24]
+    p: u64 = 24
+    if v == 0:
+        p -= 1
+        d[p] = 48
+    while v != 0:
+        p -= 1
+        d[p] = u8(48 + v % 10)
+        v = v / 10
+    while p < 24:
+        mem_set8(u64(dst) + i, d[p])
+        i += 1
+        p += 1
+    return i
+
+@export
+def _start():
+    ab: u8[128]
+    ab[0] = 0
+    sys_getargs(u64(addr(ab[0])), 128)
+    pos: u64 = 0
+    start = num(addr(ab[0]), addr(pos))
+    nseeds = num(addr(ab[0]), addr(pos))
+    n = num(addr(ab[0]), addr(pos))
+    if start == 0:
+        start = 1
+    if nseeds == 0:
+        nseeds = 16
+    if n == 0:
+        n = 100
+    out("syssoak: start ")
+    out_u64(start)
+    out(", ")
+    out_u64(nseeds)
+    out(" seeds, ")
+    out_u64(n)
+    out(" calls each\n")
+    flush()
+    npass: u64 = 0
+    nfail: u64 = 0
+    s: u64 = start
+    end = start + nseeds
+    while s < end:
+        args: u8[64]
+        i: u64 = 0
+        i = put_num(addr(args[0]), i, s)
+        mem_set8(u64(addr(args[0])) + i, 32)
+        i += 1
+        i = put_num(addr(args[0]), i, n)
+        mem_set8(u64(addr(args[0])) + i, 0)
+        pid = sys_fork()
+        if pid == 0:
+            sys_exec("/efi/incudela/bin/sysfuzz", addr(args[0]))
+            out("syssoak: exec sysfuzz failed\n")
+            flush()
+            sys_exit(127)
+        st: u64 = 0
+        w = sys_wait(pid, addr(st))
+        ok: u64 = 0
+        if is_err(pid) or is_err(w) or w != pid or st != 0:
+            nfail += 1
+        else:
+            npass += 1
+            ok = 1
+        out("syssoak: seed ")
+        out_u64(s)
+        out(" n ")
+        out_u64(n)
+        out(" result ")
+        if ok == 1:
+            out("PASS\n")
+        else:
+            out("FAIL\n")
+        flush()
+        s += 1
+    out("syssoak: ")
+    out_u64(nseeds)
+    out(" seeds, ")
+    out_u64(npass)
+    out(" PASS, ")
+    out_u64(nfail)
+    out(" FAIL, ")
+    out_u64(n)
+    out(" calls each\n")
+    flush()
+    if nfail == 0 and npass == nseeds:
+        out("syssoak: PASS\n")
+        flush()
+        sys_exit(0)
+    out("syssoak: FAIL\n")
+    flush()
+    sys_exit(1)

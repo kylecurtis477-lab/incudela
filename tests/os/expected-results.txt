@@ -4,6 +4,7 @@ os/kernel-wx
 os/boot-harness-self-test
 os/boot-harness-early-exit
 os/boot-harness-delay-after-ok
+os/syssoak
 os/kernel-bios
 os/hang-probe-live
 os/irq-off-watch

@@ -1,0 +1,277 @@
+# tools/syssoak.cud: host soak harness for item 7 batch 2 (docs/BUILD_PLAN.md).
+# Reads a guest serial log, writes a stable results file, and checks it. No QEMU.
+#   syssoak --record IN.log OUT.txt
+#   syssoak --check OUT.txt [MIN]
+#   syssoak --self-test
+# The live short boot (16 seeds x 100 calls of sysfuzz) is tests/os/syssoak.sh.
+# A later batch can feed a longer soak's log to --record; this tool does not
+# itself run a multi-hour soak or inject faults.
+import sys
+
+HDR = "# syssoak-results v1\n"
+COLS = "# seed n calls errors distinct cap_ok cap_n ns_ok ns_n canary pid result\n"
+
+def is_digit(ch):
+    return ch >= "0" and ch <= "9"
+
+def take_u(s, i):
+# [value, new_i] of the next decimal integer, skipping non-digits; [-1, i] if none
+    n = len(s)
+    while i < n and not is_digit(s[i]):
+        i += 1
+    if i >= n:
+        return [-1, i]
+    v = 0
+    while i < n and is_digit(s[i]):
+        v = v * 10 + int(s[i])
+        i += 1
+    return [v, i]
+
+def rec_new(seed, n):
+    return {"seed": seed, "n": n, "calls": 0, "errors": 0, "distinct": 0,
+            "cap_ok": 0, "cap_n": 0, "ns_ok": 0, "ns_n": 0, "canary": -1, "pid": -1,
+            "result": ""}
+
+def parse_log(text):
+# returns [records, summary] where summary is {seeds, pass, fail, n, pass_line} or None
+    recs = []
+    pending = {}
+    last_seed = -1
+    summary = None
+    pass_line = 0
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line.startswith("sysfuzz: seed "):
+            a = take_u(line, 14)
+            b = take_u(line, a[1])
+            c = take_u(line, b[1])
+            d = take_u(line, c[1])
+            e = take_u(line, d[1])
+            f = take_u(line, e[1])
+            g = take_u(line, f[1])
+            h = take_u(line, g[1])
+            if a[0] < 0:
+                continue
+            r = rec_new(a[0], b[0])
+            r["calls"] = b[0]
+            r["distinct"] = c[0]
+            r["errors"] = d[0]
+            r["cap_ok"] = e[0]
+            r["cap_n"] = f[0]
+            r["ns_ok"] = g[0]
+            r["ns_n"] = h[0]
+            pending[a[0]] = r
+            last_seed = a[0]
+        elif line.startswith("sysfuzz: canary intact "):
+            a = take_u(line, 23)
+            b = take_u(line, a[1])
+            if last_seed >= 0 and last_seed in pending and a[0] >= 0:
+                pending[last_seed]["canary"] = a[0]
+                if b[0] >= 0:
+                    pending[last_seed]["pid"] = b[0]
+        elif line == "sysfuzz: PASS" or line == "sysfuzz: FAIL":
+            pass
+        elif line.startswith("syssoak: seed "):
+            a = take_u(line, 14)
+            b = take_u(line, a[1])
+            res = "FAIL"
+            if line.endswith(" result PASS"):
+                res = "PASS"
+            elif " result PASS" in line:
+                res = "PASS"
+            if a[0] < 0:
+                continue
+            if a[0] in pending:
+                r = pending[a[0]]
+            else:
+                r = rec_new(a[0], b[0])
+            if b[0] >= 0:
+                r["n"] = b[0]
+            r["result"] = res
+            recs.append(r)
+            if a[0] in pending:
+                del pending[a[0]]
+        elif line.startswith("syssoak: ") and " seeds, " in line and " PASS, " in line and " FAIL, " in line:
+            a = take_u(line, 9)
+            b = take_u(line, a[1])
+            c = take_u(line, b[1])
+            d = take_u(line, c[1])
+            if a[0] >= 0 and b[0] >= 0 and c[0] >= 0:
+                summary = {"seeds": a[0], "pass": b[0], "fail": c[0], "n": d[0], "pass_line": 0}
+        elif line == "syssoak: PASS":
+            pass_line = 1
+        elif line == "syssoak: FAIL":
+            pass_line = -1
+    if summary is not None:
+        summary["pass_line"] = pass_line
+    return [recs, summary]
+
+def format_results(recs, summary):
+    lines = [HDR, COLS]
+    i = 0
+    while i < len(recs):
+        r = recs[i]
+        lines.append(str(r["seed"]) + " " + str(r["n"]) + " " + str(r["calls"]) + " " + str(r["errors"])
+                     + " " + str(r["distinct"]) + " " + str(r["cap_ok"]) + " " + str(r["cap_n"])
+                     + " " + str(r["ns_ok"]) + " " + str(r["ns_n"]) + " " + str(r["canary"])
+                     + " " + str(r["pid"]) + " " + r["result"] + "\n")
+        i += 1
+    if summary is not None:
+        lines.append("# summary seeds=" + str(summary["seeds"]) + " pass=" + str(summary["pass"])
+                     + " fail=" + str(summary["fail"]) + " n=" + str(summary["n"])
+                     + " line=" + str(summary["pass_line"]) + "\n")
+    return "".join(lines)
+
+def parse_results(text):
+    recs = []
+    summary = None
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line == "" or line.startswith("# syssoak-results") or line.startswith("# seed "):
+            continue
+        if line.startswith("# summary "):
+            a = take_u(line, 10)
+            b = take_u(line, a[1])
+            c = take_u(line, b[1])
+            d = take_u(line, c[1])
+            e = take_u(line, d[1])
+            summary = {"seeds": a[0], "pass": b[0], "fail": c[0], "n": d[0], "pass_line": e[0]}
+            continue
+        parts = line.split(" ")
+        if len(parts) != 12:
+            return [[], None, "bad results line: " + line]
+        r = rec_new(int(parts[0]), int(parts[1]))
+        r["calls"] = int(parts[2])
+        r["errors"] = int(parts[3])
+        r["distinct"] = int(parts[4])
+        r["cap_ok"] = int(parts[5])
+        r["cap_n"] = int(parts[6])
+        r["ns_ok"] = int(parts[7])
+        r["ns_n"] = int(parts[8])
+        r["canary"] = int(parts[9])
+        r["pid"] = int(parts[10])
+        r["result"] = parts[11]
+        recs.append(r)
+    return [recs, summary, ""]
+
+def check(recs, summary, min_seeds):
+    if summary is None:
+        return "missing summary"
+    if len(recs) < min_seeds:
+        return "only " + str(len(recs)) + " seed records, want at least " + str(min_seeds)
+    if summary["seeds"] != len(recs):
+        return "summary seeds " + str(summary["seeds"]) + " != " + str(len(recs)) + " records"
+    if summary["pass"] + summary["fail"] != summary["seeds"]:
+        return "summary pass+fail does not equal seeds"
+    if summary["fail"] != 0 or summary["pass"] != summary["seeds"] or summary["pass_line"] != 1:
+        return "soak did not PASS (" + str(summary["pass"]) + " PASS, " + str(summary["fail"]) + " FAIL)"
+    i = 0
+    while i < len(recs):
+        r = recs[i]
+        if r["result"] != "PASS":
+            return "seed " + str(r["seed"]) + " is " + r["result"]
+        if r["canary"] != 1 or r["pid"] != 1:
+            return "seed " + str(r["seed"]) + " canary/pid not intact"
+        if r["cap_n"] != 0 and r["cap_ok"] != r["cap_n"]:
+            return "seed " + str(r["seed"]) + " capability sweep incomplete"
+        if r["ns_n"] != 0 and r["ns_ok"] != r["ns_n"]:
+            return "seed " + str(r["seed"]) + " ENOSYS sweep incomplete"
+        i += 1
+    return ""
+
+GOOD = "\n".join([
+    "sysfuzz: seed 1, 100 calls over 12 syscall numbers (34 errors); 29/29 undeclared-capability calls EACCES, 20/20 unknown numbers ENOSYS",
+    "sysfuzz: canary intact 1, pid unchanged 1",
+    "sysfuzz: PASS",
+    "syssoak: seed 1 n 100 result PASS",
+    "sysfuzz: seed 2, 100 calls over 11 syscall numbers (40 errors); 29/29 undeclared-capability calls EACCES, 20/20 unknown numbers ENOSYS",
+    "sysfuzz: canary intact 1, pid unchanged 1",
+    "sysfuzz: PASS",
+    "syssoak: seed 2 n 100 result PASS",
+    "syssoak: 2 seeds, 2 PASS, 0 FAIL, 100 calls each",
+    "syssoak: PASS"]) + "\n"
+
+OLD = "\n".join(["KERNEL OK", "debug-exit 10 ms after KERNEL OK"]) + "\n"
+
+BAD = "\n".join([
+    "sysfuzz: seed 1, 100 calls over 12 syscall numbers (34 errors); 29/29 undeclared-capability calls EACCES, 20/20 unknown numbers ENOSYS",
+    "sysfuzz: canary intact 1, pid unchanged 1",
+    "sysfuzz: PASS",
+    "syssoak: seed 1 n 100 result PASS",
+    "sysfuzz: seed 2, 100 calls over 11 syscall numbers (40 errors); 29/29 undeclared-capability calls EACCES, 20/20 unknown numbers ENOSYS",
+    "sysfuzz: canary intact 0, pid unchanged 1",
+    "sysfuzz: FAIL",
+    "syssoak: seed 2 n 100 result FAIL",
+    "syssoak: 2 seeds, 1 PASS, 1 FAIL, 100 calls each",
+    "syssoak: FAIL"]) + "\n"
+
+def self_test():
+    fail = 0
+    p = parse_log(GOOD)
+    err = check(p[0], p[1], 2)
+    body = format_results(p[0], p[1])
+    if err != "" or p[1]["pass"] != 2 or p[0][0]["errors"] != 34 or p[0][1]["canary"] != 1:
+        print("syssoak --self-test: good log refused: " + err)
+        fail = 1
+    else:
+        print("syssoak --self-test: good log recorded 2 PASS")
+    q = parse_results(body)
+    err2 = q[2]
+    if err2 == "":
+        err2 = check(q[0], q[1], 2)
+    if err2 != "":
+        print("syssoak --self-test: written results failed --check: " + err2)
+        fail = 1
+    p2 = parse_log(OLD)
+    err3 = check(p2[0], p2[1], 1)
+    if err3 == "":
+        print("syssoak --self-test: old-tree log (no syssoak lines) was accepted")
+        fail = 1
+    else:
+        print("syssoak --self-test: old-tree log refused (" + err3 + ")")
+    p3 = parse_log(BAD)
+    err4 = check(p3[0], p3[1], 2)
+    if err4 == "":
+        print("syssoak --self-test: a FAIL seed was accepted")
+        fail = 1
+    else:
+        print("syssoak --self-test: FAIL seed refused (" + err4 + ")")
+    if fail != 0:
+        print("syssoak: FAIL")
+        sys.exit(1)
+    print("syssoak: PASS")
+
+def usage():
+    sys.stderr.write("usage: syssoak --record IN.log OUT.txt | syssoak --check OUT.txt [MIN] | syssoak --self-test\n")
+    sys.exit(2)
+
+def main():
+    a = sys.argv[1:]
+    if len(a) == 1 and a[0] == "--self-test":
+        self_test()
+        return
+    if len(a) == 3 and a[0] == "--record":
+        p = parse_log(read_file(a[1]))
+        write_file(a[2], format_results(p[0], p[1]))
+        err = check(p[0], p[1], 1)
+        if err != "":
+            sys.stderr.write("syssoak --record: " + err + "\n")
+            sys.exit(1)
+        print("syssoak: recorded " + str(len(p[0])) + " seeds to " + a[2])
+        return
+    if (len(a) == 2 or len(a) == 3) and a[0] == "--check":
+        mn = 1
+        if len(a) == 3:
+            mn = int(a[2])
+        q = parse_results(read_file(a[1]))
+        err = q[2]
+        if err == "":
+            err = check(q[0], q[1], mn)
+        if err != "":
+            sys.stderr.write("syssoak --check: " + err + "\n")
+            sys.exit(1)
+        print("syssoak: " + str(len(q[0])) + " seeds PASS")
+        return
+    usage()
+
+main()

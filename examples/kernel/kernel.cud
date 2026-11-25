@@ -860,6 +860,10 @@ def smoke_wanted() -> u64:
 # `incudela.smoke` (the USB smoke image, tools/usb-image.sh): only the self-tests that need no QEMU device
     return cmdline_key("incudela.smoke")
 
+def syssoak_wanted() -> u64:
+# `incudela.syssoak` (item 7 batch 2): short soak of sysfuzz across many seeds (tests/os/syssoak.sh)
+    return cmdline_key("incudela.syssoak")
+
 def sb_yielder(arg: u64):
 # switch-heavy load: every yield goes through the run queues
     n: u64 = 0
@@ -1822,6 +1826,25 @@ def tty_swapper(arg: u64):
     if tty_swap_to(0) != 1:
         panic("tty swap back to v0 failed")
 
+def syssoak_test():
+# item 7 batch 2: launch the ring-3 soak harness with the short fixed argument list
+# (start 1, 16 seeds, 100 calls each). The same user program accepts larger counts
+# from the shell; a multi-hour soak is a later batch. Skips the interactive shell
+# and kexec sessions so this boot stays short. Does not raise the unsafe cap.
+    puts("syssoak: launching examples/user/syssoak.cud\n")
+    sz: u64 = 0
+    img = fs_read_file("/EFI/Incudela/bin/syssoak", addr(sz))
+    if img == 0:
+        panic("syssoak: /EFI/Incudela/bin/syssoak missing")
+    t = proc_spawn_args(img, sz, "1 16 100")
+    kfree(img)
+    if u64(t) == 0:
+        panic("syssoak: image rejected")
+    code = proc_reap(t)
+    if code != 0:
+        panic("syssoak: harness failed")
+    puts("syssoak: kernel reaped exit 0\n")
+
 @unsafe
 def shell_test():
 # the interactive shell from \EFI\Incudela\bin\sh; the boot test types its commands
@@ -2102,6 +2125,8 @@ def after_overflow():
     elif desktop_wanted() != 0:
         puts("shell and kexec sessions skipped: desktop mode (incudela.desktop)\n")
         desktop_app()
+    elif syssoak_wanted() != 0:
+        syssoak_test()
     elif iommu_grant_allowed() != 0:
         shell_test()
         kexec_test()

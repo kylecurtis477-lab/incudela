@@ -603,8 +603,19 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
      random path bytes. Calls that could only end or wedge the fuzzer itself are shaped away (no exit, exec or
      fork; fds 0-3 untouched; send and recv only on a channel it tracks; mmap and brk small). It passes if a
      canary nobody was given is intact, the pid is unchanged and the console still writes. The OS suite runs
-     `sysfuzz 7 3000` on every boot path (`sysfuzz: PASS`). Next: a soak harness with many seeds and
-     recorded results, fault injection, multi-hour runs.
+     `sysfuzz 7 3000` on every boot path (`sysfuzz: PASS`).
+   - *Batch 2 done (2026-11-24, inv238):* a soak harness that runs `sysfuzz` across many seeds and
+     records the results. `examples/user/syssoak.cud` (`syssoak [START [NSEEDS [N]]]`, defaults
+     1, 16, 100) fork+execs `sysfuzz` per seed, prints a stable `syssoak: seed S n N result PASS|FAIL`
+     line and a summary, and exits 0 only when every seed passed. `tools/syssoak.cud` is the host
+     recorder (`--record IN.log OUT.txt`, `--check OUT.txt [MIN]`, `--self-test`): it writes
+     `syssoak-results v1` (one line per seed: seed, n, calls, errors, distinct numbers, capability
+     and ENOSYS sweeps, canary, pid, result) and refuses an old-tree log with no soak lines or a
+     seed that failed. `tests/os/syssoak.sh` boots once with `incudela.syssoak` on the kernel
+     command line (the kernel skips the long shell and kexec sessions, launches `syssoak 1 16 100`,
+     and writes `build/os/syssoak-results.txt`); that test fails on the tree before the harness.
+     Not a multi-hour soak, and no fault injection (later batches). The kernel unsafe cap stays 709.
+     Next: fault injection, multi-hour runs.
 8. **Real-hardware boot**: a USB image plus a test checklist for Kyle's PC (needs Kyle's hardware).
 9. **Linux compatibility measured by real applications**: a list of real apps, each recorded as pass or fail.
 10. **Diverse double-compilation check of the bootstrap seed.**
@@ -718,7 +729,7 @@ least.
 | Nov 19-21 | 4: SSA backend for fs/kernel mode, gated by optcov and fsfuzz --combos | 8-10 batches | also a `sqrt` intrinsic (benchmarks need asm today): done (inv233), `sqrt(x)` on f64/f32 compiles to one `sqrtsd`/`sqrtss` in freestanding code (docs/SYSTEMS.md intrinsics; tests/fs/fsqrt) |
 | Nov 22 | 5: language server: incremental checks, diagnostics, definition | 3 batches | done (0.23.0, inv218-inv220): include files and `.cudi` diagnostics; comment-only edits not recompiled; references, rename, completion and struct fields through includes; 88 checks |
 | Nov 23-24 | 6: package manager: resolution, signed index with publish time and yank flag, reproducible builds | 4 batches | done: 4 batches (signed index, publish, yank; cooldowns; rollback protection; vendor; 52 checks) |
-| Nov 25-26 | 7: sustained adversarial testing: a soak harness (there is none today), a syscall and capability fuzzer, fault injection, multi-hour runs | 4 batches + runs | batch 1 (inv225): `sysfuzz`, a seeded syscall and capability fuzzer on every OS boot path |
+| Nov 25-26 | 7: sustained adversarial testing: a soak harness, a syscall and capability fuzzer, fault injection, multi-hour runs | 4 batches + runs | batch 1 (inv225): `sysfuzz`, a seeded syscall and capability fuzzer on every OS boot path; batch 2 (inv238): soak harness, many seeds, recorded results, short `os/syssoak` test |
 | Nov 27- | 8: real-hardware boot | open | *Kyle*: needs his PC |
 | Nov 28-Dec 1 | 9: Linux compatibility by real apps (fork, pipe, file-backed mmap first; app list with pass/fail) | 6+ batches | 39 Linux syscalls today |
 | Dec 2-3 | 10: diverse double-compilation of the seed | 2-3 batches | needs an independent compiler path |

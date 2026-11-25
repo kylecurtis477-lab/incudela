@@ -37,6 +37,9 @@ VD="-drive file=$L/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio
 # Live QEMU: 6 s delay after KERNEL OK (longer than the kernel's 5 s rdtsc 'q' wait). Fails on the
 # pre-stop harness (dump finds no ppm, same as inv236); the new harness stops the vCPUs first.
 FORGE_BOOT_OK_STOP_FB="$FB" bash tests/os/boot-ok-stop.sh $B $L $Q $VD -boot d -cdrom build/kernel/forge.iso
+# Item 7 batch 2: short soak (16 seeds x 100 sysfuzz calls), results in build/os/syssoak-results.txt.
+# Own ISO with incudela.syssoak; skips the long shell and kexec sessions. Fails on the old tree.
+FORGE_BOOT_SYSSOAK_FB="$FB" bash tests/os/syssoak.sh $B $L $Q $VD
 # FORGE_BOOT_KEXEC=3: this boot hands over 3 times (kernel -> next -> next -> next) with input at each prompt
 KXR=3
 FORGE_BOOT_PROBE=1 FORGE_BOOT_KEXEC=$KXR $B kernel-bios $L/bios.log 200 "multiboot2 (BIOS)|$K|kexec: generation 3 kernel adopted" "$FB" -- $Q $VD -boot d -cdrom build/kernel/forge.iso
