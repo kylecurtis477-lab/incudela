@@ -14,7 +14,7 @@ K=$B/seal.key
 # a second, unrelated key: cat carries two signatures (seal v3 has room for several)
 [ -s $B/seal2.key ] || head -c 32 /dev/urandom > $B/seal2.key
 $S --pub $K > $B/seal.pub
-for p in hello fault sh cat forktest blkd crash sum bg captest chantest sbtest grtest wxtest capdeny badptr sysfuzz syssoak kbdd kbdd2 nvmed nvmed2 gfxapp gfxdeny; do
+for p in hello fault sh cat forktest blkd crash sum bg captest chantest sbtest grtest wxtest capdeny badptr sysfuzz syssoak sysfault kbdd kbdd2 nvmed nvmed2 gfxapp gfxdeny; do
   ../../build/cudc $p.cud $B/$p.s --fs-ssa $CUDC_FLAGS
   ../../build/fas -o $B/$p.o $B/$p.s
   ../../build/fld -o $B/$p.elf $B/$p.o

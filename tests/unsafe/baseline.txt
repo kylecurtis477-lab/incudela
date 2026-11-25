@@ -27,6 +27,7 @@ examples/user capdeny.cud 10 0 13 0
 examples/user badptr.cud 10 0 13 0
 examples/user sysfuzz.cud 10 0 13 0
 examples/user syssoak.cud 10 0 13 0
+examples/user sysfault.cud 10 0 13 0
 examples/user kbdd.cud 10 0 13 0
 examples/user kbdd2.cud 10 0 13 0
 examples/user nvmed.cud 10 0 13 0

@@ -179,8 +179,11 @@ The item 7 batch 2 soak harness (`examples/user/syssoak.cud`, `tools/syssoak.cud
 across many seeds and records the results (`syssoak-results v1`). `os/syssoak` boots once with
 `incudela.syssoak` (16 seeds x 100 calls, results in `build/os/syssoak-results.txt`) and fails on
 the tree before the harness; it skips the long shell and kexec sessions so the gated test stays
-short. A later batch covers fault injection and multi-hour runs. The kernel unsafe cap is unchanged
-(709).
+short. The item 7 batch 3 fault injector extends ktest-gated syscall 408 (`b=2/3/4`) so
+`kmalloc()` can be forced to return 0; `os/sysfault` boots once with `incudela.sysfault`,
+probes 1+3 failed allocations then a live one, records EMFILE and a denied huge mmap, and
+runs `sysfuzz 1 50`. 408/409 stay `ktest_hooks` gated. The kernel unsafe cap is unchanged
+(709). A later batch covers multi-hour runs.
 
 **Scheduler, IPC and capabilities (§§1–4).** The legal thread states, wait queues, mutexes and
 condvars are exercised by the kernel sync self-test (`wait queues + sleeping mutexes + condvars OK`,

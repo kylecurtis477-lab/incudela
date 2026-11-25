@@ -122,16 +122,35 @@ def drv_mmio_ok(off: u64, w: u64) -> u64:
         return 0
     return 1
 
+def ktest_alloc_probe() -> u64:
+# item 7 batch 3: one kmalloc(64) under the current fail count (0 if denied, 1 if handed out)
+    p = kmalloc(64)
+    if p == 0:
+        return 0
+    kfree(p)
+    return 1
+
 @unsafe
 def sys_drv(nr: u64, a: u64, b: u64, c: u64) -> u64:
     p = cur_proc()
     if nr == 408:
-    # fault-injection hook: make the block driver crash on the a-th next request. Disabled
-    # (EPERM) unless the kernel's own boot self-test armed it for its shell session.
+    # fault-injection hook, disabled (EPERM) unless the kernel armed ktest_hooks.
+    # b=0: crash the block driver on the a-th next request (examples/user/crash.cud).
+    # b=1: crash the input service on the batch holding the a-th next entry.
+    # b=2: arm the next a kmalloc() calls to return 0 (item 7 batch 3).
+    # b=3: return the remaining kmalloc-fail count.
+    # b=4: one probe allocation (0 if denied, 1 if handed out and freed).
+    # 408 stays capability 'ktest' and ktest_hooks gated; 409 is unchanged.
         if ktest_hooks == 0:
             return EPERM
         if b == 1:
             kb_crash_after = a  # the input service dies on the batch holding the a-th next entry
+        elif b == 2:
+            ktest_fail_alloc = a
+        elif b == 3:
+            return ktest_fail_alloc
+        elif b == 4:
+            return ktest_alloc_probe()
         else:
             blk_crash_after = a
         return 0

@@ -1,0 +1,157 @@
+# tools/sysfault.cud: host recorder for item 7 batch 3 (docs/BUILD_PLAN.md).
+# Reads a guest serial log, writes a stable results file, and checks it. No QEMU.
+#   sysfault --record IN.log OUT.txt
+#   sysfault --check OUT.txt
+#   sysfault --self-test
+# The live short boot is tests/os/sysfault.sh. 408/409 stay ktest_hooks gated;
+# this tool does not itself inject faults or run a multi-hour soak.
+import sys
+
+HDR = "# sysfault-results v1\n"
+
+def parse_log(text):
+# returns {alloc, user, fuzz, pass_line, nopen} or a missing-field dict
+    r = {"alloc": 0, "user": 0, "fuzz": 0, "pass_line": 0, "nopen": 0, "reaped": 0}
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line.startswith("sysfault: alloc-inject PASS"):
+            r["alloc"] = 1
+        elif line.startswith("sysfault: user-faults PASS"):
+            r["user"] = 1
+            # "EMFILE after N fds"
+            i = 0
+            while i < len(line) and (line[i] < "0" or line[i] > "9"):
+                i += 1
+            v = 0
+            while i < len(line) and line[i] >= "0" and line[i] <= "9":
+                v = v * 10 + int(line[i])
+                i += 1
+            r["nopen"] = v
+        elif line == "sysfault: sysfuzz PASS":
+            r["fuzz"] = 1
+        elif line == "sysfault: PASS":
+            r["pass_line"] = 1
+        elif line == "sysfault: FAIL":
+            r["pass_line"] = -1
+        elif line == "sysfault: kernel reaped exit 0":
+            r["reaped"] = 1
+    return r
+
+def format_results(r):
+    return HDR + "alloc=" + str(r["alloc"]) + " user=" + str(r["user"]) + " fuzz=" + str(r["fuzz"]) + " nopen=" + str(r["nopen"]) + " reaped=" + str(r["reaped"]) + " line=" + str(r["pass_line"]) + "\n"
+
+def parse_results(text):
+    r = {"alloc": 0, "user": 0, "fuzz": 0, "pass_line": 0, "nopen": 0, "reaped": 0}
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line == "" or line.startswith("#"):
+            continue
+        for part in line.split(" "):
+            kv = part.split("=")
+            if len(kv) != 2:
+                return [r, "bad results line: " + line]
+            if kv[0] == "alloc":
+                r["alloc"] = int(kv[1])
+            elif kv[0] == "user":
+                r["user"] = int(kv[1])
+            elif kv[0] == "fuzz":
+                r["fuzz"] = int(kv[1])
+            elif kv[0] == "nopen":
+                r["nopen"] = int(kv[1])
+            elif kv[0] == "reaped":
+                r["reaped"] = int(kv[1])
+            elif kv[0] == "line":
+                r["pass_line"] = int(kv[1])
+    return [r, ""]
+
+def check(r):
+    if r["alloc"] != 1:
+        return "alloc-inject did not PASS"
+    if r["user"] != 1 or r["nopen"] < 4:
+        return "user-faults did not PASS"
+    if r["fuzz"] != 1:
+        return "sysfuzz did not PASS"
+    if r["reaped"] != 1 or r["pass_line"] != 1:
+        return "sysfault did not PASS"
+    return ""
+
+GOOD = "\n".join([
+    "sysfault: start seed 1, sysfuzz 50 calls",
+    "sysfault: alloc-inject PASS (1+3 forced kmalloc failures, then a live probe)",
+    "sysfault: user-faults PASS (EMFILE after 12 fds, huge mmap denied)",
+    "sysfuzz: PASS",
+    "sysfault: sysfuzz PASS",
+    "sysfault: PASS",
+    "sysfault: kernel reaped exit 0",
+    "KERNEL OK"]) + "\n"
+
+OLD = "\n".join(["KERNEL OK", "debug-exit 10 ms after KERNEL OK"]) + "\n"
+
+BAD = "\n".join([
+    "sysfault: start seed 1, sysfuzz 50 calls",
+    "sysfault: FAIL query was not 0 at start",
+    "KERNEL OK"]) + "\n"
+
+def self_test():
+    fail = 0
+    err = check(parse_log(GOOD))
+    if err != "":
+        print("sysfault --self-test: good log refused: " + err)
+        fail = 1
+    else:
+        print("sysfault --self-test: good log recorded")
+    q = parse_results(format_results(parse_log(GOOD)))
+    err2 = q[1]
+    if err2 == "":
+        err2 = check(q[0])
+    if err2 != "":
+        print("sysfault --self-test: written results failed --check: " + err2)
+        fail = 1
+    err3 = check(parse_log(OLD))
+    if err3 == "":
+        print("sysfault --self-test: old-tree log was accepted")
+        fail = 1
+    else:
+        print("sysfault --self-test: old-tree log refused (" + err3 + ")")
+    err4 = check(parse_log(BAD))
+    if err4 == "":
+        print("sysfault --self-test: a FAIL log was accepted")
+        fail = 1
+    else:
+        print("sysfault --self-test: FAIL log refused (" + err4 + ")")
+    if fail != 0:
+        print("sysfault: FAIL")
+        sys.exit(1)
+    print("sysfault: PASS")
+
+def usage():
+    sys.stderr.write("usage: sysfault --record IN.log OUT.txt | sysfault --check OUT.txt | sysfault --self-test\n")
+    sys.exit(2)
+
+def main():
+    a = sys.argv[1:]
+    if len(a) == 1 and a[0] == "--self-test":
+        self_test()
+        return
+    if len(a) == 3 and a[0] == "--record":
+        r = parse_log(read_file(a[1]))
+        write_file(a[2], format_results(r))
+        err = check(r)
+        if err != "":
+            sys.stderr.write("sysfault --record: " + err + "\n")
+            sys.exit(1)
+        print("sysfault: recorded results to " + a[2])
+        return
+    if len(a) == 2 and a[0] == "--check":
+        q = parse_results(read_file(a[1]))
+        err = q[1]
+        if err == "":
+            err = check(q[0])
+        if err != "":
+            sys.stderr.write("sysfault --check: " + err + "\n")
+            sys.exit(1)
+        print("sysfault: PASS")
+        return
+    usage()
+
+main()

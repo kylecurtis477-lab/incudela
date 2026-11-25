@@ -548,7 +548,14 @@ def va_free_pages() -> u64:
 def class_size(c: u64) -> u64:
     return u64(32) << c
 
+# item 7 batch 3: remaining forced kmalloc failures. Armed only by syscall 408 b=2
+# while ktest_hooks is on; never raises the unsafe cap (this wrapper is safe).
+ktest_fail_alloc: u64
+
 def kmalloc(n: u64) -> u64:
+    if ktest_fail_alloc != 0:
+        ktest_fail_alloc -= 1
+        return 0
     f = irq_save()
     spin_lock(addr(heap_lock))
     p = kmalloc_nolock(n)
