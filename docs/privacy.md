@@ -139,6 +139,9 @@ Not protected against:
   most 2^24, with a nonzero KDF salt that is not the wrap salt; the host derives the KEK with
   `openssl kdf ... PBKDF2` at that stored count, which gives the stored check value, and the old unsalted KEK
   does not; boots 1 and 3 report the same count in the v2 KDF line.
+- **os/objstore-no-kdf-residue:** after unlock, the kernel reports that key-derived temporaries are gone
+  (passphrases, KEK, `od_t`, the entropy pool, and the SHA-256 / HMAC / PBKDF2 working state); live store
+  keys (`od_dk`, `od_ek`, `od_mk`) stay. Boots 1 (create) and 3 (reopen) both print the clean line.
 - **os/objstore-data-key-independent:** the host unwraps DK from `objects.key` with the KEK (openssl), checks the
   key check value, and checks the old salt-to-DK relation holds for none of the four word pairs (on the old
   derivation it held for all four).

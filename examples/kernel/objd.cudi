@@ -43,6 +43,8 @@ od_kver: u64  # key slot version of the last create or unlock (1 legacy, 2 PBKDF
 od_kiter: u64  # its PBKDF2 iterations
 od_kdf_tsc: u64  # TSC ticks the last PBKDF2 took
 od_kcal: u64  # calibrated iteration count for a new slot this boot (0 = not yet measured)
+od_kchk: u64  # 1 if od_tmp_done ran (end of od_open)
+od_kres: u64  # nonzero words still set in key-derived temporaries after that wipe
 od_st: u64
 od_synced: u64
 od_torn: u64
@@ -926,7 +928,92 @@ def od_sync() -> u64:
     od_commits += 1
     return 1
 
+def od_tmp_done():
+# after od_open returns, wipe key-derived temporaries that must not linger (passphrases, KEK, od_t,
+# entropy pool, PBKDF2/HMAC/SHA-256 working state) and count any words still set. Live store keys
+# (od_dk, od_ek, od_mk, and the mid-rotation copies) are left alone. On-disk markers unchanged.
+    od_uk_wipe()
+    od_pool_wipe()
+    sh_wipe()
+    i: u64 = 0
+    while i < 8:
+        od_t[i] = 0
+        od_kek[i] = 0
+        pb_is[i] = 0
+        pb_os[i] = 0
+        pb_u[i] = 0
+        pb_out[i] = 0
+        hm_ih[i] = 0
+        i += 1
+    i = 0
+    while i < 64:
+        hm_k[i] = u8(0)
+        pb_s[i] = u8(0)
+        i += 1
+    pb_sn = 0
+    n: u64 = 0
+    i = 0
+    while i < 64:
+        if u64(od_uk[i]) != 0:
+            n += 1
+        if u64(od_nk[i]) != 0:
+            n += 1
+        if u64(od_rk[i]) != 0:
+            n += 1
+        if u64(hm_k[i]) != 0:
+            n += 1
+        if u64(pb_s[i]) != 0:
+            n += 1
+        if u64(sh_buf[i]) != 0:
+            n += 1
+        i += 1
+    i = 0
+    while i < 8:
+        if od_t[i] != 0:
+            n += 1
+        if od_pool[i] != 0:
+            n += 1
+        if od_kek[i] != 0:
+            n += 1
+        if pb_is[i] != 0:
+            n += 1
+        if pb_os[i] != 0:
+            n += 1
+        if pb_u[i] != 0:
+            n += 1
+        if pb_out[i] != 0:
+            n += 1
+        if hm_ih[i] != 0:
+            n += 1
+        if sh_h[i] != 0:
+            n += 1
+        i += 1
+    i = 0
+    while i < 64:
+        if sh_w[i] != 0:
+            n += 1
+        i += 1
+    if sh_n != 0:
+        n += 1
+    if sh_tot != 0:
+        n += 1
+    if od_ukn != 0:
+        n += 1
+    if od_nkn != 0:
+        n += 1
+    if od_rkn != 0:
+        n += 1
+    if pb_sn != 0:
+        n += 1
+    od_kres = n
+    od_kchk = 1
+
 def od_open() -> u64:
+    r = od_open_body()
+    od_tmp_done()
+    return r
+
+def od_open_body() -> u64:
 # 0 = unavailable, 1 = recovered an existing log, 2 = created an empty one, 3 = locked (no or wrong key),
 # 4 = recovered, but a data-key rotation was stopped on request in the middle (inv231)
     od_torn = 0
@@ -1392,6 +1479,13 @@ def od_keymsg(r: u64):
 def objstore_test():
     r = od_open()
     od_uk_wipe()
+    if od_kchk != 0:
+        if od_kres == 0:
+            puts("objstore: no key-derived temporaries remain after unlock\n")
+        else:
+            puts("objstore: key-derived residue after unlock: ")
+            put_u64(od_kres)
+            puts(" words still set\n")
     if r == 0:
         panic("objstore: objects.log unavailable")
     if r == 3:

@@ -11,7 +11,7 @@ Status: [![ci](https://github.com/kylecurtis477-lab/incudela/actions/workflows/c
 | `tests-o2` | `./build.sh`, then `SKIP_OS=1 ./run_tests.sh` (every non-QEMU item, parallel lanes); fails on any `FAIL` line and prints the failed items' `build/par` logs | 60 min |
 | `boot-o0` | `./build.sh`, then `tests/os/ci-boot.sh`: kernel, user programs, modules and EFI disk built with `CUDC_FLAGS=-O0`, one BIOS boot (GRUB multiboot2, 4 CPUs, TCG) that must reach KERNEL OK on the serial console and the framebuffer; no retry on a hang | 30 min |
 
-The full OS suite (`tests/os/run.sh`, 67 expected entries / 74 PASS lines, BIOS/UEFI/kexec/desktop/IOMMU/release-kernel/soak/fault paths) is not run on GitHub: it is
+The full OS suite (`tests/os/run.sh`, 68 expected entries / 75 PASS lines, BIOS/UEFI/kexec/desktop/IOMMU/release-kernel/soak/fault paths) is not run on GitHub: it is
 the gate on the development box (pregate, `tests/os/run.sh` alone, then `run_tests.sh` / `build/forge-run-tests` at O2 and O0). On the box `build/forge-build` (`tools/build.cud`) and `build/forge-run-tests` (`tools/run_tests.cud`) are the documented entry points; the GitHub workflow still calls `./build.sh` and `SKIP_OS=1 ./run_tests.sh` (kept as references; workflow edits wait on the `workflow` token scope).
 
 ## Rules

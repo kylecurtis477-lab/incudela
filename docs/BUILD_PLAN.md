@@ -1876,6 +1876,12 @@ Directive: everything that can be Forge is Forge. One tool per commit, verified 
   HMAC-SHA256 digest in `sh_h` and the HMAC key in `hm_k` after copying the result into `od_t`. It now calls
   `sh_wipe` (new in crypt.cudi: zeroes `sh_h`, `sh_w`, `sh_buf`, `sh_n` and `sh_tot`) and clears `hm_k` and
   `hm_ih`. The kernel unsafe cap (709) is unchanged.
+- Data-at-rest keys, 0.23.1 no key-derived temporaries after unlock — *Status: done (2026-11-25, inv248).*
+  `od_open` ends with `od_tmp_done`, which wipes passphrases, the KEK, `od_t`, the entropy pool, and the
+  SHA-256 / HMAC / PBKDF2 working state, then counts any words still set. Live store keys are left alone.
+  The boot log prints `objstore: no key-derived temporaries remain after unlock` when the count is 0.
+  Test: `os/objstore-no-kdf-residue` (boots 1 and 3 of `tests/os/forgefs.sh`); expected results 67 to 68.
+  The kernel unsafe cap (709) is unchanged.
 - Data-at-rest keys, batch 2a: two-copy key file — *Status: done (2026-11-23, inv229).* The key slot was one block,
   `objects.key`, so any rewrite (passphrase change, v1-to-v2 upgrade) would have overwritten the only copy in
   place. Now `objects.keyb` is a second copy; a slot written since inv229 has a generation (word 20) and a SHA-256

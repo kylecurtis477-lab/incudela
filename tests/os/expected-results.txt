@@ -44,6 +44,7 @@ os/objstore-key-two-copies
 os/objstore-key-entropy
 os/objstore-no-plaintext
 os/objstore-kdf-salted
+os/objstore-no-kdf-residue
 os/objstore-data-key-independent
 os/objstore-nonce-unique
 os/objstore-wrong-key-locked

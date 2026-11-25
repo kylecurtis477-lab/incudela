@@ -186,6 +186,11 @@ if [ "$KV" = 2 ] && [ "$KI" -ge 20000 ] && [ "$KI" -le 16777216 ] && [ "$KS" != 
    && grep -aq "^objstore: key slot v2: passphrase KDF PBKDF2-HMAC-SHA256, 128-bit salt, $KI iterations" $T/b3.log; then
   echo "PASS os/objstore-kdf-salted (slot v2, $KI iterations, salt $(printf '%s' "$KS" | cut -c1-8)...; openssl PBKDF2 KEK gives the check value, the unsalted KEK does not; $(grep -ao 'iterations ([0-9?]* ms)' $T/b1.log | head -1))"
 else echo "FAIL os/objstore-kdf-salted (version '$KV', iterations '$KI', salt '$KS', KEK ${#KEKH} hex)"; fi
+# After unlock, passphrases, KEK, od_t, the entropy pool and the SHA-256/HMAC/PBKDF2 working state must be
+# zero (live store keys stay). Boots 1 (create) and 3 (reopen) both report a clean check.
+if grep -aq "^objstore: no key-derived temporaries remain after unlock$" $T/b1.log    && grep -aq "^objstore: no key-derived temporaries remain after unlock$" $T/b3.log; then
+  echo "PASS os/objstore-no-kdf-residue (create and reopen: passphrases, KEK, KDF output, pool and SHA-256/HMAC/PBKDF2 state cleared after unlock)"
+else echo "FAIL os/objstore-no-kdf-residue ($(grep -a 'key-derived' $T/b1.log $T/b3.log | tail -4))"; fi
 # inv228: the data key is independent of the plaintext wrap salt. The host unwraps DK with the KEK and checks the
 # old derivation's relation (salt = digest words h0..h3, DK word i = bswap(h_i) ^ h_(7-i), so DK word 7-i =
 # bswap(DK_i ^ bswap(h_i)) ^ h_i) holds for none of the four word pairs (KEK: the PBKDF2 one derived above)
