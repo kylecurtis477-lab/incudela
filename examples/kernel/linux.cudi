@@ -51,7 +51,7 @@
 # waiting; the console reports ready and its read then blocks as usual), closed fds get POLLNVAL.
 # Not yet: real-time signals (32..64), sigaltstack, signals to other processes.
 LX_ABI = 1
-LX_NSYS = 39  # syscalls in the table above
+LX_NSYS = 43  # syscalls in the table above (item 9: pipe 22, pipe2 293, fork 57, wait4 61)
 ARCH_SET_FS = 0x1002
 ARCH_GET_FS = 0x1003
 ERANGE = 0xFFFFFFFFFFFFFFDE
@@ -191,17 +191,56 @@ def lx_ioctl(fd: u64, req: u64, arg: u64) -> u64:
     return ENOTTY
 
 def lx_mmap(a: u64, n: u64, prot: u64, flags: u64, fd: u64, off: u64) -> u64:
-# anonymous private memory only; never writable+executable or executable at all (W^X: a Linux
-# program here cannot create code), no MAP_FIXED (the kernel picks every address)
+# anonymous private, or a file-backed mapping of a granted regular file (item 9).
+# Never executable (W^X: a Linux program here cannot create code). No MAP_FIXED.
+# MAP_SHARED + PROT_WRITE -> EACCES (the ESP files are read-only). MAP_PRIVATE may be written;
+# the pages are a copy, not a coherent shared mapping.
     if (prot & 4) != 0:
         return EACCES
     if (flags & 0x10) != 0:
         return EINVAL
-    if (flags & 0x20) == 0 or (flags & 3) != 2:
-        return ENODEV
-    if off != 0:
+    if (flags & 0x20) != 0:
+        if (flags & 3) != 2 or off != 0:
+            return EINVAL
+        return sys_mmap(n)
+    if (flags & 3) != 1 and (flags & 3) != 2:
         return EINVAL
-    return sys_mmap(n)
+    if (prot & 2) != 0 and (flags & 3) == 1:
+        return EACCES
+    if (off & 4095) != 0:
+        return EINVAL
+    p = cur_proc()
+    fl = fd_get(p, fd)
+    if u64(fl) == 0:
+        return EBADF
+    if fl.type != F_FILE:
+        return ENODEV
+    if (p.fdr[fd] & CAP_READ) == 0:
+        return EPERM
+    if gr_use(fl.gid, "mmap") != 0:
+        return EACCES
+    va = sys_mmap(n)
+    if (va >> 63) != 0:
+        return va
+    saved = fl.pos
+    scl = fl.ccl
+    sidx = fl.cidx
+    fl.pos = off
+    want = n
+    if off >= fl.size:
+        want = 0
+    elif want > fl.size - off:
+        want = fl.size - off
+    r: u64 = 0
+    if want != 0:
+        r = file_read(fl, va, want)
+    fl.pos = saved
+    fl.ccl = scl
+    fl.cidx = sidx
+    if (r >> 63) != 0:
+        sys_munmap(va, n)
+        return r
+    return va
 
 def lx_unsupported(nr: u64) -> u64:
     p = cur_proc()
@@ -284,11 +323,38 @@ def lx_get32(ua: u64) -> u64:
         return 0x100000000
     return u64(k[0])
 
+def lx_wait4(pid: u64, ustatus: u64, options: u64, urusage: u64) -> u64:
+# wait4: WNOHANG (1) is honoured; other options -> EINVAL. A non-null rusage is zeroed.
+# The status word is Linux's: (exit_code & 0xff) << 8 for a normal exit.
+    WNOHANG = 1
+    if (options & ~WNOHANG) != 0:
+        return EINVAL
+    if urusage != 0:
+        ru: u8[144]
+        i: u64 = 0
+        while i < 144:
+            ru[i] = 0
+            i += 1
+        if user_ptr_ok(urusage, 144) == 0 or copy_user(urusage, u64(addr(ru[0])), 144) != 0:
+            return EFAULT
+    r = sys_wait_ex(pid, 1, options)
+    if r == 0 or r == ECHILD or (r >> 63) != 0:
+        return r
+    st: u64[1]
+    st[0] = (reap_code & 0xFF) << 8
+    if ustatus != 0:
+        if user_ptr_ok(ustatus, 4) == 0 or copy_user(ustatus, u64(addr(st[0])), 4) != 0:
+            return EFAULT
+    return r
+
 def lx_clone(frame: u64, flags: u64, stack: u64, ptid: u64, ctid: u64, tls: u64) -> u64:
     p = cur_proc()
     t = cur_thread()
     if (flags & CLONE_THREAD_REQ) != CLONE_THREAD_REQ:
-        return lx_unsupported(56)  # fork/vfork through clone: not in 11.1b
+    # item 9: fork-style clone (no CLONE_VM): only the CSIGNAL byte, like musl's fork()
+        if (flags & 0xFFFFFF00) != 0:
+            return EINVAL
+        return sys_fork(frame, 0)
     if (flags & ~CLONE_OK) != 0 or stack == 0 or stack >= USER_TOP:
         return EINVAL
     if (flags & CLONE_SETTLS) != 0 and tls >= USER_TOP:
@@ -725,7 +791,7 @@ def lx_fstat(fd: u64, ubuf: u64) -> u64:
     elif fl.type == F_CONSOLE:
         mode = 0x2190  # S_IFCHR | 0620
         st[5] = 0x401  # rdev: tty1 (4, 1)
-    elif fl.type == F_CHAN:
+    elif fl.type == F_CHAN or fl.type == F_PIPE:
         mode = 0x1180  # S_IFIFO | 0600
     st[0] = 0xF0  # st_dev: one device number for the Forge VFS
     st[1] = fl.clu + 1
@@ -1383,6 +1449,11 @@ def lx_dispatch(nr: u64, a: u64, b: u64, c: u64, d: u64) -> u64:
             r = lx_ioctl(a, b, c)
         atomic_fetch_add(addr(p.fdbusy), 0xFFFFFFFFFFFFFFFF, acq_rel)
         return r
+    if nr == 22 or nr == 293:
+        flg: u64 = 0
+        if nr == 293:
+            flg = b
+        return lx_pipe(a, flg)
     if nr == 3:
         if p.nxthr != 0 and atomic_load(addr(p.fdbusy), acquire) != 0:
             return EBUSY  # 11.1b: another thread is using a (shared) fd

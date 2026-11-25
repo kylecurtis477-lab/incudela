@@ -40,3 +40,4 @@ examples/user lxthreads.cud 12 0 12 0
 examples/user lxfs.cud 7 0 7 0
 examples/user lxexec.cud 6 0 6 0
 examples/user lxsig.cud 8 0 8 0
+examples/user lxipc.cud 4 0 4 0

@@ -229,9 +229,13 @@ def lx_main(sp: u64):
     check(lsys(202, w, 128, 5, 0, 0) == EAGAIN, "FUTEX_WAIT stale value -> EAGAIN")
     check(lsys(202, w, 129, 1, 0, 0) == 0, "FUTEX_WAKE nobody -> 0")
     check(lsys(202, w + 1, 128, 0, 0, 0) == EINVAL, "futex misaligned -> EINVAL")
-    check(lsys(56, 17, 0, 0, 0, 0) == ENOSYS, "clone without CLONE_VM (fork) -> ENOSYS")
+    cpid = lsys(56, 17, 0, 0, 0, 0)
+    if cpid == 0:
+        lsys(231, 0, 0, 0, 0, 0)
+    check((cpid >> 63) == 0 and cpid != 0, "clone without CLONE_VM (fork) works")
+    check(lsys(61, cpid, 0, 0, 0, 0) == cpid, "wait4 the fork-style clone")
     check(lsys(56, CLONE_T | 0x8000000000, 0x1000, 0, 0, 0) == EINVAL, "clone unknown flag -> EINVAL")
-    put("lxthreads: futex EAGAIN/EINVAL ok, clone(fork) -> ENOSYS\n")
+    put("lxthreads: futex EAGAIN/EINVAL ok, clone(fork) reaped\n")
     flush()
     # group exit: one thread spins in user mode, one sleeps in FUTEX_WAIT forever
     mkthread(4, u64(spinner))

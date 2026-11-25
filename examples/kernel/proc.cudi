@@ -72,6 +72,7 @@ struct Proc:
     sig_pend: u64  # process-directed pending signals (kill)
 
 procs: u64[64]
+reap_code: u64  # exit code of the child last reaped by sys_wait_ex
 kx_freeze: u64  # a kexec handoff is collecting every user process at a syscall boundary
 kx_caller: u64  # the Proc doing the handoff (it is not parked)
 
@@ -173,6 +174,8 @@ def file_put(fl: u64):
     if atomic_fetch_add(addr(f.ref), 0xFFFFFFFFFFFFFFFF, acq_rel) == 1:
         if f.type == F_CHAN:
             chan_end_close(f)
+        if f.type == F_PIPE:
+            pipe_end_close(f)
         kfree(fl)
 
 console_obj: File
@@ -293,6 +296,7 @@ def dir_read(fl: ptr[File], ubuf: u64, n: u64, kern: u64) -> u64:
 # id), so later writes never change what an open handle reads. ofs_m serialises every objfs access.
 F_OBJ = 5
 F_ODIR = 6
+F_PIPE = 7  # item 9: Linux pipe/pipe2 ends (pipe.cudi); clu = pipe index, pos = 0 read / 1 write
 ofs_m: Mutex
 
 ovfs_o: u64  # ovfs_resolve results: object id, clock
@@ -988,6 +992,19 @@ def sys_fork(frame: u64, ustack: u64) -> u64:
             c.fds[i] = file_get(p.fds[i])
             c.fdr[i] = p.fdr[i]
             i += 1
+        c.lx_cloexec = p.lx_cloexec
+        c.lx_calls = 0
+        c.lx_unsup = 0
+        c.lx_dino = 0
+        i = 0
+        while i < 32:
+            c.sig_h[i] = p.sig_h[i]
+            c.sig_fl[i] = p.sig_fl[i]
+            c.sig_rs[i] = p.sig_rs[i]
+            c.sig_m[i] = p.sig_m[i]
+            c.sig_cd[i] = 0
+            i += 1
+        c.sig_pend = 0
     ct = thread_new(fork_child_entry_addr(), 0)
     # the child's kernel stack: its own copy of the syscall frame at the top, the switch frame below it
     # (move the switch frame down first: the two regions overlap)
@@ -1004,6 +1021,7 @@ def sys_fork(frame: u64, ustack: u64) -> u64:
     ct.user = 1
     ct.proc = u64(c)
     ct.fsbase = t.fsbase
+    ct.sig_mask = t.sig_mask
     fpu_save(ct.fpu)  # the parent's live FPU/SSE registers
     if ustack != 0:
         vstore64(cf + SF_RSP * 8, ustack)
@@ -1120,7 +1138,8 @@ def exec_image(frame: u64, img: u64, sz: u64, vc: u64, pa: slice[u8]) -> u64:
     return 0
 
 @unsafe
-def sys_wait(pid: u64, ustatus: u64) -> u64:
+def sys_wait_ex(pid: u64, kstatus: u64, options: u64) -> u64:
+# reap a child; kstatus is a kernel u64* (0 to ignore). options bit 0 = WNOHANG (do not block).
     me = cur_proc()
     f = irq_save()
     spin_lock(addr(rq_lock))
@@ -1142,21 +1161,17 @@ def sys_wait(pid: u64, ustatus: u64) -> u64:
             irq_restore(f)
             c = ptr[Proc](found)
             cpid = c.pid
-            code = c.exit_code
-            if ustatus != 0 and (user_ptr_ok(ustatus, 8) == 0 or copy_user(ustatus, u64(addr(code)), 8) != 0):
-            # status not delivered: put the zombie back so a later wait can still reap it
-                f = irq_save()
-                spin_lock(addr(rq_lock))
-                procs[i] = found
-                spin_unlock(addr(rq_lock))
-                irq_restore(f)
-                return EFAULT
+            reap_code = c.exit_code
             proc_destroy(c)
             return cpid
         if any == 0:
             spin_unlock(addr(rq_lock))
             irq_restore(f)
             return ECHILD
+        if (options & 1) != 0:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return 0
         if kx_should_park():
             spin_unlock(addr(rq_lock))
             irq_restore(f)
@@ -1166,6 +1181,14 @@ def sys_wait(pid: u64, ustatus: u64) -> u64:
             continue
         wq_block_l(addr(me.childq))
     return 0
+
+def sys_wait(pid: u64, ustatus: u64) -> u64:
+    r = sys_wait_ex(pid, 1, 0)
+    if r == 0 or r == ECHILD or (r >> 63) != 0:
+        return r
+    if ustatus != 0 and (user_ptr_ok(ustatus, 8) == 0 or copy_user(ustatus, u64(addr(reap_code)), 8) != 0):
+        return EFAULT
+    return r
 
 def sys_brk(nb: u64) -> u64:
     p = cur_proc()
@@ -1286,6 +1309,8 @@ def sys_read(fd: u64, ubuf: u64, n: u64) -> u64:
         r = file_read(fl, ubuf, n)
         au_moved(fl.gid, r)
         return r
+    if fl.type == F_PIPE:
+        return pipe_read(fl, ubuf, n)
     if fl.type == F_OBJ:
         r = ofile_read(fl, ubuf, n)
         au_moved(fl.gid, r)
@@ -1304,6 +1329,8 @@ def sys_write(fd: u64, ubuf: u64, n: u64) -> u64:
         return EPERM
     if fl.type == F_CONSOLE:
         return con_write_user(ubuf, n)
+    if fl.type == F_PIPE:
+        return pipe_write(fl, ubuf, n)
     return EROFS
 
 def sys_getdents(fd: u64, ubuf: u64, n: u64) -> u64:
@@ -1595,6 +1622,10 @@ def syscall_do(nr: u64, a: u64, b: u64, c: u64, d: u64, frame: u64) -> u64:
             irq_restore(f)
         elif nr == 56:
             r = lx_clone(frame, a, b, c, d, sf.r8)
+        elif nr == 57:
+            r = sys_fork(frame, 0)
+        elif nr == 61:
+            r = lx_wait4(a, b, c, d)
         elif nr == 59:
             r = lx_execve(frame, LX_NODIR, a, b, 0)  # 11.1d
         elif nr == 322:

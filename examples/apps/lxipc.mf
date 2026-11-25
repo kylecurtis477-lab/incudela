@@ -1,0 +1,2 @@
+# lxipc (item 9): Linux-ABI pipe, fork and file-backed mmap test; may read /efi/incudela/docs
+dir /efi/incudela/docs

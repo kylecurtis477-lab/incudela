@@ -1,0 +1,166 @@
+# pipe.cudi: Linux pipe (syscall 22) and pipe2 (293) for the compat sandbox (item 9).
+# A pipe is a 4096-byte ring with a read end and a write end (File type F_PIPE, clu = pipe
+# index, pos = 0 read / 1 write). The last close of the write end makes readers see EOF; the
+# last close of the read end makes writers see EPIPE. Syscalls 408/409 stay ktest_hooks gated.
+# The kernel unsafe cap is unchanged (709).
+PIPE_N = 16
+PIPE_CAP = 4096
+ENFILE = 0xFFFFFFFFFFFFFFE9
+O_CLOEXEC_LX = 0x80000
+
+struct Pipe:
+    head: u64
+    len: u64
+    nrd: u64
+    nwr: u64
+    buf: u8[4096]
+    rq: WaitQ
+    wq: WaitQ
+
+pipes: Pipe[16]
+pipe_used: u64[16]
+
+def pipe_of(i: u64) -> ptr[Pipe]:
+    return addr(pipes[i])
+
+def pipe_end_close(fl: ptr[File]):
+# last reference to this end went away
+    pp = pipe_of(fl.clu)
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    if fl.pos == 0:
+        if pp.nrd != 0:
+            pp.nrd -= 1
+    else:
+        if pp.nwr != 0:
+            pp.nwr -= 1
+    wq_wake_all_l(addr(pp.rq))
+    wq_wake_all_l(addr(pp.wq))
+    last = pp.nrd == 0 and pp.nwr == 0
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    if last:
+        pipe_used[fl.clu] = 0
+
+def pipe_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
+    kb: u8[512]
+    if n == 0:
+        return 0
+    if fl.pos != 0:
+        return EINVAL
+    pp = pipe_of(fl.clu)
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    while pp.len == 0:
+        if pp.nwr == 0:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return 0
+        wq_block_l(addr(pp.rq))
+    if n > 512:
+        n = 512
+    if n > pp.len:
+        n = pp.len
+    i: u64 = 0
+    while i < n:
+        kb[i] = pp.buf[(pp.head + i) % PIPE_CAP]
+        i += 1
+    pp.head = (pp.head + n) % PIPE_CAP
+    pp.len -= n
+    wq_wake_one_l(addr(pp.wq))
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    if copy_user(ubuf, u64(addr(kb[0])), n) != 0:
+        return EFAULT
+    return n
+
+def pipe_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
+    kb: u8[512]
+    if n == 0:
+        return 0
+    if fl.pos != 1:
+        return EINVAL
+    if n > 512:
+        n = 512
+    if copy_user(u64(addr(kb[0])), ubuf, n) != 0:
+        return EFAULT
+    pp = pipe_of(fl.clu)
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    while pp.len == PIPE_CAP:
+        if pp.nrd == 0:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return EPIPE
+        wq_block_l(addr(pp.wq))
+    if pp.nrd == 0:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EPIPE
+    if n > PIPE_CAP - pp.len:
+        n = PIPE_CAP - pp.len
+    i: u64 = 0
+    while i < n:
+        pp.buf[(pp.head + pp.len + i) % PIPE_CAP] = kb[i]
+        i += 1
+    pp.len += n
+    wq_wake_one_l(addr(pp.rq))
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    return n
+
+def lx_pipe(ufds: u64, flags: u64) -> u64:
+# pipe2(ufds, flags): flags 0 or O_CLOEXEC; O_NONBLOCK and other bits -> EINVAL
+    if (flags & ~O_CLOEXEC_LX) != 0:
+        return EINVAL
+    if user_ptr_ok(ufds, 8) == 0:
+        return EFAULT
+    p = cur_proc()
+    a = fd_free(p)
+    if a == NFD:
+        return EMFILE
+    p.fds[a] = 1
+    b = fd_free(p)
+    p.fds[a] = 0
+    if b == NFD:
+        return EMFILE
+    ci: u64 = 0
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    while ci < PIPE_N and pipe_used[ci] != 0:
+        ci += 1
+    if ci < PIPE_N:
+        pipe_used[ci] = 1
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    if ci == PIPE_N:
+        return ENFILE
+    pp = pipe_of(ci)
+    pp.head = 0
+    pp.len = 0
+    pp.nrd = 1
+    pp.nwr = 1
+    e0 = file_new(F_PIPE)
+    e0.clu = ci
+    e0.pos = 0
+    e1 = file_new(F_PIPE)
+    e1.clu = ci
+    e1.pos = 1
+    p.fds[a] = u64(e0)
+    p.fdr[a] = CAP_READ | CAP_DUP
+    p.fds[b] = u64(e1)
+    p.fdr[b] = CAP_WRITE | CAP_DUP
+    if (flags & O_CLOEXEC_LX) != 0:
+        lx_cx(a, 1)
+        lx_cx(b, 1)
+    pair: u64[1]
+    pair[0] = a | (b << 32)
+    if copy_user(ufds, u64(addr(pair[0])), 8) != 0:
+        p.fds[a] = 0
+        p.fdr[a] = 0
+        p.fds[b] = 0
+        p.fdr[b] = 0
+        file_put(u64(e0))
+        file_put(u64(e1))
+        return EFAULT
+    return 0
