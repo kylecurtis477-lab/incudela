@@ -9,7 +9,15 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `f334a8c` Item 7 batch 3: ktest-gated `kmalloc` fault injection in front of sysfuzz. Syscall 408
+  (still capability `ktest` and `ktest_hooks` gated; 409 unchanged) grows `b=2/3/4` to arm, query
+  and probe forced allocation failures. The fail counter is in the safe `kmalloc` wrapper, so the
+  kernel unsafe cap stays 709. New `examples/user/sysfault.cud` probes 1+3 failed allocations then
+  a live one, records EMFILE and a denied huge mmap, and runs `sysfuzz 1 50`. `os/sysfault` boots
+  once with `incudela.sysfault` and fails on the tree before the harness. The hook is not armed on
+  the default boot.
 - `81c56d0` Item 7 batch 2: a soak harness that runs `sysfuzz` across many seeds and records the
+
   results. `examples/user/syssoak.cud` (`syssoak [START [NSEEDS [N]]]`, defaults 1, 16, 100)
   fork+execs the fuzzer per seed and exits 0 only when every seed PASSes. `tools/syssoak.cud`
   writes a `syssoak-results v1` file from a serial log (`--record`, `--check`, `--self-test`).
