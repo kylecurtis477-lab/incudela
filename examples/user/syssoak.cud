@@ -1,12 +1,19 @@
 # cuditor: safe
 # cuditor: no-runtime
 # cuditor: caps(fs, spawn)
-# Item 7 batch 2 (sustained adversarial testing): a soak harness that runs the seeded
-# syscall and capability fuzzer (examples/user/sysfuzz.cud) across many seeds and prints
-# a stable per-seed record plus a summary.
-#   syssoak [START [NSEEDS [N]]]
-# Defaults: start 1, 16 seeds, 100 calls each (the short tests/os/syssoak.sh path).
-# A later multi-hour batch can pass a larger seed count or N; this program does not
+# Item 7 batch 2/4 (sustained adversarial testing): a soak harness that runs the
+# seeded syscall and capability fuzzer (examples/user/sysfuzz.cud) across many
+# seeds and prints a stable per-seed record plus a summary.
+#   syssoak [START [NSEEDS [N [BUDGET]]]]
+# Defaults: start 1, 16 seeds, 100 calls each, budget 0 (no wall-clock limit).
+# BUDGET is in sys_ticks() units (the 100 Hz LAPIC tick, 10 ms). 0 means run
+# every seed. A non-zero budget stops after a completed seed once that many
+# ticks have elapsed, prints a `syssoak: checkpoint next ...` line, and exits
+# 0 if no seed failed so a later session can resume at `next`. The short
+# tests/os/syssoak.sh path still uses the three-argument form (no budget).
+# tests/os/syssoak-long.sh uses budget 1, which expires after the first seed.
+# A multi-hour run is `syssoak 1 NSEEDS N BUDGET` from the shell (one hour is
+# 360000 ticks) or budget 0 for an unbounded session. This program does not
 # raise the kernel unsafe cap and does not itself inject faults.
 include "ulib.cudi"
 
@@ -44,6 +51,7 @@ def _start():
     start = num(addr(ab[0]), addr(pos))
     nseeds = num(addr(ab[0]), addr(pos))
     n = num(addr(ab[0]), addr(pos))
+    budget = num(addr(ab[0]), addr(pos))
     if start == 0:
         start = 1
     if nseeds == 0:
@@ -56,8 +64,14 @@ def _start():
     out_u64(nseeds)
     out(" seeds, ")
     out_u64(n)
-    out(" calls each\n")
+    out(" calls each")
+    if budget != 0:
+        out(", budget ")
+        out_u64(budget)
+        out(" ticks")
+    out("\n")
     flush()
+    t0 = sys_ticks()
     npass: u64 = 0
     nfail: u64 = 0
     s: u64 = start
@@ -94,6 +108,28 @@ def _start():
         else:
             out("FAIL\n")
         flush()
+        if budget != 0:
+            el = sys_ticks() - t0
+            if el >= budget:
+                out("syssoak: checkpoint next ")
+                out_u64(s + 1)
+                out(" done ")
+                out_u64(npass)
+                out(" fail ")
+                out_u64(nfail)
+                out(" budget ")
+                out_u64(budget)
+                out(" elapsed ")
+                out_u64(el)
+                out("\n")
+                flush()
+                if nfail == 0:
+                    out("syssoak: CHECKPOINT\n")
+                    flush()
+                    sys_exit(0)
+                out("syssoak: FAIL\n")
+                flush()
+                sys_exit(1)
         s += 1
     out("syssoak: ")
     out_u64(nseeds)

@@ -1,11 +1,15 @@
-# tools/syssoak.cud: host soak harness for item 7 batch 2 (docs/BUILD_PLAN.md).
+# tools/syssoak.cud: host soak harness for item 7 batches 2 and 4 (docs/BUILD_PLAN.md).
 # Reads a guest serial log, writes a stable results file, and checks it. No QEMU.
 #   syssoak --record IN.log OUT.txt
 #   syssoak --check OUT.txt [MIN]
+#   syssoak --check-checkpoint OUT.txt [MIN]
+#   syssoak --resume OUT.txt
 #   syssoak --self-test
 # The live short boot (16 seeds x 100 calls of sysfuzz) is tests/os/syssoak.sh.
-# A later batch can feed a longer soak's log to --record; this tool does not
-# itself run a multi-hour soak or inject faults.
+# tests/os/syssoak-long.sh is a 1-tick budget boot that must checkpoint after the
+# first seed. A multi-hour session uses a larger budget (360000 ticks is one
+# hour) or budget 0; feed that log to --record and resume with --resume. This
+# tool does not itself run a multi-hour soak or inject faults.
 import sys
 
 HDR = "# syssoak-results v1\n"
@@ -33,12 +37,15 @@ def rec_new(seed, n):
             "result": ""}
 
 def parse_log(text):
-# returns [records, summary] where summary is {seeds, pass, fail, n, pass_line} or None
+# returns [records, summary, checkpoint]
+# summary is {seeds, pass, fail, n, pass_line} or None
+# checkpoint is {next, done, fail, budget, elapsed} or None
     recs = []
     pending = {}
     last_seed = -1
     summary = None
     pass_line = 0
+    checkpoint = None
     for raw in text.split("\n"):
         line = raw.strip()
         if line.startswith("sysfuzz: seed "):
@@ -91,6 +98,14 @@ def parse_log(text):
             recs.append(r)
             if a[0] in pending:
                 del pending[a[0]]
+        elif line.startswith("syssoak: checkpoint next "):
+            a = take_u(line, 24)
+            b = take_u(line, a[1])
+            c = take_u(line, b[1])
+            d = take_u(line, c[1])
+            e = take_u(line, d[1])
+            if a[0] >= 0 and b[0] >= 0:
+                checkpoint = {"next": a[0], "done": b[0], "fail": c[0], "budget": d[0], "elapsed": e[0]}
         elif line.startswith("syssoak: ") and " seeds, " in line and " PASS, " in line and " FAIL, " in line:
             a = take_u(line, 9)
             b = take_u(line, a[1])
@@ -100,13 +115,32 @@ def parse_log(text):
                 summary = {"seeds": a[0], "pass": b[0], "fail": c[0], "n": d[0], "pass_line": 0}
         elif line == "syssoak: PASS":
             pass_line = 1
+        elif line == "syssoak: CHECKPOINT":
+            pass_line = 2
         elif line == "syssoak: FAIL":
             pass_line = -1
     if summary is not None:
         summary["pass_line"] = pass_line
-    return [recs, summary]
+    elif checkpoint is not None:
+        summary = {"seeds": len(recs), "pass": 0, "fail": 0, "n": 0, "pass_line": pass_line}
+        i = 0
+        while i < len(recs):
+            if recs[i]["result"] == "PASS":
+                summary["pass"] += 1
+            else:
+                summary["fail"] += 1
+            if recs[i]["n"] > 0:
+                summary["n"] = recs[i]["n"]
+            i += 1
+        if checkpoint["fail"] >= 0:
+            summary["fail"] = checkpoint["fail"]
+        if checkpoint["done"] >= 0:
+            summary["pass"] = checkpoint["done"]
+            if checkpoint["fail"] >= 0:
+                summary["seeds"] = checkpoint["done"] + checkpoint["fail"]
+    return [recs, summary, checkpoint]
 
-def format_results(recs, summary):
+def format_results(recs, summary, checkpoint):
     lines = [HDR, COLS]
     i = 0
     while i < len(recs):
@@ -120,11 +154,16 @@ def format_results(recs, summary):
         lines.append("# summary seeds=" + str(summary["seeds"]) + " pass=" + str(summary["pass"])
                      + " fail=" + str(summary["fail"]) + " n=" + str(summary["n"])
                      + " line=" + str(summary["pass_line"]) + "\n")
+    if checkpoint is not None:
+        lines.append("# checkpoint next=" + str(checkpoint["next"]) + " done=" + str(checkpoint["done"])
+                     + " fail=" + str(checkpoint["fail"]) + " budget=" + str(checkpoint["budget"])
+                     + " elapsed=" + str(checkpoint["elapsed"]) + "\n")
     return "".join(lines)
 
 def parse_results(text):
     recs = []
     summary = None
+    checkpoint = None
     for raw in text.split("\n"):
         line = raw.strip()
         if line == "" or line.startswith("# syssoak-results") or line.startswith("# seed "):
@@ -137,9 +176,17 @@ def parse_results(text):
             e = take_u(line, d[1])
             summary = {"seeds": a[0], "pass": b[0], "fail": c[0], "n": d[0], "pass_line": e[0]}
             continue
+        if line.startswith("# checkpoint "):
+            a = take_u(line, 13)
+            b = take_u(line, a[1])
+            c = take_u(line, b[1])
+            d = take_u(line, c[1])
+            e = take_u(line, d[1])
+            checkpoint = {"next": a[0], "done": b[0], "fail": c[0], "budget": d[0], "elapsed": e[0]}
+            continue
         parts = line.split(" ")
         if len(parts) != 12:
-            return [[], None, "bad results line: " + line]
+            return [[], None, None, "bad results line: " + line]
         r = rec_new(int(parts[0]), int(parts[1]))
         r["calls"] = int(parts[2])
         r["errors"] = int(parts[3])
@@ -152,19 +199,9 @@ def parse_results(text):
         r["pid"] = int(parts[10])
         r["result"] = parts[11]
         recs.append(r)
-    return [recs, summary, ""]
+    return [recs, summary, checkpoint, ""]
 
-def check(recs, summary, min_seeds):
-    if summary is None:
-        return "missing summary"
-    if len(recs) < min_seeds:
-        return "only " + str(len(recs)) + " seed records, want at least " + str(min_seeds)
-    if summary["seeds"] != len(recs):
-        return "summary seeds " + str(summary["seeds"]) + " != " + str(len(recs)) + " records"
-    if summary["pass"] + summary["fail"] != summary["seeds"]:
-        return "summary pass+fail does not equal seeds"
-    if summary["fail"] != 0 or summary["pass"] != summary["seeds"] or summary["pass_line"] != 1:
-        return "soak did not PASS (" + str(summary["pass"]) + " PASS, " + str(summary["fail"]) + " FAIL)"
+def recs_intact(recs):
     i = 0
     while i < len(recs):
         r = recs[i]
@@ -178,6 +215,44 @@ def check(recs, summary, min_seeds):
             return "seed " + str(r["seed"]) + " ENOSYS sweep incomplete"
         i += 1
     return ""
+
+def check(recs, summary, checkpoint, min_seeds):
+    if checkpoint is not None:
+        return "incomplete soak (checkpoint next " + str(checkpoint["next"]) + ")"
+    if summary is None:
+        return "missing summary"
+    if len(recs) < min_seeds:
+        return "only " + str(len(recs)) + " seed records, want at least " + str(min_seeds)
+    if summary["seeds"] != len(recs):
+        return "summary seeds " + str(summary["seeds"]) + " != " + str(len(recs)) + " records"
+    if summary["pass"] + summary["fail"] != summary["seeds"]:
+        return "summary pass+fail does not equal seeds"
+    if summary["fail"] != 0 or summary["pass"] != summary["seeds"] or summary["pass_line"] != 1:
+        return "soak did not PASS (" + str(summary["pass"]) + " PASS, " + str(summary["fail"]) + " FAIL)"
+    return recs_intact(recs)
+
+def check_checkpoint(recs, summary, checkpoint, min_seeds):
+    if checkpoint is None:
+        return "missing checkpoint"
+    if summary is None:
+        return "missing summary"
+    if len(recs) < min_seeds:
+        return "only " + str(len(recs)) + " seed records, want at least " + str(min_seeds)
+    if checkpoint["fail"] != 0 or summary["fail"] != 0 or summary["pass_line"] != 2:
+        return "checkpoint is not clean (" + str(summary["pass"]) + " PASS, " + str(summary["fail"]) + " FAIL)"
+    if checkpoint["done"] != len(recs):
+        return "checkpoint done " + str(checkpoint["done"]) + " != " + str(len(recs)) + " records"
+    if len(recs) > 0 and checkpoint["next"] != recs[len(recs) - 1]["seed"] + 1:
+        return "checkpoint next " + str(checkpoint["next"]) + " is not the seed after the last record"
+    return recs_intact(recs)
+
+def record_status(recs, summary, checkpoint):
+    if checkpoint is not None:
+        err = check_checkpoint(recs, summary, checkpoint, 1)
+        if err != "":
+            return err
+        return ""
+    return check(recs, summary, checkpoint, 1)
 
 GOOD = "\n".join([
     "sysfuzz: seed 1, 100 calls over 12 syscall numbers (34 errors); 29/29 undeclared-capability calls EACCES, 20/20 unknown numbers ENOSYS",
@@ -205,44 +280,85 @@ BAD = "\n".join([
     "syssoak: 2 seeds, 1 PASS, 1 FAIL, 100 calls each",
     "syssoak: FAIL"]) + "\n"
 
+CP = "\n".join([
+    "syssoak: start 1, 16 seeds, 100 calls each, budget 1 ticks",
+    "sysfuzz: seed 1, 100 calls over 12 syscall numbers (34 errors); 29/29 undeclared-capability calls EACCES, 20/20 unknown numbers ENOSYS",
+    "sysfuzz: canary intact 1, pid unchanged 1",
+    "sysfuzz: PASS",
+    "syssoak: seed 1 n 100 result PASS",
+    "syssoak: checkpoint next 2 done 1 fail 0 budget 1 elapsed 80",
+    "syssoak: CHECKPOINT"]) + "\n"
+
+BAD_CP = "\n".join([
+    "syssoak: start 1, 16 seeds, 100 calls each, budget 1 ticks",
+    "sysfuzz: seed 1, 100 calls over 12 syscall numbers (34 errors); 29/29 undeclared-capability calls EACCES, 20/20 unknown numbers ENOSYS",
+    "sysfuzz: canary intact 0, pid unchanged 1",
+    "sysfuzz: FAIL",
+    "syssoak: seed 1 n 100 result FAIL",
+    "syssoak: checkpoint next 2 done 0 fail 1 budget 1 elapsed 80",
+    "syssoak: FAIL"]) + "\n"
+
 def self_test():
     fail = 0
     p = parse_log(GOOD)
-    err = check(p[0], p[1], 2)
-    body = format_results(p[0], p[1])
-    if err != "" or p[1]["pass"] != 2 or p[0][0]["errors"] != 34 or p[0][1]["canary"] != 1:
+    err = check(p[0], p[1], p[2], 2)
+    body = format_results(p[0], p[1], p[2])
+    if err != "" or p[1]["pass"] != 2 or p[0][0]["errors"] != 34 or p[0][1]["canary"] != 1 or p[2] is not None:
         print("syssoak --self-test: good log refused: " + err)
         fail = 1
     else:
         print("syssoak --self-test: good log recorded 2 PASS")
     q = parse_results(body)
-    err2 = q[2]
+    err2 = q[3]
     if err2 == "":
-        err2 = check(q[0], q[1], 2)
+        err2 = check(q[0], q[1], q[2], 2)
     if err2 != "":
         print("syssoak --self-test: written results failed --check: " + err2)
         fail = 1
     p2 = parse_log(OLD)
-    err3 = check(p2[0], p2[1], 1)
+    err3 = check(p2[0], p2[1], p2[2], 1)
     if err3 == "":
         print("syssoak --self-test: old-tree log (no syssoak lines) was accepted")
         fail = 1
     else:
         print("syssoak --self-test: old-tree log refused (" + err3 + ")")
     p3 = parse_log(BAD)
-    err4 = check(p3[0], p3[1], 2)
+    err4 = check(p3[0], p3[1], p3[2], 2)
     if err4 == "":
         print("syssoak --self-test: a FAIL seed was accepted")
         fail = 1
     else:
         print("syssoak --self-test: FAIL seed refused (" + err4 + ")")
+    p4 = parse_log(CP)
+    err5 = check(p4[0], p4[1], p4[2], 1)
+    err6 = check_checkpoint(p4[0], p4[1], p4[2], 1)
+    body4 = format_results(p4[0], p4[1], p4[2])
+    q4 = parse_results(body4)
+    err7 = q4[3]
+    if err7 == "":
+        err7 = check_checkpoint(q4[0], q4[1], q4[2], 1)
+    nxt = -1
+    if q4[2] is not None:
+        nxt = q4[2]["next"]
+    if err5 == "" or err6 != "" or err7 != "" or nxt != 2 or p4[2] is None or p4[2]["elapsed"] != 80:
+        print("syssoak --self-test: clean checkpoint mishandled (full=" + err5 + ", cp=" + err6 + ", written=" + err7 + ")")
+        fail = 1
+    else:
+        print("syssoak --self-test: clean checkpoint recorded, full --check refused, resume 2")
+    p5 = parse_log(BAD_CP)
+    err8 = check_checkpoint(p5[0], p5[1], p5[2], 1)
+    if err8 == "":
+        print("syssoak --self-test: a FAIL checkpoint was accepted")
+        fail = 1
+    else:
+        print("syssoak --self-test: FAIL checkpoint refused (" + err8 + ")")
     if fail != 0:
         print("syssoak: FAIL")
         sys.exit(1)
     print("syssoak: PASS")
 
 def usage():
-    sys.stderr.write("usage: syssoak --record IN.log OUT.txt | syssoak --check OUT.txt [MIN] | syssoak --self-test\n")
+    sys.stderr.write("usage: syssoak --record IN.log OUT.txt | syssoak --check OUT.txt [MIN] | syssoak --check-checkpoint OUT.txt [MIN] | syssoak --resume OUT.txt | syssoak --self-test\n")
     sys.exit(2)
 
 def main():
@@ -252,25 +368,52 @@ def main():
         return
     if len(a) == 3 and a[0] == "--record":
         p = parse_log(read_file(a[1]))
-        write_file(a[2], format_results(p[0], p[1]))
-        err = check(p[0], p[1], 1)
+        write_file(a[2], format_results(p[0], p[1], p[2]))
+        err = record_status(p[0], p[1], p[2])
         if err != "":
             sys.stderr.write("syssoak --record: " + err + "\n")
             sys.exit(1)
-        print("syssoak: recorded " + str(len(p[0])) + " seeds to " + a[2])
+        if p[2] is not None:
+            print("syssoak: recorded " + str(len(p[0])) + " seeds, checkpoint next " + str(p[2]["next"]) + " to " + a[2])
+        else:
+            print("syssoak: recorded " + str(len(p[0])) + " seeds to " + a[2])
         return
     if (len(a) == 2 or len(a) == 3) and a[0] == "--check":
         mn = 1
         if len(a) == 3:
             mn = int(a[2])
         q = parse_results(read_file(a[1]))
-        err = q[2]
+        err = q[3]
         if err == "":
-            err = check(q[0], q[1], mn)
+            err = check(q[0], q[1], q[2], mn)
         if err != "":
             sys.stderr.write("syssoak --check: " + err + "\n")
             sys.exit(1)
         print("syssoak: " + str(len(q[0])) + " seeds PASS")
+        return
+    if (len(a) == 2 or len(a) == 3) and a[0] == "--check-checkpoint":
+        mn = 1
+        if len(a) == 3:
+            mn = int(a[2])
+        q = parse_results(read_file(a[1]))
+        err = q[3]
+        if err == "":
+            err = check_checkpoint(q[0], q[1], q[2], mn)
+        if err != "":
+            sys.stderr.write("syssoak --check-checkpoint: " + err + "\n")
+            sys.exit(1)
+        print("syssoak: " + str(len(q[0])) + " seeds PASS, checkpoint next " + str(q[2]["next"]))
+        return
+    if len(a) == 2 and a[0] == "--resume":
+        q = parse_results(read_file(a[1]))
+        if q[3] != "" or q[2] is None:
+            sys.stderr.write("syssoak --resume: no checkpoint in " + a[1] + "\n")
+            sys.exit(1)
+        err = check_checkpoint(q[0], q[1], q[2], 1)
+        if err != "":
+            sys.stderr.write("syssoak --resume: " + err + "\n")
+            sys.exit(1)
+        print(str(q[2]["next"]))
         return
     usage()
 

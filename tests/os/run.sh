@@ -43,6 +43,10 @@ FORGE_BOOT_SYSSOAK_FB="$FB" bash tests/os/syssoak.sh $B $L $Q $VD
 # Item 7 batch 3: ktest-gated kmalloc fault injection + short sysfuzz, results in build/os/sysfault-results.txt.
 # Own ISO with incudela.sysfault; skips the long shell and kexec sessions. Fails on the old tree.
 FORGE_BOOT_SYSFAULT_FB="$FB" bash tests/os/sysfault.sh $B $L $Q $VD
+# Item 7 batch 4: tick-budget soak that must checkpoint after the first seed.
+# Own ISO with incudela.syssoaklong; skips the long shell and kexec sessions.
+# Fails on the tree before the harness. Not itself a multi-hour soak.
+FORGE_BOOT_SYSSOAKLONG_FB="$FB" bash tests/os/syssoak-long.sh $B $L $Q $VD
 # FORGE_BOOT_KEXEC=3: this boot hands over 3 times (kernel -> next -> next -> next) with input at each prompt
 KXR=3
 FORGE_BOOT_PROBE=1 FORGE_BOOT_KEXEC=$KXR $B kernel-bios $L/bios.log 200 "multiboot2 (BIOS)|$K|kexec: generation 3 kernel adopted" "$FB" -- $Q $VD -boot d -cdrom build/kernel/forge.iso

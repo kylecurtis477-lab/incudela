@@ -626,6 +626,18 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
      `incudela.sysfault` (the kernel arms `ktest_hooks` only for that session) and fails on the tree
      before the harness. Alloc-fail is not armed during the default boot or during `file_new` (a
      later batch can harden NULL checks and inject inside ordinary syscalls). Next: multi-hour runs.
+   - *Batch 4 done (2026-11-24, inv240):* multi-hour soak support. `syssoak` takes an optional
+     fourth argument, a wall-clock budget in `sys_ticks()` units (the 100 Hz LAPIC tick, 10 ms;
+     0 means run every requested seed; 360000 ticks is one hour). When the budget expires after
+     a completed seed, the program prints `syssoak: checkpoint next S done P fail F budget B
+     elapsed E` and exits 0 if no seed failed, so a later session can resume at `S`.
+     `tools/syssoak.cud` records a `# checkpoint` line in the existing `syssoak-results v1`
+     file (`--check-checkpoint`, `--resume`). `tests/os/syssoak-long.sh` boots once with
+     `incudela.syssoaklong` (`syssoak 1 16 100 1`), requires a clean checkpoint after the first
+     seed, and fails on the tree before this harness. The existing `os/syssoak` path is
+     unchanged (no budget). This is not itself a multi-hour run; a long session is
+     `syssoak START NSEEDS N BUDGET` from the shell and is not part of the gate. The kernel
+     unsafe cap stays 709.
 8. **Real-hardware boot**: a USB image plus a test checklist for Kyle's PC (needs Kyle's hardware).
 9. **Linux compatibility measured by real applications**: a list of real apps, each recorded as pass or fail.
 10. **Diverse double-compilation check of the bootstrap seed.**
@@ -739,7 +751,7 @@ least.
 | Nov 19-21 | 4: SSA backend for fs/kernel mode, gated by optcov and fsfuzz --combos | 8-10 batches | also a `sqrt` intrinsic (benchmarks need asm today): done (inv233), `sqrt(x)` on f64/f32 compiles to one `sqrtsd`/`sqrtss` in freestanding code (docs/SYSTEMS.md intrinsics; tests/fs/fsqrt) |
 | Nov 22 | 5: language server: incremental checks, diagnostics, definition | 3 batches | done (0.23.0, inv218-inv220): include files and `.cudi` diagnostics; comment-only edits not recompiled; references, rename, completion and struct fields through includes; 88 checks |
 | Nov 23-24 | 6: package manager: resolution, signed index with publish time and yank flag, reproducible builds | 4 batches | done: 4 batches (signed index, publish, yank; cooldowns; rollback protection; vendor; 52 checks) |
-| Nov 25-26 | 7: sustained adversarial testing: a soak harness, a syscall and capability fuzzer, fault injection, multi-hour runs | 4 batches + runs | batch 1 (inv225): `sysfuzz`, a seeded syscall and capability fuzzer on every OS boot path; batch 2 (inv238): soak harness, many seeds, recorded results, short `os/syssoak` test; batch 3 (inv239): fault injection (`os/sysfault`, ktest-gated kmalloc fails) |
+| Nov 25-26 | 7: sustained adversarial testing: a soak harness, a syscall and capability fuzzer, fault injection, multi-hour runs | 4 batches + runs | batch 1 (inv225): `sysfuzz`; batch 2 (inv238): soak harness, short `os/syssoak`; batch 3 (inv239): fault injection (`os/sysfault`); batch 4 (inv240): tick-budget checkpoints and resume, short `os/syssoak-long` (a live multi-hour run is from the shell, not the gate) |
 | Nov 27- | 8: real-hardware boot | open | *Kyle*: needs his PC |
 | Nov 28-Dec 1 | 9: Linux compatibility by real apps (fork, pipe, file-backed mmap first; app list with pass/fail) | 6+ batches | 39 Linux syscalls today |
 | Dec 2-3 | 10: diverse double-compilation of the seed | 2-3 batches | needs an independent compiler path |

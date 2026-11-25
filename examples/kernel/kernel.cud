@@ -864,6 +864,10 @@ def syssoak_wanted() -> u64:
 # `incudela.syssoak` (item 7 batch 2): short soak of sysfuzz across many seeds (tests/os/syssoak.sh)
     return cmdline_key("incudela.syssoak")
 
+def syssoaklong_wanted() -> u64:
+# `incudela.syssoaklong` (item 7 batch 4): same harness with a 1-tick budget so it checkpoints
+    return cmdline_key("incudela.syssoaklong")
+
 def sysfault_wanted() -> u64:
 # `incudela.sysfault` (item 7 batch 3): ktest-gated kmalloc fault injection plus a short sysfuzz
     return cmdline_key("incudela.sysfault")
@@ -1857,11 +1861,32 @@ def sysfault_test():
         panic("sysfault: harness failed")
     puts("sysfault: kernel reaped exit 0\n")
 
+def syssoak_long_test():
+# item 7 batch 4: launch the same ring-3 soak harness with a 1-tick budget so the
+# session checkpoints after the first seed (tests/os/syssoak-long.sh). A real
+# multi-hour run uses a larger budget (360000 ticks is one hour) or 0 from the
+# shell. Skips the interactive shell and kexec sessions so this boot stays short.
+# Does not raise the unsafe cap.
+    puts("syssoak-long: launching examples/user/syssoak.cud with a 1-tick budget\n")
+    sz: u64 = 0
+    img = fs_read_file("/EFI/Incudela/bin/syssoak", addr(sz))
+    if img == 0:
+        panic("syssoak-long: /EFI/Incudela/bin/syssoak missing")
+    t = proc_spawn_args(img, sz, "1 16 100 1")
+    kfree(img)
+    if u64(t) == 0:
+        panic("syssoak-long: image rejected")
+    code = proc_reap(t)
+    if code != 0:
+        panic("syssoak-long: harness failed")
+    puts("syssoak-long: kernel reaped exit 0\n")
+
 def syssoak_test():
 # item 7 batch 2: launch the ring-3 soak harness with the short fixed argument list
-# (start 1, 16 seeds, 100 calls each). The same user program accepts larger counts
-# from the shell; a multi-hour soak is a later batch. Skips the interactive shell
-# and kexec sessions so this boot stays short. Does not raise the unsafe cap.
+# (start 1, 16 seeds, 100 calls each, no budget). The same user program accepts
+# larger counts and an optional tick budget from the shell (item 7 batch 4).
+# Skips the interactive shell and kexec sessions so this boot stays short. Does
+# not raise the unsafe cap.
     puts("syssoak: launching examples/user/syssoak.cud\n")
     sz: u64 = 0
     img = fs_read_file("/EFI/Incudela/bin/syssoak", addr(sz))
@@ -2161,6 +2186,8 @@ def after_overflow():
         desktop_app()
     elif sysfault_wanted() != 0:
         sysfault_test()
+    elif syssoaklong_wanted() != 0:
+        syssoak_long_test()
     elif syssoak_wanted() != 0:
         syssoak_test()
     elif iommu_grant_allowed() != 0:

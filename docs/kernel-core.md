@@ -183,7 +183,13 @@ short. The item 7 batch 3 fault injector extends ktest-gated syscall 408 (`b=2/3
 `kmalloc()` can be forced to return 0; `os/sysfault` boots once with `incudela.sysfault`,
 probes 1+3 failed allocations then a live one, records EMFILE and a denied huge mmap, and
 runs `sysfuzz 1 50`. 408/409 stay `ktest_hooks` gated. The kernel unsafe cap is unchanged
-(709). A later batch covers multi-hour runs.
+(709). Item 7 batch 4 adds an optional tick budget to `syssoak` (100 Hz LAPIC ticks;
+0 means no limit; 360000 ticks is one hour). When the budget expires after a completed
+seed, the program prints a checkpoint and exits 0 so a later session can resume.
+`os/syssoak-long` boots once with `incudela.syssoaklong` and `syssoak 1 16 100 1`, which
+must checkpoint after the first seed; `tools/syssoak.cud` has `--check-checkpoint` and
+`--resume`. The existing `os/syssoak` path is unchanged. A live multi-hour run is
+started from the shell and is not part of the gate.
 
 **Scheduler, IPC and capabilities (§§1–4).** The legal thread states, wait queues, mutexes and
 condvars are exercised by the kernel sync self-test (`wait queues + sleeping mutexes + condvars OK`,

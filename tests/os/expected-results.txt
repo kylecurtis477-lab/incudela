@@ -6,6 +6,7 @@ os/boot-harness-early-exit
 os/boot-harness-delay-after-ok
 os/syssoak
 os/sysfault
+os/syssoak-long
 os/kernel-bios
 os/hang-probe-live
 os/irq-off-watch
