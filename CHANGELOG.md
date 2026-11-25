@@ -9,6 +9,15 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `cc2a775` Item-9 remainder: `tests/count-store-reload/count_store_reload.cud` (built
+  to `build/count_store_reload`) is a Cuditor port of `tests/fs/count_store_reload.py`,
+  which stays as the reference. It prints the same count of consecutive
+  `mov %rN,D(%rbp)` / `mov D(%rbp),%rN` store-then-reload pairs.
+  `run_tests.sh` `fs-ssa-reload-shape` now uses the Cuditor tool.
+  `tests/count-store-reload/run.sh` requires identical stdout and exit code
+  on synthetic assembly and on `tests/fs/ssa.cud` compiled with `--fs-temps`
+  and `--fs-ssa`, plus a missing-input check. Wired as item 66 (lane S).
+  The test does not start QEMU. The kernel unsafe cap stays 709.
 - `1818c58` Reservation 6 batch 2: `tools/run_tests.cud` (built to `build/forge-run-tests`) is a
   Cuditor port of the repo-root `run_tests.sh`, which stays as the reference. It honours
   `SKIP_OS`, `RUN_TESTS_SERIAL`, `CUDC_FLAGS`, optional `RUN_TESTS_ONLY`, and
