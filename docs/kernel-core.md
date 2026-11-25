@@ -254,8 +254,9 @@ so the new kernel reads it through the alias and its init.elf identity check acc
 the build output.
 
 **Linux personality, modules, live patch, nondeterminism.** `lxtest: PASS`, `lxthreads: PASS`,
-`lxfs: PASS`, `lxexec: PASS`, `lxsig: PASS`, and BusyBox ash (`hello from ash, forge`,
+`lxfs: PASS`, `lxexec: PASS`, `lxipc: PASS`, `lxsig: PASS`, and BusyBox ash (`hello from ash, forge`,
 `script done: ok`) run only in the compat sandbox; a plain exec of a Linux image is refused.
+The Linux personality has 43 syscalls after item 9 batch 1 (pipe, fork/wait4, file-backed mmap).
 Modules: `module ABI OK: 1002 loads, 1002 unloads, 7 rejected`. Live patch:
 `live patching OK`. The nondeterminism hook: `nondet: recording off by default`, `nondet hook OK`.
 

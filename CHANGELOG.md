@@ -8,7 +8,19 @@
      c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.24.0 (open)
+## 0.24.0 (open): Linux pipe, fork/wait4, and file-backed mmap (no git tag)
+
+- `0862dc4` Linux personality grows from 39 to 43 syscalls. `pipe`/`pipe2` (22/293) is a
+  4096-byte ring (`F_PIPE`); close of the write end is EOF and close of the read end is
+  EPIPE; pipe2 accepts only `O_CLOEXEC`. `fork` (57) is the existing eager-copy process
+  fork. musl's `fork()` is `clone(SIGCHLD)`, so a clone whose flags are only the CSIGNAL
+  byte is now a process fork (`lxthreads` reaps that child instead of expecting ENOSYS).
+  `wait4` (61) honours `WNOHANG` and writes a 4-byte Linux status. File-backed `mmap` of
+  a granted regular file is a `MAP_PRIVATE` copy into anonymous pages; `MAP_SHARED` with
+  `PROT_WRITE` is EACCES (ESP files are read-only). `examples/user/lxipc.cud` (sealed
+  like lxtest, launched with `run lxipc`) covers those calls. The application pass/fail
+  list is in `docs/linux-compat.md`. Ash pipelines are not yet in the boot script.
+  Syscalls 408/409 stay `ktest_hooks` gated. The kernel unsafe cap stays 709.
 
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 

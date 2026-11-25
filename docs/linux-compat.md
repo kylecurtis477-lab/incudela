@@ -25,7 +25,7 @@ Inside the personality a process reaches **only** the Linux table. No Forge sysc
 including the driver (400+), kexec/ktest (408/409, still also gated by `ktest_hooks`) and grant
 syscalls: they return -ENOSYS like any unknown number.
 
-## Syscalls (11.1a to 11.1e; 39 in all)
+## Syscalls (11.1a to 11.1e, then item 9; 43 in all)
 
 | nr | name | notes |
 |----|------|-------|
@@ -52,13 +52,16 @@ syscalls: they return -ENOSYS like any unknown number.
 | 62 | kill | (11.1d part 2) only its own pid (or 0); any other pid -> EPERM, logged (the sandbox); signal 0 probes; > 31 -> EINVAL |
 | 234 | tgkill | (11.1d part 2) tgid must be its own pid (else EPERM); tid must be its main thread or a live clone()d thread (else ESRCH) |
 | 257 | openat | (11.1c) only relative to a directory handle the sandbox holds (Forge `openat` rules: no absolute paths, no `..`); AT_FDCWD with a relative path -> EACCES (there is no ambient cwd); AT_FDCWD with an absolute path follows open (11.1e), write/create/truncate/append flags -> EROFS, O_DIRECTORY on a file -> ENOTDIR; O_CLOEXEC / O_NONBLOCK / O_NOFOLLOW / O_LARGEFILE accepted |
-| 9 | mmap | anonymous + private only; PROT_EXEC -> EACCES (W^X: no new code), MAP_FIXED -> EINVAL, file mappings -> ENODEV; r8/r9 come from the saved frame |
+| 9 | mmap | anonymous private, or a file-backed mapping of a granted regular file (item 9); PROT_EXEC -> EACCES (W^X: no new code), MAP_FIXED -> EINVAL, MAP_SHARED+PROT_WRITE -> EACCES (ESP files are read-only); MAP_PRIVATE is a copy, not a coherent shared map; r8/r9 come from the saved frame |
+| 22 / 293 | pipe / pipe2 | (item 9) a 4096-byte ring with a read end and a write end; close of the write end is EOF, close of the read end is EPIPE; pipe2 accepts only O_CLOEXEC (O_NONBLOCK -> EINVAL); fstat is S_IFIFO 0600; lseek -> ESPIPE; bad pointer -> EFAULT |
 | 11 | munmap | |
 | 12 | brk | Linux semantics: returns the current break on failure |
 | 24 | sched_yield | (11.1b) |
 | 16 | ioctl | console fds: TCGETS (cooked, echoing termios), TIOCGWINSZ (framebuffer rows x cols, 25x80 on serial); other requests -> ENOTTY, non-console -> ENOTTY, bad fd -> EBADF |
 | 39 / 110 / 186 | getpid / getppid / gettid | getpid is the process (main thread) id; gettid is per thread |
-| 56 | clone | (11.1b) threads only: CLONE_VM\|FS\|FILES\|SIGHAND\|THREAD required, plus SYSVSEM, SETTLS, PARENT_SETTID, CHILD_SETTID, CHILD_CLEARTID, DETACHED; at most 8 clone()d threads live; fork-style clone -> ENOSYS, other flags or a bad stack -> EINVAL, TLS above USER_TOP -> EPERM, no slot -> EAGAIN |
+| 56 | clone | (11.1b threads; item 9 fork-style) thread clone still requires CLONE_VM\|FS\|FILES\|SIGHAND\|THREAD, plus SYSVSEM, SETTLS, PARENT_SETTID, CHILD_SETTID, CHILD_CLEARTID, DETACHED; at most 8 clone()d threads live; a clone whose flags are only the CSIGNAL byte (musl's fork, typically SIGCHLD) is a process fork; other flag combinations or a bad thread stack -> EINVAL, TLS above USER_TOP -> EPERM, no slot -> EAGAIN |
+| 57 | fork | (item 9) eager-copy process fork; the child returns 0, the parent the child's pid; cloexec bits, signal dispositions and the blocked mask are inherited; pending signals are not |
+| 61 | wait4 | (item 9) reaps a child; WNOHANG is honoured; other options -> EINVAL; a non-null rusage is zeroed; the status word is Linux's `(exit_code & 0xff) << 8` |
 | 202 | futex | (11.1b) FUTEX_WAIT / FUTEX_WAKE (PRIVATE flag accepted); stale value -> EAGAIN, misaligned or kernel address -> EINVAL, timeouts -> EINVAL (not yet), other ops -> ENOSYS |
 | 218 | set_tid_address | sets the calling thread's clear-child-tid word, returns its tid |
 | 60 / 231 | exit / exit_group | exit ends one clone()d thread (the main thread waits for the others first); exit_group ends the whole process |
@@ -109,7 +112,7 @@ handoff carries it (process record word +120).
 own mmap'd stack with its own TLS block, add 2000 each to one counter under a futex mutex (three-state
 lock, yielding inside the critical section so the others sleep in FUTEX_WAIT): `counter 8000 (expected
 8000)`. Then per-thread `%fs` checks, distinct gettid and shared getpid, join through
-CLONE_CHILD_CLEARTID, futex EAGAIN/EINVAL, clone(fork) -> ENOSYS, and a group exit with one thread
+CLONE_CHILD_CLEARTID, futex EAGAIN/EINVAL, clone(fork) reaped by wait4, and a group exit with one thread
 spinning in user mode and one asleep in FUTEX_WAIT: `lxthreads: PASS (10 checks)`, the kernel's
 `6 threads created, all joined and freed` and `[lxthreads exited 0 (sandboxed)]`.
 
@@ -236,7 +239,7 @@ default action and exits 143.
 - Timed futex waits, FUTEX_REQUEUE/WAKE_OP, threads running in parallel on several CPUs.
 - newfstatat by path, readlink, writable files.
 - Real-time signals (32..64), sigaltstack, signals to other processes, interrupting a futex wait.
-- /proc, sockets, file-backed mmap.
+- /proc, sockets, writable files, vfork, and a coherent MAP_SHARED file map (file-backed MAP_PRIVATE is done).
 - Busybox (the Phase 11.1 acceptance test) needs a third-party static binary; it will be added only
   after the owner approves downloading one, and it will run under the same gate (sealed + sandboxed).
 - OSABI 0 Linux binaries (most static musl builds) are not detected as Linux; they are refused today
@@ -255,4 +258,19 @@ BusyBox is built from source only; no prebuilt third-party binary is used.
 - Image: static EXEC at 0x400000, EI_OSABI set to 3, sealed `cudseal.py --foreign` (level 3, unsafe 0, caps 0). `image_verify` refuses a level-3 seal on anything but a capability-free Linux image (reason 8); the 6.4 gate still refuses it outside the compat sandbox.
 - Manifest `examples/apps/busybox.mf`: one `dir /efi/incudela/docs` grant.
 
-Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; seq, expr now work; lxtest checks it); uname 63 (11.1e part 3: sysname Linux, nodename forge, release 0.2.6-forge, machine x86_64; `uname -s -m` works). open 2 (11.1e part 4: absolute paths under a grant; wc, sha256sum and cat of granted files work, a file outside is EACCES). stat 4 (11.1e part 5; `ls` of a directory outside the grant -> Permission denied). lstat 6 (11.1e part 6; same as stat, no symlinks). fcntl 72 (11.1e part 7; `ls` of the granted directory and `printf` work). getcwd 79 (11.1e part 8; `pwd` prints /). nanosleep 35 (11.1e part 9; `sleep 1` works). geteuid 107 (11.1e part 10; ash starts without an ENOSYS, `sh -c exit 3` exits 3). dup2 33 (11.1e part 11; ash `<` / `>` redirections). lseek 8 (11.1e part 12; `tail` works). ppoll 271 (11.1e part 13; ash's `read` builtin). 11.1 accepted: `busybox sh /efi/incudela/docs/hello.sh` (functions, loops, arithmetic, case, test, a `while read` over a redirected file, printf) runs to completion in the sandbox; the config also enables grep, test and head/tail options. Ash cannot run external commands or pipelines yet (needs fork, pipe 22).
+Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; seq, expr now work; lxtest checks it); uname 63 (11.1e part 3: sysname Linux, nodename forge, release 0.2.6-forge, machine x86_64; `uname -s -m` works). open 2 (11.1e part 4: absolute paths under a grant; wc, sha256sum and cat of granted files work, a file outside is EACCES). stat 4 (11.1e part 5; `ls` of a directory outside the grant -> Permission denied). lstat 6 (11.1e part 6; same as stat, no symlinks). fcntl 72 (11.1e part 7; `ls` of the granted directory and `printf` work). getcwd 79 (11.1e part 8; `pwd` prints /). nanosleep 35 (11.1e part 9; `sleep 1` works). geteuid 107 (11.1e part 10; ash starts without an ENOSYS, `sh -c exit 3` exits 3). dup2 33 (11.1e part 11; ash `<` / `>` redirections). lseek 8 (11.1e part 12; `tail` works). ppoll 271 (11.1e part 13; ash's `read` builtin). 11.1 accepted: `busybox sh /efi/incudela/docs/hello.sh` (functions, loops, arithmetic, case, test, a `while read` over a redirected file, printf) runs to completion in the sandbox; the config also enables grep, test and head/tail options. Fork (57), fork-style clone, pipe (22), pipe2 (293) and file-backed mmap are implemented and tested by `run lxipc`. Ash pipelines and ash running an external command are not yet in the gate script (a follow-up can add one once a pipeline has been run in the sandbox).
+
+## Application pass/fail list (item 9)
+
+Updated 2026-11-25 (batch 1). Programs are launched with `run` in the OS boot script unless noted.
+
+### Pass
+
+- `lxtest`, `lxthreads`, `lxfs`, `lxexec`, `lxsig` (existing Linux personality tests).
+- `lxipc` (this batch): pipe and pipe2, fork and `clone(SIGCHLD)` reaped by wait4, and a file-backed mmap of `/efi/incudela/docs/hello.sh`. A bare `lxipc` without `run` is refused.
+- BusyBox applets already in the 11.1e gate: echo, true, false, basename, env, seq, expr, uname, wc, sha256sum, cat of a granted file, ls of a granted directory and a denied one, printf, pwd, sleep, `sh -c exit 3`, ash `<` / `>` redirections, tail, `sh /efi/incudela/docs/hello.sh`, grep.
+
+### Not yet in the gate
+
+- Ash pipelines and ash running an external command. Fork and pipe exist and are tested by `lxipc`; a BusyBox pipeline is not yet in the boot script.
+- Writable files, sockets, `/proc`, vfork, a coherent MAP_SHARED file map, and OSABI 0 binaries.
