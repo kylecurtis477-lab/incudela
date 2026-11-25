@@ -228,6 +228,11 @@ fail=0
 tests/count-store-reload/run.sh || fail=1
 return $fail
 }
+t_usb_image() {
+fail=0
+tests/usb-image/run.sh || fail=1
+return $fail
+}
 t_oslib() {
 fail=0
 tests/oslib/run.sh || fail=1
@@ -608,7 +613,8 @@ ITEMS='01 A t_cases
 63 E t_input_missing
 64 S t_forge_build
 65 alone t_forge_run_tests
-66 S t_count_store_reload'
+66 S t_count_store_reload
+67 alone t_usb_image'
 # RUN_TESTS_ONLY: optional space-separated item names (the Cuditor port honours the same).
 # FORGE_RUN_TESTS_INNER=1 omits t_forge_run_tests so a comparison can run inside the suite.
 # RUN_TESTS_PAR: per-item log dir (default build/par). If unset and INNER is set, build/par-inner.

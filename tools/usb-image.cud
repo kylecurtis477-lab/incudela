@@ -1,0 +1,77 @@
+# tools/usb-image.cud: Cuditor port of tools/usb-image.sh (kept as the reference;
+# tests/usb-image/run.sh compares them). Item-9 remainder (docs/BUILD_PLAN.md).
+# usage: usb-image [OUT]
+# Default OUT is build/usb/incudela-usb.img. The repo is the parent of the
+# binary's directory (the binary lives in build/). The tool only writes OUT,
+# a regular file: it refuses anything under /dev or any existing non-regular
+# file, and never writes to a device.
+import os
+import sys
+
+def fail(msg, rc):
+    eputs(msg)
+    exit(rc)
+
+def main():
+    me = sys.argv[0]
+    if me.find("/") >= 0:
+        os.chdir(os.path.dirname(me) + "/..")
+    else:
+        os.chdir("..")
+    out = "build/usb/incudela-usb.img"
+    if argc() > 1:
+        out = argv(1)
+    if out.startswith("/dev/"):
+        fail("usb-image: refusing " + out + ": this tool never writes to a device", 2)
+    if os.path.exists(out) and not os.path.isfile(out):
+        fail("usb-image: refusing " + out + ": not a regular file", 2)
+    if not os.path.isfile("build/kernel/iso/boot/grub/grub.cfg") or not os.path.isfile("build/kernel/iso/boot/kernel.elf"):
+        fail("usb-image: needs build/kernel/iso (build the kernel first)", 1)
+    r = os.run(["mktemp", "-d", "/tmp/incudela-usb.XXXXXX"])
+    if r[0] != 0:
+        fail("usb-image: mktemp failed", 1)
+    tmp = r[1].strip()
+    if tmp == "":
+        fail("usb-image: mktemp failed", 1)
+    r = os.run(["cp", "-r", "build/kernel/iso", tmp + "/iso"])
+    if r[0] != 0:
+        os.run(["rm", "-rf", tmp])
+        fail("usb-image: cannot copy build/kernel/iso", 1)
+    cfg = tmp + "/iso/boot/grub/grub.cfg"
+    text = read_file(cfg)
+    if text is None:
+        os.run(["rm", "-rf", tmp])
+        fail("usb-image: grub.cfg edit failed", 1)
+    text = text.replace("multiboot2 /boot/kernel.elf\n", "multiboot2 /boot/kernel.elf incudela.smoke\n")
+    write_file(cfg, text)
+    if text.find("    multiboot2 /boot/kernel.elf incudela.smoke\n") < 0 and not text.endswith("    multiboot2 /boot/kernel.elf incudela.smoke"):
+        os.run(["rm", "-rf", tmp])
+        fail("usb-image: grub.cfg edit failed", 1)
+    parent = os.path.dirname(out)
+    if parent != "" and parent != ".":
+        r = os.run(["mkdir", "-p", parent])
+        if r[0] != 0:
+            os.run(["rm", "-rf", tmp])
+            fail("usb-image: cannot create " + parent, 1)
+    epoch = os.getenv("SOURCE_DATE_EPOCH")
+    if epoch is None or epoch == "":
+        epoch = "1700000000"
+    r = os.run(["/bin/sh", "-c", "SOURCE_DATE_EPOCH=\"$1\" exec tools/repro-mkrescue -o \"$2\" \"$3\"", "usb-image", epoch, tmp + "/usb.img", tmp + "/iso"])
+    if r[0] != 0:
+        os.write(2, r[1])
+        os.write(2, r[2])
+        os.run(["rm", "-rf", tmp])
+        exit(1)
+    r = os.run(["mv", tmp + "/usb.img", out])
+    os.run(["rm", "-rf", tmp])
+    if r[0] != 0:
+        fail("usb-image: cannot write " + out, 1)
+    st = os.run(["stat", "-c", "%s", out])
+    sh = os.run(["/bin/sh", "-c", "sha256sum < \"$1\"", "usb-image", out])
+    if st[0] != 0 or sh[0] != 0:
+        fail("usb-image: cannot hash " + out, 1)
+    digest = sh[1].strip().split()[0]
+    print("usb-image: " + out + " (" + st[1].strip() + " bytes, sha256 " + digest + ")")
+    return 0
+
+exit(main())

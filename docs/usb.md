@@ -1,6 +1,6 @@
 # USB smoke image
 
-`tools/usb-image.sh` makes `build/usb/incudela-usb.img`: a raw image to copy onto a USB stick that boots the
+`build/usb-image` (the Cuditor port of `tools/usb-image.sh`, which stays as the reference) makes `build/usb/incudela-usb.img`: a raw image to copy onto a USB stick that boots the
 Incudela kernel on a real PC through UEFI or BIOS (legacy/CSM). It is the first real-hardware step of
 BUILD_PLAN item 8; *Kyle* boots it once and reports what the screen shows.
 
@@ -9,7 +9,8 @@ BUILD_PLAN item 8; *Kyle* boots it once and reports what the screen shows.
 ```sh
 ./build.sh
 ./cuditor examples/kernel/build.cud -o build/kernel-build && build/kernel-build   # build/kernel/iso
-tools/usb-image.sh            # -> build/usb/incudela-usb.img (prints its size and sha256)
+build/cudc tools/usb-image.cud build/usb-image.s && build/fas -o build/usb-image.o build/usb-image.s && build/fld --base 0x100000000000 -o build/usb-image build/usb-image.o
+build/usb-image               # -> build/usb/incudela-usb.img (prints its size and sha256)
 ```
 
 - **What it is.** The kernel ISO tree (`build/kernel/iso`) with `incudela.smoke` on the GRUB `multiboot2` line,
@@ -35,7 +36,7 @@ tools/usb-image.sh            # -> build/usb/incudela-usb.img (prints its size a
 
 ## Writing it to a stick
 
-`tools/usb-image.sh` only writes a regular file. It refuses any `/dev` path and never writes to a device: copying
+`build/usb-image` (and `tools/usb-image.sh`) only writes a regular file. It refuses any `/dev` path and never writes to a device: copying
 the image to a stick is your step.
 
 > **Warning: pick the right device.** Writing the image destroys everything on the target device. Writing to the
