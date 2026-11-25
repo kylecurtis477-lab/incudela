@@ -153,7 +153,7 @@ outside that configuration. The interface in §§0–5 is unchanged.
 ### A.1 What is verified, and by which tests
 
 Markers in this section are exact serial (or framebuffer) substrings required by `tests/os/run.sh`
-or a kernel self-test. A result name is one of the 63 entries in `tests/os/expected-results.txt`
+or a kernel self-test. A result name is one of the 67 entries in `tests/os/expected-results.txt`
 (`os/result-count` fails if any is missing). The framebuffer check on the BIOS, UEFI, EFI-loader
 and IOMMU boots requires `back == front` and a row that decodes as `KERNEL OK`.
 
@@ -330,7 +330,7 @@ not imply that device DMA was translated.
 - ACPI tables, PCI configuration, and the IOMMU's register interface are those QEMU presents.
   The tests do not attack the firmware or the emulator.
 - The kernel under test is the one built by `examples/kernel/build.cud` / `examples/efi/build.cud`
-  with the self-hosted compiler (build.sh `FIXPOINT OK`, `SEED OK`, `TOOLS OK`, `SEED TOOLS OK`).
+  with the self-hosted compiler (`build/forge-build` / `build.sh` `FIXPOINT OK`, `SEED OK`, `TOOLS OK`, `SEED TOOLS OK`).
 - The kernel the tests boot is the test/debug build (`examples/kernel/kdebug.cudi` included): it prints the
   `hang probe:` line the boot harness reads at a HANG and the KASLR layout lines (`KASLR: kernel image at`,
   `KASLR: big heap at`) and checks the unslid `.text` alias is unmapped. `build/kernel-build --release` builds

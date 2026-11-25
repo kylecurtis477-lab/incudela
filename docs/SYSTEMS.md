@@ -35,7 +35,7 @@ It has no GC, no libc, no syscall runtime, no bigints, and no prelude. The entry
   - `@efiapi` generates an MS-ABI entry (up to 6 params, 5th/6th from the stack). `@naked` emits no prologue. `@section("...")` places the function in a named section.
 - **Globals:** `name: T = init` goes in .data, otherwise .bss. Initializers can be constants, arrays `[..]`, strings, or symbols. An `f64`/`f32` global or array takes float or integer literals (`g: f32[3] = [0.1, -2, 1e-40]`): the compiler stores the IEEE bits, f32 rounded to nearest even as `cvtsd2ss` would (overflow to infinity, subnormals, -0.0), and anything but a literal is an error (tests/fs/fglobals). `NAME = constexpr` defines a constant. `include "file"` does textual inclusion (relative to the including file, or absolute).
 
-## Demos (tested by `tests/os/run.sh`, also called from run_tests.sh)
+## Demos (tested by `tests/os/run.sh`, also called from `build/forge-run-tests` / `run_tests.sh`)
 - **`examples/kernel/`:** a higher-half x86-64 kernel (`boot bootinfo console sync mm cpu acpi apic sched smp user pci virtio fat .cudi` + `kernel.cud`).
   - **Layout:** linked at `0xFFFFFFFF80000000 + phys` with a small identity-linked `.boot` section at 1 MiB (Multiboot2 header, 32→64-bit trampoline, `FORGEKRN` header for the UEFI loader). The image is position-independent in physical memory: the loader may put it anywhere 2 MiB-congruent (`kdelta`).
   - **Two entries, one BootInfo:** `kmain_mb2` parses Multiboot2 tags (memory map, framebuffer, RSDP, EFI marker); `kmain_efi` copies the BootInfo filled by the Incudela UEFI loader. Both continue in the same `kernel_start`.
@@ -134,7 +134,7 @@ test) checks that a 2000 ms jump is skipped and 5 ms counted.
 
 ## Compiler tooling (Phase 3)
 - `--diagnostics=json`: one schema-v1 JSON object per error (file/line/col span, code, message, fix-its); goldens in `tests/diag`.
-- Hosted runtime source: `selfhost/runtime.cud` (naked Forge functions, inline asm; v1.3 item 9). build.sh compiles it with the seed to `build/runtime.s`, which `build/embed` splices into cudc. `tests/rtport/run.sh` checks it assembles to the same instruction/data stream as the reference `selfhost/runtime.s`. To change the runtime, edit runtime.cud (and keep runtime.s in step or retire it).
+- Hosted runtime source: `selfhost/runtime.cud` (naked Forge functions, inline asm; v1.3 item 9). `build/forge-build` (and the `build.sh` reference) compiles it with the seed to `build/runtime.s`, which `build/embed` splices into cudc. `tests/rtport/run.sh` checks it assembles to the same instruction/data stream as the reference `selfhost/runtime.s`. To change the runtime, edit runtime.cud (and keep runtime.s in step or retire it).
 
 
 ### Slices and bounds checks (Phase 4.1)

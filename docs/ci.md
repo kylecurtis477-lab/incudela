@@ -11,8 +11,8 @@ Status: [![ci](https://github.com/kylecurtis477-lab/incudela/actions/workflows/c
 | `tests-o2` | `./build.sh`, then `SKIP_OS=1 ./run_tests.sh` (every non-QEMU item, parallel lanes); fails on any `FAIL` line and prints the failed items' `build/par` logs | 60 min |
 | `boot-o0` | `./build.sh`, then `tests/os/ci-boot.sh`: kernel, user programs, modules and EFI disk built with `CUDC_FLAGS=-O0`, one BIOS boot (GRUB multiboot2, 4 CPUs, TCG) that must reach KERNEL OK on the serial console and the framebuffer; no retry on a hang | 30 min |
 
-The full OS suite (`tests/os/run.sh`, 63 results, BIOS/UEFI/kexec/desktop/IOMMU/release-kernel paths) is not run on GitHub: it is
-the gate on the development box (pregate, `tests/os/run.sh` alone, then `run_tests.sh` at O2 and O0).
+The full OS suite (`tests/os/run.sh`, 67 expected entries / 74 PASS lines, BIOS/UEFI/kexec/desktop/IOMMU/release-kernel/soak/fault paths) is not run on GitHub: it is
+the gate on the development box (pregate, `tests/os/run.sh` alone, then `run_tests.sh` / `build/forge-run-tests` at O2 and O0). On the box `build/forge-build` (`tools/build.cud`) and `build/forge-run-tests` (`tools/run_tests.cud`) are the documented entry points; the GitHub workflow still calls `./build.sh` and `SKIP_OS=1 ./run_tests.sh` (kept as references; workflow edits wait on the `workflow` token scope).
 
 ## Rules
 
@@ -46,7 +46,7 @@ The byte-for-byte checks compare against the dev box's tools (Debian 13: GNU as 
   name no CPU model and reading /proc/cpuinfo needs a workflow change, so the classes are unnamed. The bench's
   13 checked sites ran about 6.4M checks a round; the elision rules of 2026-11-24 (docs/SYSTEMS.md, bounds)
   leave 9 checked sites and about 1M checks (only the histogram's `h[s[i] % 256]` in a hot loop), and the box
-  ratio went from 1.0068 to 0.9998. A slow-class runner has not run it yet.
+  ratio went from 1.0068 to 0.9998. Since then, 0.23.0 CI runs passed on both a slow-class ~343 ms runner (1.0212) and fast/class-A runners (0.9875-1.0107, limit 1.0500); the four GNU as 2.42 vs 2.44 `fas` gaps (with sizes 461624 vs 461616, 299440 vs 299432, and 181928 vs 181920) remain the only CI failures until the `workflow` scope lets us pin Debian 13.
 
 `tests/ci/run.sh` (a `run_tests.sh` item) checks these rules on the workflow file and checks that a copy breaking
 each one (tag pin, short SHA, write token, extra write permission, a secret, a download, a missing timeout, kept
