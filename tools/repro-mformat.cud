@@ -1,0 +1,90 @@
+# tools/repro-mformat.cud: Cuditor port of tools/repro-mformat (kept as the reference;
+# tests/repro-mformat/run.sh compares them). Item-9 remainder (docs/BUILD_PLAN.md).
+# mformat wrapper: when SOURCE_DATE_EPOCH is set and -N was not already passed,
+# add -N <low 32 bits of the epoch as 8 hex digits> so the FAT volume serial is
+# deterministic. With -C and -i FILE, the image's last 512-byte sector is zeroed
+# after mformat returns (mtools before 4.0.48 left that sector uninitialized).
+import os
+import sys
+
+def fail(msg, rc):
+    eputs(msg)
+    exit(rc)
+
+def serial8(epoch):
+# printf '%08X' $(( epoch & 4294967295 ))
+    v = epoch & 4294967295
+    digits = "0123456789ABCDEF"
+    s = ""
+    shift = 28
+    while shift >= 0:
+        s = s + digits[(v >> shift) & 15]
+        shift -= 4
+    return s
+
+def parse_epoch(s):
+    if s is None or s == "":
+        return None
+    v = 0
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c < "0" or c > "9":
+            fail("repro-mformat: SOURCE_DATE_EPOCH is not a non-negative integer", 1)
+        v = v * 10 + (ord(c) - 48)
+        i += 1
+    return v
+
+def main():
+    mformat = os.getenv("MFORMAT")
+    if mformat is None or mformat == "":
+        mformat = "/usr/bin/mformat"
+    hasN = 0
+    create = 0
+    img = ""
+    prev = ""
+    i = 1
+    while i < argc():
+        a = argv(i)
+        if a == "-N":
+            hasN = 1
+        if a == "-C":
+            create = 1
+        if prev == "-i":
+            img = a
+        prev = a
+        i += 1
+    cmd = [mformat]
+    epoch_s = os.getenv("SOURCE_DATE_EPOCH")
+    epoch = parse_epoch(epoch_s)
+    if epoch is not None and hasN == 0:
+        cmd.append("-N")
+        cmd.append(serial8(epoch))
+    i = 1
+    while i < argc():
+        cmd.append(argv(i))
+        i += 1
+    r = os.run(cmd)
+    if r[1] != "":
+        os.write(1, r[1])
+    if r[2] != "":
+        os.write(2, r[2])
+    if r[0] != 0:
+        exit(r[0])
+    if create == 1 and img != "" and os.path.isfile(img):
+        st = os.run(["stat", "-c", "%s", img])
+        if st[0] != 0:
+            fail("repro-mformat: cannot stat " + img, 1)
+        size = int(st[1].strip())
+        if size >= 512:
+            seek = size // 512 - 1
+            d = os.run(["dd", "if=/dev/zero", "of=" + img, "bs=512", "count=1", "seek=" + str(seek), "conv=notrunc", "status=none"])
+            if d[0] != 0:
+                if d[1] != "":
+                    os.write(2, d[1])
+                if d[2] != "":
+                    os.write(2, d[2])
+                exit(d[0])
+    return 0
+
+exit(main())

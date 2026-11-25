@@ -180,6 +180,9 @@ def t_count_store_reload():
 def t_usb_image():
     return run_script("tests/usb-image/run.sh")
 
+def t_repro_mformat():
+    return run_script("tests/repro-mformat/run.sh")
+
 def t_oslib():
     return run_script("tests/oslib/run.sh")
 
@@ -582,6 +585,8 @@ def dispatch(name):
         return t_count_store_reload()
     elif name == "t_usb_image":
         return t_usb_image()
+    elif name == "t_repro_mformat":
+        return t_repro_mformat()
     elif name == "t_oslib":
         return t_oslib()
     elif name == "t_reseed":
@@ -730,6 +735,7 @@ def all_items():
     out.append(["65", "alone", "t_forge_run_tests"])
     out.append(["66", "S", "t_count_store_reload"])
     out.append(["67", "alone", "t_usb_image"])
+    out.append(["68", "X", "t_repro_mformat"])
     return out
 
 def selected_items():
