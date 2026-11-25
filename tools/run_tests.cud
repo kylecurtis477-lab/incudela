@@ -174,6 +174,9 @@ def t_pecheck():
 def t_memimg():
     return run_script("tests/memimg/run.sh")
 
+def t_count_store_reload():
+    return run_script("tests/count-store-reload/run.sh")
+
 def t_oslib():
     return run_script("tests/oslib/run.sh")
 
@@ -572,6 +575,8 @@ def dispatch(name):
         return t_pecheck()
     elif name == "t_memimg":
         return t_memimg()
+    elif name == "t_count_store_reload":
+        return t_count_store_reload()
     elif name == "t_oslib":
         return t_oslib()
     elif name == "t_reseed":
@@ -718,6 +723,7 @@ def all_items():
     out.append(["63", "E", "t_input_missing"])
     out.append(["64", "S", "t_forge_build"])
     out.append(["65", "alone", "t_forge_run_tests"])
+    out.append(["66", "S", "t_count_store_reload"])
     return out
 
 def selected_items():

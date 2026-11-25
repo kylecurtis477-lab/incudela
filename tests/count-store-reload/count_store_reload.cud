@@ -1,0 +1,73 @@
+# count_store_reload: Cuditor port of tests/fs/count_store_reload.py (kept as the reference;
+# tests/count-store-reload/run.sh compares them).
+# usage: count_store_reload FILE.s -- print the number of consecutive
+#   mov %rN,D(%rbp) / mov D(%rbp),%rN pairs (store then reload).
+
+def is_word_char(c: int) -> bool:
+    if c >= 48 and c <= 57:
+        return True
+    if c >= 65 and c <= 90:
+        return True
+    if c >= 97 and c <= 122:
+        return True
+    return c == 95
+
+# If a is `mov %rREG,OFFSET(%rbp)`, return "REG|OFFSET" with REG including the `%r`.
+# Otherwise return "".
+def store_pair(a):
+    if not a.startswith("mov %r"):
+        return ""
+    n = len(a)
+    i = 6
+    while i < n and is_word_char(char_at(a, i)):
+        i += 1
+    if i == 6:
+        return ""
+    if i >= n or a[i:i + 1] != ",":
+        return ""
+    reg = a[4:i]
+    i += 1
+    off_at = i
+    if i < n and a[i:i + 1] == "-":
+        i += 1
+    dig_at = i
+    while i < n and isdigit(a[i:i + 1]):
+        i += 1
+    if i == dig_at:
+        return ""
+    if a[i:] != "(%rbp)":
+        return ""
+    return reg + "|" + a[off_at:i]
+
+def count_pairs(text):
+    asm = text.splitlines()
+    n = 0
+    i = 0
+    last = len(asm) - 1
+    while i < last:
+        a = asm[i].strip()
+        b = asm[i + 1].strip()
+        key = store_pair(a)
+        if key != "":
+            j = 0
+            while j < len(key) and key[j:j + 1] != "|":
+                j += 1
+            reg = key[0:j]
+            off = key[j + 1:]
+            if b == "mov " + off + "(%rbp)," + reg:
+                n += 1
+        i += 1
+    return n
+
+def main():
+    if argc() < 2:
+        eputs("count_store_reload: usage: count_store_reload FILE.s")
+        exit(2)
+    path = argv(1)
+    text = read_file(path)
+    if text is None:
+        eputs("count_store_reload: cannot read " + path)
+        exit(1)
+    print(count_pairs(text))
+
+main()

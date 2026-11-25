@@ -223,6 +223,11 @@ fail=0
 tests/memimg/run.sh || fail=1
 return $fail
 }
+t_count_store_reload() {
+fail=0
+tests/count-store-reload/run.sh || fail=1
+return $fail
+}
 t_oslib() {
 fail=0
 tests/oslib/run.sh || fail=1
@@ -444,7 +449,7 @@ build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(awk '/^
 # a safe setCC/movzbl/test/je (kernel serial_putc tries loop) becomes jCC — covered by kernel build in the os gate
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(awk '/^ssa_cold:/,/^ssa_rax:/' build/t_ssa.s | grep -c 'setne %al')" -ge 1 ] && [ "$(awk '/^ssa_cold:/,/^ssa_rax:/' build/t_ssa.s | grep -cE '^    setl %al$')" -ge 1 ] && echo "PASS fs-ssa-jcc-shape" || { echo "FAIL fs-ssa-jcc-shape"; fail=1; }
 # step 4y: store then reload of the same register from the same %rbp slot drops under --fs-ssa
-build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(python3 tests/fs/count_store_reload.py build/t_ssa.s)" -ge 1 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(python3 tests/fs/count_store_reload.py build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-reload-shape" || { echo "FAIL fs-ssa-reload-shape"; fail=1; }
+build/cudc tests/count-store-reload/count_store_reload.cud build/count_store_reload.s && build/fas -o build/count_store_reload.o build/count_store_reload.s && build/fld --base 0x100000000000 -o build/count_store_reload build/count_store_reload.o && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(build/count_store_reload build/t_ssa.s)" -ge 1 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(build/count_store_reload build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-reload-shape" || { echo "FAIL fs-ssa-reload-shape"; fail=1; }
 # step 4z: add $0,%rsp is dropped under --fs-ssa
 build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-temps && [ "$(grep -cE '^    add \$0,%rsp$' build/t_ssa.s)" -ge 1 ] && build/cudc tests/fs/ssa.cud build/t_ssa.s $CUDC_FLAGS --fs-ssa && [ "$(grep -cE '^    add \$0,%rsp$' build/t_ssa.s)" = 0 ] && echo "PASS fs-ssa-add0-shape" || { echo "FAIL fs-ssa-add0-shape"; fail=1; }
 # step 4aa: ssa_zstore's xor;store of 0 becomes movq $0,MEM under --fs-ssa
@@ -602,7 +607,8 @@ ITEMS='01 A t_cases
 62 E t_float_global
 63 E t_input_missing
 64 S t_forge_build
-65 alone t_forge_run_tests'
+65 alone t_forge_run_tests
+66 S t_count_store_reload'
 # RUN_TESTS_ONLY: optional space-separated item names (the Cuditor port honours the same).
 # FORGE_RUN_TESTS_INNER=1 omits t_forge_run_tests so a comparison can run inside the suite.
 # RUN_TESTS_PAR: per-item log dir (default build/par). If unset and INNER is set, build/par-inner.
