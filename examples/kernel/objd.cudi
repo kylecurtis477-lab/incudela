@@ -240,6 +240,15 @@ def od_kdf(k: u64[8], label: u64, salt0: u64, salt1: u64):
     while i < 8:
         od_t[i] = od_be(sh_h[i])
         i += 1
+    sh_wipe()
+    i = 0
+    while i < 8:
+        hm_ih[i] = 0
+        i += 1
+    i = 0
+    while i < 64:
+        hm_k[i] = u8(0)
+        i += 1
 
 def od_kswap():
 # exchange the working keys (od_ek, od_mk) with the old ones of a rotation (od_ek1, od_mk1)

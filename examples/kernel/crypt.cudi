@@ -5,6 +5,7 @@
 #   per-block integrity tag (a real HMAC: inner/outer padded keys, so the tag is not length-extendable),
 #   and ct_eq4, a constant-time compare for 256-bit tags.
 # Keys are 8 little-endian 32-bit words. Nothing here touches memory outside these arrays.
+# sh_wipe (inv248) zeroes sh_h, sh_w, sh_buf, sh_n and sh_tot; od_kdf calls it after copying the digest.
 cc_key: u64[8]  # ChaCha20 key (32-bit words)
 cc_x: u64[16]  # working state
 cc_ks: u64[16]  # last keystream block (32-bit words)
@@ -155,6 +156,22 @@ def sh_fin():
     while i < 8:
         sh_byte((bits >> (56 - i * 8)) & 255)
         i += 1
+
+def sh_wipe():
+# clear the SHA-256 working state (digest, message schedule, buffer, length). Does not touch sh_k (the
+# public round constants) or HMAC/PBKDF2 key material; callers that also used HMAC should zero hm_k and
+# hm_ih themselves, as od_kdf does after copying the digest into od_t.
+    i: u64 = 0
+    while i < 8:
+        sh_h[i] = 0
+        i += 1
+    i = 0
+    while i < 64:
+        sh_w[i] = 0
+        sh_buf[i] = u8(0)
+        i += 1
+    sh_n = 0
+    sh_tot = 0
 
 # ---- HMAC-SHA256 (RFC 2104): HMAC(K, m) = SHA256((K^opad) || SHA256((K^ipad) || m)) ----
 hm_k: u8[64]  # the HMAC key block (key bytes, zero padded to the SHA-256 block size)

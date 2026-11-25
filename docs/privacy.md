@@ -30,7 +30,10 @@ file names and contents) is encrypted and authenticated. The code is in `example
   The count is stored in the slot, so existing slots (including pre-inv248 20000-iteration ones) and the TCG
   tests keep the count they were created with. The passphrase (8..64 bytes) arrives as
   the QEMU fw_cfg file `opt/forge/userkey` (I/O ports 0x510/0x511, read through the `pio_add`/`pio_rd`/`pio_wr` safe
-  wrappers) and is wiped from kernel memory once the store is opened. The KDF salt is a fourth independent PRF output
+  wrappers) and is wiped from kernel memory once the store is opened. After each `od_kdf` (the HMAC-SHA256
+  PRF used to derive wrap, MAC and check keys from the data key or KEK) the SHA-256 working state (`sh_h`,
+  `sh_w`, `sh_buf`) and the HMAC key block are zeroed so the digest and key do not linger in those globals.
+  The KDF salt is a fourth independent PRF output
   of the entropy digest (HMAC(digest, "ksalt")), stored with the iteration count in `objects.key` words 16..19
   (version 2, salt, iterations), so a later, higher count leaves old slots readable. A **v1 slot** (made before
   inv228: those words are 0) still unlocks with the old KEK, SHA-256("frge-kek" || passphrase), and the boot log

@@ -1872,6 +1872,10 @@ Directive: everything that can be Forge is Forge. One tool per commit, verified 
   `os/objstore-legacy-slot` and `os/objstore-passphrase-change` now check the stored count (at least 20000, at
   most 2^24) and feed that count to openssl, rather than requiring exactly 20000. On-disk markers and the kernel
   unsafe cap (709) are unchanged.
+- Data-at-rest keys, 0.23.1 SHA-256 wipe after od_kdf — *Status: done (2026-11-25, inv248).* `od_kdf` left the
+  HMAC-SHA256 digest in `sh_h` and the HMAC key in `hm_k` after copying the result into `od_t`. It now calls
+  `sh_wipe` (new in crypt.cudi: zeroes `sh_h`, `sh_w`, `sh_buf`, `sh_n` and `sh_tot`) and clears `hm_k` and
+  `hm_ih`. The kernel unsafe cap (709) is unchanged.
 - Data-at-rest keys, batch 2a: two-copy key file — *Status: done (2026-11-23, inv229).* The key slot was one block,
   `objects.key`, so any rewrite (passphrase change, v1-to-v2 upgrade) would have overwritten the only copy in
   place. Now `objects.keyb` is a second copy; a slot written since inv229 has a generation (word 20) and a SHA-256
