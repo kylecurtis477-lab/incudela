@@ -9,7 +9,16 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `81c56d0` Item 7 batch 2: a soak harness that runs `sysfuzz` across many seeds and records the
+  results. `examples/user/syssoak.cud` (`syssoak [START [NSEEDS [N]]]`, defaults 1, 16, 100)
+  fork+execs the fuzzer per seed and exits 0 only when every seed PASSes. `tools/syssoak.cud`
+  writes a `syssoak-results v1` file from a serial log (`--record`, `--check`, `--self-test`).
+  New `os/syssoak` boots once with `incudela.syssoak` (16 seeds x 100 calls, results in
+  `build/os/syssoak-results.txt`) and fails on the tree before the harness; it skips the long
+  shell and kexec sessions. Not a multi-hour soak, and no fault injection (later batches). The
+  kernel unsafe cap is unchanged (709).
 - `82a6560` Fix: the boot harness lost the framebuffer screendump when the kernel's 5 s wait for `q`
+
   expired mid-dump (inv236 `os/bootpol-config-strict`: 38 s box suspend, debug-exit 5846 ms, no ppm).
   That wait is `rdtsc` vs `tsc_per_ms * 5000`, so a host suspend can jump guest TSC. After KERNEL OK
   the harness now issues QEMU monitor `stop`, dumps, queues `q`, then `cont`. A failed screendump
