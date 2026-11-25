@@ -10,8 +10,13 @@
 
 ## 0.24.0 (open)
 
-## 0.23.1 (open): KDF hardening and key-temporary wipes (no git tag)
+## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
+- `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
+  `examples/kernel/seal.cudi` and the `gated` list in `examples/user/sysfuzz.cud` and requires
+  they match for every capability the fuzzer does not declare (it holds `fs` and `ipc`; today
+  that is 29 numbers). The lists already matched; no kernel change. The test does not start
+  QEMU. Syscalls 408/409 stay `ktest_hooks` gated. The kernel unsafe cap stays 709.
 - `5dbbda2` After unlock, `od_open` ends with `od_tmp_done`, which wipes passphrases, the KEK, `od_t`,
   the entropy pool, and the SHA-256 / HMAC / PBKDF2 working state, then counts any words still set;
   live store keys stay. `os/objstore-no-kdf-residue` requires the clean boot-log line on the create
@@ -24,7 +29,10 @@
   least 600000 when 600000 iterations are estimated to finish within 2 s (real hardware). QEMU TCG
   stays near 20000 and ~0.5 s. The chosen count is stored in the slot, so existing slots still unlock
   at their own count. `os/objstore-kdf-salted` and the upgrade/passphrase tests use the stored count
-  rather than requiring exactly 20000. On-disk markers unchanged.
+  rather than requiring exactly 20000. On-disk markers unchanged. The `9575ad6` commit subject called
+  this a "600k floor", which overstated it: the floor for a new slot is 20000, calibrated to about
+  500 ms, and 600000 is used only when that many iterations finish within 2 s. The pushed commit is
+  left as it is.
 
 ## 0.23.0 (2026-11-25): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server; package manager; data-at-rest keys and soak/fault testing; All-Cuditor build and test drivers (no git tag)
 
