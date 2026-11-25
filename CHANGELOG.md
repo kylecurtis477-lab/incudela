@@ -3,12 +3,28 @@
      version-to-commit mapping comes from the project plan. There are no git tags: the versions are
      groupings of commits, not contiguous ranges of history (for example the 0.17.4 fixes 0bbe40c, 4ecde04,
      f5c66be and 2aba6e2 come before the 0.17.2 commits in the log). Newest version first. 0.18.1 is cut as
-     a grouping only; 0.19.0, 0.20.0 and 0.23.0 are open; 0.22.0 is closed (2026-11-19). Entries before 0.21.0 use
-     the names of their time (Forge, forgec, c2forge, `\EFI\Forge\`). -->
+     a grouping only; 0.19.0, 0.20.0, 0.23.1 and 0.24.0 are open; 0.22.0 (2026-11-19) and 0.23.0
+     (2026-11-25) are closed. Entries before 0.21.0 use the names of their time (Forge, forgec,
+     c2forge, `\EFI\Forge\`). -->
 # Incudela and Cuditor changelog
 
-## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
+## 0.24.0 (open)
 
+## 0.23.1 (open)
+
+## 0.23.0 (2026-11-25): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server; package manager; data-at-rest keys and soak/fault testing; All-Cuditor build and test drivers (no git tag)
+
+- Known issue (0.23.0 public CI, Ubuntu 24.04 runner GNU `as` 2.42 vs box GNU `as` 2.44): four
+  byte-for-byte `fas` checks fail in `run_tests.sh O2 (SKIP_OS)` by 8 bytes: `fas tests-corpus`,
+  `fas self` (`fas_rc=0 gas_bytes=461624 fas_bytes=461616`), `fas build/os/boot.s` (`fas_rc=0
+  gas_bytes=299440 fas_bytes=299432`), and `fas build/kernel-build.s` (`fas_rc=0
+  gas_bytes=181928 fas_bytes=181920`). `docs/ci.md` carries the pinned Debian 13 container plan,
+  waiting on the `workflow` token scope.
+- `a450c9e` Reservation 6 closed: `build/forge-build` (`tools/build.cud`) and `build/forge-run-tests`
+  (`tools/run_tests.cud`) are now the documented build and test entry points in `README.md`,
+  `docs/BUILD_PLAN.md`, `docs/bootstrap.md`, `docs/ci.md`, `docs/SYSTEMS.md` and `docs/kernel-core.md`,
+  with `build.sh`, `run_tests.sh` and the other ported `.sh`/`.py` originals kept as references;
+  all six v1 reservations have landed work and the frontier slot stays empty (no tag).
 - `3f6ad9f` Item-9 remainder: `tools/repro-mformat.cud` (built to `build/repro-mformat`) is a
   Cuditor port of `tools/repro-mformat`, which stays as the reference and is still
   what `examples/efi/build.sh`, `examples/efi/build.cud` and `tools/repro-mkrescue`
