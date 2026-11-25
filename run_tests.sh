@@ -238,6 +238,11 @@ fail=0
 tests/repro-mformat/run.sh || fail=1
 return $fail
 }
+t_sysfuzz_gates() {
+fail=0
+tests/sysfuzz-gates/run.sh || fail=1
+return $fail
+}
 t_oslib() {
 fail=0
 tests/oslib/run.sh || fail=1
@@ -620,7 +625,8 @@ ITEMS='01 A t_cases
 65 alone t_forge_run_tests
 66 S t_count_store_reload
 67 alone t_usb_image
-68 X t_repro_mformat'
+68 X t_repro_mformat
+69 X t_sysfuzz_gates'
 # RUN_TESTS_ONLY: optional space-separated item names (the Cuditor port honours the same).
 # FORGE_RUN_TESTS_INNER=1 omits t_forge_run_tests so a comparison can run inside the suite.
 # RUN_TESTS_PAR: per-item log dir (default build/par). If unset and INNER is set, build/par-inner.

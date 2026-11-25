@@ -638,6 +638,12 @@ count stays at or under 709 (the baseline ceiling has been 168 / 659 since Stage
      unchanged (no budget). This is not itself a multi-hour run; a long session is
      `syssoak START NSEEDS N BUDGET` from the shell and is not part of the gate. The kernel
      unsafe cap stays 709.
+   - *Gated-list check done (2026-11-25, inv249):* `tests/sysfuzz-gates/run.sh` (wired as item 69,
+     lane X; no QEMU) parses `sys_need` in `examples/kernel/seal.cudi` and the `gated` list in
+     `examples/user/sysfuzz.cud` and requires they match for every capability the fuzzer does not
+     declare (it holds `fs` and `ipc`; today that is 29 numbers for spawn, drv, ktest, kexec, probe,
+     grant and gfx). The lists already matched; no kernel change. Syscalls 408/409 stay
+     `ktest_hooks` gated. The kernel unsafe cap stays 709.
 8. **Real-hardware boot**: a USB image plus a test checklist for Kyle's PC (needs Kyle's hardware).
 9. **Linux compatibility measured by real applications**: a list of real apps, each recorded as pass or fail.
 10. **Diverse double-compilation check of the bootstrap seed.**

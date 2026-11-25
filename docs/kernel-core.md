@@ -175,6 +175,10 @@ syscall, four bad addresses, all `EFAULT`).
 `EACCES`, numbers outside the native table (including the Linux-only 15, 56, 158 and 322) `ENOSYS`, and then
 3000 calls with random arguments (huge lengths, kernel, non-canonical and straddling pointers, random path
 bytes) must leave its canary, pid and console intact (`sysfuzz: PASS`).
+`tests/sysfuzz-gates/run.sh` (wired as item 69, lane X; no QEMU) parses `sys_need` in `seal.cudi` and the
+`gated` list in `sysfuzz.cud` and requires they match for every capability the fuzzer does not declare
+(today: spawn, drv, ktest, kexec, probe, grant, gfx; it holds `fs` and `ipc`). Syscalls 408/409 stay
+`ktest_hooks` gated. The kernel unsafe cap is unchanged (709).
 The item 7 batch 2 soak harness (`examples/user/syssoak.cud`, `tools/syssoak.cud`) runs that fuzzer
 across many seeds and records the results (`syssoak-results v1`). `os/syssoak` boots once with
 `incudela.syssoak` (16 seeds x 100 calls, results in `build/os/syssoak-results.txt`) and fails on
