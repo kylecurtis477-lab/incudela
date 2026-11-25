@@ -9,6 +9,13 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `af6e510` Item 7 batch 4: multi-hour soak support. `syssoak` takes an optional fourth argument, a
+  wall-clock budget in `sys_ticks()` units (the 100 Hz LAPIC tick, 10 ms; 0 means run every
+  requested seed; 360000 ticks is one hour). When the budget expires after a completed seed, it
+  prints a checkpoint and exits 0 if no seed failed so a later session can resume. `os/syssoak-long`
+  boots once with `incudela.syssoaklong` (`syssoak 1 16 100 1`), requires a clean checkpoint after
+  the first seed, and fails on the tree before the harness. The existing `os/syssoak` path is
+  unchanged. A live multi-hour run is started from the shell and is not part of the gate.
 - `f334a8c` Item 7 batch 3: ktest-gated `kmalloc` fault injection in front of sysfuzz. Syscall 408
   (still capability `ktest` and `ktest_hooks` gated; 409 unchanged) grows `b=2/3/4` to arm, query
   and probe forced allocation failures. The fail counter is in the safe `kmalloc` wrapper, so the
