@@ -1,0 +1,99 @@
+# tools/build.cud: Cuditor port of the repo-root build.sh (kept as the reference;
+# tests/build/run.sh checks both give the same stdout, stderr, exit code and the
+# same bootstrap artifacts). Reservation 6, batch 1 (docs/BUILD_PLAN.md): the
+# four-stage seed bootstrap and fixpoint check. run_tests.sh stays a later batch.
+# usage: build/forge-build  (the binary lives in build/, so the repo is the parent
+# of its directory). Stops at the first failing step with that step's exit code
+# (sh -e). FORGE_RUST_CHECK=1 is the optional Rust bootstrap cross-check, same as
+# the script. Does not raise the kernel unsafe cap.
+import os
+import sys
+
+def step(args):
+    r = os.run(args)
+    os.write(1, r[1])
+    os.write(2, r[2])
+    if r[0] != 0:
+        exit(r[0])
+
+def step_or(args, msg):
+    r = os.run(args)
+    os.write(1, r[1])
+    os.write(2, r[2])
+    if r[0] != 0:
+        os.write(1, msg)
+        exit(1)
+
+def main():
+    me = sys.argv[0]
+    if me.find("/") >= 0:
+        os.chdir(os.path.dirname(me) + "/..")
+    else:
+        os.chdir("..")
+    if not os.path.isdir("build"):
+        os.mkdir("build")
+    os.chdir("seed")
+    r = os.run(["sha256sum", "-c", "--quiet", "seed.sha256"])
+    os.chdir("..")
+    os.write(1, r[1])
+    os.write(2, r[2])
+    if r[0] != 0:
+        os.write(1, "seed hash mismatch\n")
+        exit(1)
+    seed = "seed/cudc-seed"
+    sas = "seed/fas-seed"
+    sld = "seed/fld-seed"
+    step([seed, "tools/embed.cud", "build/embed.s"])
+    step([sas, "-o", "build/embed.o", "build/embed.s"])
+    step([sld, "--base", "0x100000000000", "-o", "build/embed", "build/embed.o"])
+    step_or([seed, "selfhost/runtime.cud", "build/runtime.s"], "runtime.cud failed\n")
+    step(["build/embed", "selfhost/compiler.cud", "selfhost/prelude.cud", "build/runtime.s", "selfhost/cudc.cud"])
+    step_or([seed, "selfhost/cudc.cud", "build/stage2.s"], "seed failed\n")
+    step([sas, "-o", "build/stage2.o", "build/stage2.s"])
+    step([sld, "--base", "0x100000000000", "-o", "build/stage2", "build/stage2.o"])
+    for t in ["fas", "fld"]:
+        step(["build/stage2", "tools/" + t + ".cud", "build/" + t + ".s"])
+        step([sas, "-o", "build/" + t + ".o", "build/" + t + ".s"])
+        step([sld, "--base", "0x100000000000", "-o", "build/" + t, "build/" + t + ".o"])
+    step_or(["build/stage2", "selfhost/cudc.cud", "build/stage3.s"], "stage2 failed\n")
+    step(["build/fas", "-o", "build/stage3.o", "build/stage3.s"])
+    step(["build/fld", "--base", "0x100000000000", "-o", "build/stage3", "build/stage3.o"])
+    step(["build/stage3", "selfhost/cudc.cud", "build/stage4.s"])
+    step(["cmp", "build/stage2.s", "build/stage3.s"])
+    step(["cmp", "build/stage3.s", "build/stage4.s"])
+    os.write(1, "FIXPOINT OK: stage2.s == stage3.s == stage4.s\n")
+    step(["cp", "build/stage3", "build/cudc"])
+    c1 = os.run(["cmp", "-s", "build/cudc", seed])
+    c2 = os.run(["cmp", "-s", "build/stage2", seed])
+    if c1[0] == 0 and c2[0] == 0:
+        os.write(1, "SEED OK: the rebuilt compiler (and the seed-built stage2) are byte-identical to the seed\n")
+    else:
+        os.write(1, "SEED NOTE: compiler differs from the seed (source changed since the last reseed; tools/reseed.sh)\n")
+    for t in ["fas", "fld"]:
+        step(["build/cudc", "tools/" + t + ".cud", "build/" + t + ".s"])
+        step(["build/fas", "-o", "build/" + t + ".o", "build/" + t + ".s"])
+        step(["build/fld", "--base", "0x100000000000", "-o", "build/" + t + ".new", "build/" + t + ".o"])
+        step(["mv", "build/" + t + ".new", "build/" + t])
+    step(["build/fas", "-o", "build/stage3.chk.o", "build/stage3.s"])
+    step(["cmp", "build/stage3.o", "build/stage3.chk.o"])
+    step(["build/fld", "--base", "0x100000000000", "-o", "build/stage3.chk", "build/stage3.chk.o"])
+    step(["cmp", "build/stage3", "build/stage3.chk"])
+    os.write(1, "TOOLS OK: self-built fas/fld reproduce stage3\n")
+    t1 = os.run(["cmp", "-s", "build/fas", sas])
+    t2 = os.run(["cmp", "-s", "build/fld", "seed/fld-seed"])
+    if t1[0] == 0 and t2[0] == 0:
+        os.write(1, "SEED TOOLS OK: rebuilt fas/fld are byte-identical to the seed fas/fld\n")
+    else:
+        os.write(1, "SEED NOTE: fas/fld differ from the seed (tools/reseed.sh)\n")
+    rust = os.getenv("FORGE_RUST_CHECK")
+    if rust is None:
+        rust = "0"
+    if rust == "1":
+        step(["cargo", "build", "--release", "-q"])
+        step(["./target/release/cuditor-bootstrap", "selfhost/cudc.cud", "-o", "build/stage1.rust"])
+        step(["build/stage1.rust", "selfhost/cudc.cud", "build/stage2.rust.s"])
+        step(["cmp", "build/stage2.s", "build/stage2.rust.s"])
+        os.write(1, "RUST CROSS-CHECK OK: Rust bootstrap stage1 produces the same stage2.s\n")
+    return 0
+
+exit(main())

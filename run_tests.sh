@@ -202,6 +202,11 @@ fail=0
 tests/rtport/run.sh || fail=1
 return $fail
 }
+t_forge_build() {
+fail=0
+tests/forge-build/run.sh || fail=1
+return $fail
+}
 t_pecheck() {
 fail=0
 tests/pecheck/run.sh || fail=1
@@ -589,7 +594,8 @@ ITEMS='01 A t_cases
 60 C t_optcov
 61 E t_cdiv
 62 E t_float_global
-63 E t_input_missing'
+63 E t_input_missing
+64 S t_forge_build'
 P=build/par; rm -rf $P; mkdir -p $P
 if [ -n "$RUN_TESTS_SERIAL" ]; then
   echo "$ITEMS" | while read n l f; do ( $f ) < /dev/null || : > $P/fail; done
