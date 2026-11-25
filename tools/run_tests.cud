@@ -1,0 +1,859 @@
+# tools/run_tests.cud: Cuditor port of the repo-root run_tests.sh (kept as the
+# reference; tests/forge-run-tests/run.sh checks both give the same stdout,
+# stderr and exit code). Reservation 6, batch 2 (docs/BUILD_PLAN.md). Built to
+# build/forge-run-tests (the binary lives in build/, so the repo is the parent
+# of its directory). Honour SKIP_OS, RUN_TESTS_SERIAL, CUDC_FLAGS, and the
+# optional RUN_TESTS_ONLY (space-separated item names) and FORGE_RUN_TESTS_INNER
+# (omit t_forge_run_tests so a comparison can run inside the suite). RUN_TESTS_PAR
+# is the per-item log dir (default build/par; INNER defaults to build/par-inner).
+# The kernel
+# unsafe cap is unchanged.
+import os
+import sys
+
+def say(s):
+    os.write(1, s + "\n")
+
+def env(name):
+    v = os.getenv(name)
+    if v is None:
+        return ""
+    return v
+
+def nonempty(name):
+    return env(name) != ""
+
+def par_dir():
+    v = env("RUN_TESTS_PAR")
+    if v != "":
+        return v
+    if nonempty("FORGE_RUN_TESTS_INNER"):
+        return "build/par-inner"
+    return "build/par"
+
+def flags():
+    out = []
+    for w in env("CUDC_FLAGS").split(" "):
+        if w != "":
+            out.append(w)
+    return out
+
+def chomp(s):
+    n = len(s)
+    while n > 0 and s[n - 1] == "\n":
+        n = n - 1
+    if n == len(s):
+        return s
+    i = 0
+    t = ""
+    while i < n:
+        t = t + s[i]
+        i = i + 1
+    return t
+
+def read_file(path):
+    f = open(path)
+    t = f.read()
+    return t
+
+def write_file(path, t):
+    f = open(path, "w")
+    f.write(t)
+
+def have_cmd(name):
+    r = os.run(["sh", "-c", "command -v " + name + " >/dev/null 2>&1"])
+    return r[0] == 0
+
+def passthru(r):
+    os.write(1, r[1])
+    os.write(2, r[2])
+    return r[0]
+
+def run_script(path):
+    r = os.run([path])
+    passthru(r)
+    if r[0] == 0:
+        return 0
+    return 1
+
+def glob_dir(dir, suffix):
+    out = []
+    for n in sorted(os.listdir(dir)):
+        if n.endswith(suffix):
+            out.append(dir + "/" + n)
+    return out
+
+def item_wanted(name, only, inner):
+    if inner != 0 and name == "t_forge_run_tests":
+        return 0
+    if only == "":
+        return 1
+    pad = " " + only + " "
+    if pad.find(" " + name + " ") >= 0:
+        return 1
+    return 0
+
+def t_ast_semantic():
+    return run_script("tests/ast/semantic.sh")
+
+def t_grammar():
+    return run_script("tests/grammar/run.sh")
+
+def t_fmt():
+    return run_script("tests/fmt/run.sh")
+
+def t_fas():
+    return run_script("tests/fas/run.sh")
+
+def t_fld():
+    return run_script("tests/fld/run.sh")
+
+def t_krel():
+    return run_script("tests/krel/run.sh")
+
+def t_incudela_part():
+    return run_script("tests/incudela-part/run.sh")
+
+def t_mkgpt():
+    return run_script("tests/mkgpt/run.sh")
+
+def t_espmigrate():
+    return run_script("tests/espmigrate/run.sh")
+
+def t_ed25519_tool():
+    return run_script("tests/ed25519-tool/run.sh")
+
+def t_grammar_fuzz():
+    return run_script("tests/grammar-fuzz/run.sh")
+
+def t_mkfont():
+    return run_script("tests/mkfont/run.sh")
+
+def t_c2cud():
+    return run_script("tests/c2cud/run.sh")
+
+def t_cudseal():
+    return run_script("tests/cudseal/run.sh")
+
+def t_modules_build():
+    return run_script("tests/modules-build/run.sh")
+
+def t_user_build():
+    return run_script("tests/user-build/run.sh")
+
+def t_busybox_build():
+    return run_script("tests/busybox-build/run.sh")
+
+def t_bzip2():
+    return run_script("tests/bzip2/run.sh")
+
+def t_cpython_build():
+    return run_script("tests/cpython-build/run.sh")
+
+def t_cpython_embed():
+    return run_script("tests/cpython-embed/run.sh")
+
+def t_efi_build():
+    return run_script("tests/efi-build/run.sh")
+
+def t_kernel_build():
+    return run_script("tests/kernel-build/run.sh")
+
+def t_kernel_release():
+    return run_script("tests/kernel-release/run.sh")
+
+def t_rtport():
+    return run_script("tests/rtport/run.sh")
+
+def t_forge_build():
+    return run_script("tests/forge-build/run.sh")
+
+def t_pecheck():
+    return run_script("tests/pecheck/run.sh")
+
+def t_memimg():
+    return run_script("tests/memimg/run.sh")
+
+def t_oslib():
+    return run_script("tests/oslib/run.sh")
+
+def t_reseed():
+    return run_script("tests/reseed/run.sh")
+
+def t_pkg():
+    return run_script("tests/pkg/run.sh")
+
+def t_oldnames():
+    return run_script("tests/oldnames/run.sh")
+
+def t_lsp():
+    return run_script("tests/lsp/run.sh")
+
+def t_provenance():
+    return run_script("tests/provenance/run.sh")
+
+def t_testblocks():
+    return run_script("tests/testblocks/run.sh")
+
+def t_bounds():
+    return run_script("tests/bounds/run.sh")
+
+def t_nonnull():
+    return run_script("tests/nonnull/run.sh")
+
+def t_unsafe():
+    return run_script("tests/unsafe/run.sh")
+
+def t_own():
+    return run_script("tests/own/run.sh")
+
+def t_limits():
+    return run_script("tests/limits/run.sh")
+
+def t_defer():
+    return run_script("tests/defer/run.sh")
+
+def t_generic():
+    return run_script("tests/generic/run.sh")
+
+def t_ed25519():
+    return run_script("tests/ed25519/run.sh")
+
+def t_atomic():
+    return run_script("tests/atomic/run.sh")
+
+def t_ast_selfpp():
+    return run_script("tests/ast/selfpp.sh")
+
+def t_asm_audit():
+    return run_script("tests/asm-audit/run.sh")
+
+def t_ci():
+    return run_script("tests/ci/run.sh")
+
+def t_ast_roundtrip():
+    r = os.run(["sh", "-c", "tests/ast/roundtrip.sh selfhost/compiler.cud selfhost/prelude.cud tools/*.cud tests/*.cud tests/runtime/*.cud tests/fs/*.cud tests/unit/*.cud tests/testblocks/*.cud tests/bounds/*.cud tests/nonnull/*.cud tests/unsafe/*.cud tests/own/*.cud tests/defer/*.cud tests/generic/*.cud tests/atomic/*.cud std/*.cudi examples/*/*.cud examples/*/*.cudi"])
+    passthru(r)
+    if r[0] == 0:
+        return 0
+    return 1
+
+def t_cases():
+    fail = 0
+    for t in glob_dir("tests", ".cud"):
+        base = os.path.basename(t)
+        if base.startswith("mod_"):
+            continue
+        r = os.run(["./cuditor", t, "-o", "build/t_bin"])
+        if r[0] != 0:
+            say("FAIL " + t)
+            fail = 1
+            continue
+        r2 = os.run(["build/t_bin", "a", "b"])
+        exp = read_file(t[:-4] + ".expected")
+        if r2[1] == exp:
+            say("PASS " + t)
+        else:
+            say("FAIL " + t)
+            fail = 1
+    return fail
+
+def t_runtime():
+    fail = 0
+    for t in glob_dir("tests/runtime", ".cud"):
+        r = os.run(["./cuditor", t, "-o", "build/t_bin"])
+        if r[0] != 0:
+            say("FAIL " + t)
+            fail = 1
+            continue
+        r2 = os.run(["build/t_bin"], merge=True)
+        got = r2[1] + "exit " + str(r2[0]) + "\n"
+        exp = read_file(t[:-4] + ".expected")
+        if got == exp:
+            say("PASS " + t)
+        else:
+            say("FAIL " + t)
+            fail = 1
+    return fail
+
+def t_errors():
+    fail = 0
+    for t in glob_dir("tests/errors", ".cud"):
+        r = os.run(["timeout", "20", "build/cudc", t, "build/t_err.s"], merge=True)
+        m = chomp(r[1])
+        if r[0] == 0:
+            say("FAIL " + t + " (no error)")
+            fail = 1
+        else:
+            if m.find("error: line") >= 0:
+                say("PASS " + t + ": " + m)
+            else:
+                say("FAIL " + t)
+                fail = 1
+    return fail
+
+def t_typeerrors():
+    fail = 0
+    for t in glob_dir("tests/typeerrors", ".cud"):
+        r = os.run(["build/cudc", t, "build/t_err.s"], merge=True)
+        write_file("build/t_err.txt", r[1])
+        if r[0] == 0:
+            say("FAIL " + t + " (no error)")
+            fail = 1
+        else:
+            exp = read_file(t[:-4] + ".expected")
+            if r[1] == exp:
+                first = chomp(r[1]).split("\n")[0]
+                say("PASS " + t + ": " + first)
+            else:
+                say("FAIL " + t)
+                fail = 1
+    return fail
+
+def t_diag():
+    fail = 0
+    for t in glob_dir("tests/diag", ".cud"):
+        r = os.run(["build/cudc", t, "build/t_err.s", "--diagnostics=json"], merge=True)
+        write_file("build/t_diag.json", r[1])
+        if r[0] == 0:
+            say("FAIL " + t + " (no error)")
+            fail = 1
+        else:
+            exp = read_file(t[:-4] + ".json")
+            if r[1] == exp:
+                say("PASS " + t)
+            else:
+                say("FAIL " + t)
+                fail = 1
+    return fail
+
+def t_diag_schema():
+    fail = 0
+    if have_cmd("python3"):
+        r = os.run(["python3", "-c", "import json,sys,glob\nfor f in glob.glob(\"tests/diag/*.json\"):\n    for l in open(f):\n        d=json.loads(l); assert d[\"version\"]==1 and d[\"code\"][0]==\"E\" and d[\"line\"]>0 and d[\"col\"]>0 and isinstance(d[\"fixits\"],list), f"])
+        passthru(r)
+        if r[0] == 0:
+            say("PASS diag-json-schema")
+        else:
+            say("FAIL diag-json-schema")
+            fail = 1
+    return fail
+
+def t_diag_input():
+    r = os.run(["build/cudc", "build/no_such_input.cud", "build/t_inc.s", "--diagnostics=json"], merge=True)
+    if r[1].find('"code":"E0001"') >= 0:
+        say("PASS diag-json-input-missing")
+        return 0
+    say("FAIL diag-json-input-missing")
+    return 1
+
+def t_os_artifacts():
+    fail = 0
+    r = os.run(["sh", "-c", "./cuditor examples/kernel/build.cud -o build/kernel-build && build/kernel-build && ./cuditor examples/efi/build.cud -o build/efi-build && build/efi-build"])
+    if r[0] != 0:
+        say("FAIL os-artifacts-build (fas/fld artifact checks would be skipped)")
+        fail = 1
+    r2 = os.run(["sh", "-c", "mkdir -p build/os && build/cudc tests/os/boot.cud build/os/boot.s"])
+    passthru(r2)
+    if r2[0] != 0:
+        say("FAIL os-boot-harness-asm")
+        fail = 1
+    return fail
+
+def t_bench():
+    fail = 0
+    r = os.run(["./cuditor", "tools/bench.cud", "-o", "build/bench"])
+    if r[0] != 0:
+        say("FAIL bench-build")
+        return 1
+    for c in ["ok", "slow", "ratio", "window"]:
+        r2 = os.run(["build/bench", "check", "--history", "tests/bench/" + c + ".tsv", "--baseline", "tests/bench/base.tsv"], merge=True)
+        got = r2[1] + "exit " + str(r2[0]) + "\n"
+        exp = read_file("tests/bench/" + c + ".expected")
+        if got == exp:
+            say("PASS bench-check-" + c)
+        else:
+            say("FAIL bench-check-" + c)
+            fail = 1
+    r3 = os.run(["build/bench", "check", "--history", "tests/bench/window.tsv", "--baseline", "tests/bench/base.tsv", "--window", "1"], merge=True)
+    got3 = r3[1] + "exit " + str(r3[0]) + "\n"
+    if got3 == read_file("tests/bench/window1.expected"):
+        say("PASS bench-check-window1")
+    else:
+        say("FAIL bench-check-window1")
+        fail = 1
+    r4 = os.run(["tests/bench/tree.sh", "build/bench"])
+    passthru(r4)
+    if r4[0] != 0:
+        fail = 1
+    return fail
+
+def t_ast_json():
+    r = os.run(["build/cudc", "tests/tuples.cud", "build/t_ast.json", "--emit=ast-json"])
+    passthru(r)
+    if r[0] != 0:
+        say("FAIL ast-json-schema")
+        return 1
+    r2 = os.run(["python3", "-c", "import json;d=json.load(open(\"build/t_ast.json\"));assert d[\"forge_ast\"]==1 and d[\"root\"][\"k\"]==\"Module\""])
+    passthru(r2)
+    if r2[0] == 0:
+        say("PASS ast-json-schema")
+        return 0
+    say("FAIL ast-json-schema")
+    return 1
+
+# t_fs_shapes keeps the awk oracles from the reference so the shape checks cannot
+# drift; the file loops are the same cudc/fas/fld/run sequence as run_tests.sh.
+def t_fs_shapes():
+    r = os.run(["/bin/sh", "-c", "fn=$(sed -n \"/^t_fs_shapes() {$/,/^}$/p\" run_tests.sh); eval \"$fn\"; t_fs_shapes"])
+    passthru(r)
+    if r[0] == 0:
+        return 0
+    return 1
+
+def t_fsfuzz():
+    fail = 0
+    r = os.run(["./cuditor", "tools/fsfuzz.cud", "-o", "build/fsfuzz-tool"])
+    if r[0] != 0:
+        say("FAIL fs-opt-fuzz")
+        return 1
+    r2 = os.run(["build/fsfuzz-tool", "--seed", "1", "--n", "20"], merge=True)
+    write_file("build/t_fsfuzz.log", r2[1])
+    if r2[0] == 0:
+        say("PASS fs-opt-fuzz")
+    else:
+        say("FAIL fs-opt-fuzz")
+        os.write(1, r2[1])
+        fail = 1
+    r3 = os.run(["build/fsfuzz-tool", "--combos", "--seed", "7", "--n", "3"], merge=True)
+    write_file("build/t_fscombos.log", r3[1])
+    if r3[0] == 0:
+        say("PASS fs-opt-combos")
+    else:
+        say("FAIL fs-opt-combos")
+        os.write(1, r3[1])
+        fail = 1
+    return fail
+
+def t_optgate():
+    fail = 0
+    fl = ["", "--fs-opt", "--fs-live", "--fs-temps", "--fs-ssa"]
+    for t in glob_dir("tests/optgate", ".cud"):
+        for f in fl:
+            cmd = ["build/cudc", t, "build/t_og.s"] + flags()
+            if f != "":
+                cmd.append(f)
+            r = os.run(cmd)
+            ok = 0
+            if r[0] == 0:
+                r2 = os.run(["build/fas", "-o", "build/t_og.o", "build/t_og.s"])
+                if r2[0] == 0:
+                    r3 = os.run(["build/fld", "-o", "build/t_og", "build/t_og.o"])
+                    if r3[0] == 0:
+                        r4 = os.run(["build/t_og"])
+                        if r4[1] == read_file(t[:-4] + ".expected"):
+                            ok = 1
+            if ok == 1:
+                say("PASS optgate" + f + " " + t)
+            else:
+                say("FAIL optgate" + f + " " + t)
+                fail = 1
+    return fail
+
+def t_optcov():
+    r = os.run(["./cuditor", "tools/optcov.cud", "-o", "build/optcov-tool"])
+    if r[0] != 0:
+        say("FAIL optimizer-coverage")
+        return 1
+    r2 = os.run(["build/optcov-tool", "--check"], merge=True)
+    write_file("build/t_optcov.log", r2[1])
+    if r2[0] == 0:
+        say("PASS optimizer-coverage")
+        return 0
+    say("FAIL optimizer-coverage")
+    os.write(1, r2[1])
+    return 1
+
+def t_cdiv():
+    cmd = ["build/cudc", "tests/fs/cdiv.cud", "build/t_cd.s"] + flags() + ["--fs-opt"]
+    r = os.run(cmd)
+    if r[0] == 0:
+        a = os.run(["sh", "-c", "awk '/^c_i64_7:/,/ret$/' build/t_cd.s | grep -c '    idiv '"])
+        b = os.run(["sh", "-c", "awk '/^c_u64_641:/,/ret$/' build/t_cd.s | grep -c '    div '"])
+        if chomp(a[1]) == "3" and chomp(b[1]) == "3":
+            say("PASS fs-opt-cdiv-shape")
+            return 0
+    say("FAIL fs-opt-cdiv-shape")
+    return 1
+
+def t_float_global():
+    write_file("build/t_fgk.cud", "# cuditor: " + "no-runtime\nK = 3\nx: f64 = K\n")
+    r = os.run(["build/cudc", "build/t_fgk.cud", "build/t_fgk.s"], merge=True)
+    if r[1].find("a float global's initializer must be a float or integer literal") >= 0:
+        say("PASS fs-float-global-literal-only")
+        return 0
+    say("FAIL fs-float-global-literal-only")
+    return 1
+
+def t_input_missing():
+    fail = 0
+    write_file("build/t_inc.cud", "include \"no_such_file.cudi\"\n")
+    r = os.run(["build/cudc", "build/t_inc.cud", "build/t_inc.s", "--freestanding"], merge=True)
+    write_file("build/t_inc.txt", r[1])
+    if r[0] == 1 and r[1].find("error: cannot read include file ") >= 0 and r[1].find("no_such_file.cudi") >= 0:
+        say("PASS include-missing")
+    else:
+        say("FAIL include-missing (rc=" + str(r[0]) + ")")
+        fail = 1
+    r2 = os.run(["build/cudc", "build/no_such_input.cud", "build/t_inc.s"], merge=True)
+    write_file("build/t_inc.txt", r2[1])
+    if r2[0] == 1 and r2[1].find("error: cannot read input file") >= 0:
+        say("PASS input-missing")
+    else:
+        say("FAIL input-missing (rc=" + str(r2[0]) + ")")
+        fail = 1
+    return fail
+
+def t_forge_run_tests():
+    return run_script("tests/forge-run-tests/run.sh")
+
+def dispatch(name):
+    if name == "t_ast_semantic":
+        return t_ast_semantic()
+    elif name == "t_grammar":
+        return t_grammar()
+    elif name == "t_fmt":
+        return t_fmt()
+    elif name == "t_fas":
+        return t_fas()
+    elif name == "t_fld":
+        return t_fld()
+    elif name == "t_krel":
+        return t_krel()
+    elif name == "t_incudela_part":
+        return t_incudela_part()
+    elif name == "t_mkgpt":
+        return t_mkgpt()
+    elif name == "t_espmigrate":
+        return t_espmigrate()
+    elif name == "t_ed25519_tool":
+        return t_ed25519_tool()
+    elif name == "t_grammar_fuzz":
+        return t_grammar_fuzz()
+    elif name == "t_mkfont":
+        return t_mkfont()
+    elif name == "t_c2cud":
+        return t_c2cud()
+    elif name == "t_cudseal":
+        return t_cudseal()
+    elif name == "t_modules_build":
+        return t_modules_build()
+    elif name == "t_user_build":
+        return t_user_build()
+    elif name == "t_busybox_build":
+        return t_busybox_build()
+    elif name == "t_bzip2":
+        return t_bzip2()
+    elif name == "t_cpython_build":
+        return t_cpython_build()
+    elif name == "t_cpython_embed":
+        return t_cpython_embed()
+    elif name == "t_efi_build":
+        return t_efi_build()
+    elif name == "t_kernel_build":
+        return t_kernel_build()
+    elif name == "t_kernel_release":
+        return t_kernel_release()
+    elif name == "t_rtport":
+        return t_rtport()
+    elif name == "t_forge_build":
+        return t_forge_build()
+    elif name == "t_pecheck":
+        return t_pecheck()
+    elif name == "t_memimg":
+        return t_memimg()
+    elif name == "t_oslib":
+        return t_oslib()
+    elif name == "t_reseed":
+        return t_reseed()
+    elif name == "t_pkg":
+        return t_pkg()
+    elif name == "t_oldnames":
+        return t_oldnames()
+    elif name == "t_lsp":
+        return t_lsp()
+    elif name == "t_provenance":
+        return t_provenance()
+    elif name == "t_testblocks":
+        return t_testblocks()
+    elif name == "t_bounds":
+        return t_bounds()
+    elif name == "t_nonnull":
+        return t_nonnull()
+    elif name == "t_unsafe":
+        return t_unsafe()
+    elif name == "t_own":
+        return t_own()
+    elif name == "t_limits":
+        return t_limits()
+    elif name == "t_defer":
+        return t_defer()
+    elif name == "t_generic":
+        return t_generic()
+    elif name == "t_ed25519":
+        return t_ed25519()
+    elif name == "t_atomic":
+        return t_atomic()
+    elif name == "t_ast_selfpp":
+        return t_ast_selfpp()
+    elif name == "t_asm_audit":
+        return t_asm_audit()
+    elif name == "t_ci":
+        return t_ci()
+    elif name == "t_ast_roundtrip":
+        return t_ast_roundtrip()
+    elif name == "t_cases":
+        return t_cases()
+    elif name == "t_runtime":
+        return t_runtime()
+    elif name == "t_errors":
+        return t_errors()
+    elif name == "t_typeerrors":
+        return t_typeerrors()
+    elif name == "t_diag":
+        return t_diag()
+    elif name == "t_diag_schema":
+        return t_diag_schema()
+    elif name == "t_diag_input":
+        return t_diag_input()
+    elif name == "t_os_artifacts":
+        return t_os_artifacts()
+    elif name == "t_bench":
+        return t_bench()
+    elif name == "t_ast_json":
+        return t_ast_json()
+    elif name == "t_fs_shapes":
+        return t_fs_shapes()
+    elif name == "t_fsfuzz":
+        return t_fsfuzz()
+    elif name == "t_optgate":
+        return t_optgate()
+    elif name == "t_optcov":
+        return t_optcov()
+    elif name == "t_cdiv":
+        return t_cdiv()
+    elif name == "t_float_global":
+        return t_float_global()
+    elif name == "t_input_missing":
+        return t_input_missing()
+    elif name == "t_forge_run_tests":
+        return t_forge_run_tests()
+    say("FAIL run-tests/unknown-item " + name)
+    return 1
+
+def all_items():
+    out = []
+    out.append(["01", "A", "t_cases"])
+    out.append(["02", "A", "t_runtime"])
+    out.append(["03", "E", "t_errors"])
+    out.append(["04", "E", "t_typeerrors"])
+    out.append(["05", "E", "t_diag"])
+    out.append(["06", "E", "t_diag_schema"])
+    out.append(["07", "E", "t_diag_input"])
+    out.append(["08", "R", "t_ast_roundtrip"])
+    out.append(["09", "M", "t_ast_semantic"])
+    out.append(["10", "G", "t_grammar"])
+    out.append(["11", "F", "t_fmt"])
+    out.append(["12", "S", "t_os_artifacts"])
+    out.append(["13", "S", "t_fas"])
+    out.append(["14", "S", "t_fld"])
+    out.append(["15", "S", "t_krel"])
+    out.append(["16", "X", "t_incudela_part"])
+    out.append(["17", "X", "t_mkgpt"])
+    out.append(["18", "S", "t_espmigrate"])
+    out.append(["19", "X", "t_ed25519_tool"])
+    out.append(["20", "G", "t_grammar_fuzz"])
+    out.append(["21", "X", "t_mkfont"])
+    out.append(["22", "X", "t_c2cud"])
+    out.append(["23", "X", "t_cudseal"])
+    out.append(["24", "S", "t_modules_build"])
+    out.append(["25", "S", "t_user_build"])
+    out.append(["26", "S", "t_busybox_build"])
+    out.append(["27", "S", "t_bzip2"])
+    out.append(["28", "S", "t_cpython_build"])
+    out.append(["29", "S", "t_cpython_embed"])
+    out.append(["30", "S", "t_efi_build"])
+    out.append(["31", "S", "t_kernel_build"])
+    out.append(["32", "S", "t_kernel_release"])
+    out.append(["33", "S", "t_rtport"])
+    out.append(["34", "S", "t_pecheck"])
+    out.append(["35", "S", "t_memimg"])
+    out.append(["36", "S", "t_oslib"])
+    out.append(["37", "S", "t_reseed"])
+    out.append(["38", "S", "t_pkg"])
+    out.append(["39", "S", "t_oldnames"])
+    out.append(["40", "B", "t_lsp"])
+    out.append(["41", "B", "t_provenance"])
+    out.append(["42", "F", "t_testblocks"])
+    out.append(["43", "alone", "t_bounds"])
+    out.append(["44", "X", "t_nonnull"])
+    out.append(["45", "M", "t_unsafe"])
+    out.append(["46", "M", "t_own"])
+    out.append(["47", "X", "t_limits"])
+    out.append(["48", "X", "t_defer"])
+    out.append(["49", "X", "t_generic"])
+    out.append(["50", "X", "t_ed25519"])
+    out.append(["51", "X", "t_atomic"])
+    out.append(["52", "M", "t_ast_selfpp"])
+    out.append(["53", "B", "t_bench"])
+    out.append(["54", "B", "t_asm_audit"])
+    out.append(["55", "B", "t_ci"])
+    out.append(["56", "E", "t_ast_json"])
+    out.append(["57", "FS", "t_fs_shapes"])
+    out.append(["58", "Z", "t_fsfuzz"])
+    out.append(["59", "Z", "t_optgate"])
+    out.append(["60", "C", "t_optcov"])
+    out.append(["61", "E", "t_cdiv"])
+    out.append(["62", "E", "t_float_global"])
+    out.append(["63", "E", "t_input_missing"])
+    out.append(["64", "S", "t_forge_build"])
+    out.append(["65", "alone", "t_forge_run_tests"])
+    return out
+
+def selected_items():
+    only = env("RUN_TESTS_ONLY")
+    inner = 0
+    if nonempty("FORGE_RUN_TESTS_INNER"):
+        inner = 1
+    out = []
+    for it in all_items():
+        if item_wanted(it[2], only, inner) == 1:
+            out.append(it)
+    return out
+
+def unique_lanes(items):
+    seen = []
+    for it in items:
+        l = it[1]
+        if l != "S" and l != "alone":
+            found = 0
+            for s in seen:
+                if s == l:
+                    found = 1
+            if found == 0:
+                seen.append(l)
+    return sorted(seen)
+
+def run_lane(items, lane, par, serial):
+    fail = 0
+    for it in items:
+        if it[1] != lane:
+            continue
+        n = it[0]
+        f = it[2]
+        if serial != 0:
+            rc = dispatch(f)
+            if rc != 0:
+                fail = 1
+        else:
+        # capture this item like the shell: stdout+stderr to $P/$n.log, rc to $P/$n.rc
+            r = os.run(["build/forge-run-tests", "--item", f], merge=True)
+            write_file(par + "/" + n + ".log", r[1])
+            write_file(par + "/" + n + ".rc", str(r[0]) + "\n")
+            if r[0] != 0:
+                fail = 1
+    return fail
+
+def run_os_section():
+    fail = 0
+    cnt = chomp(os.run(["grep", "-vc", "^#", "tests/os/expected-results.txt"])[1])
+    if nonempty("SKIP_OS"):
+        say("SKIP tests/os (SKIP_OS set: the " + cnt + " OS results were not run, so this run is not a gate pass)")
+        return 0
+    if have_cmd("qemu-system-x86_64") and have_cmd("grub-mkrescue"):
+        r = os.run(["tests/os/run.sh"], merge=True)
+        write_file("build/os-results.txt", r[1])
+        os.write(1, r[1])
+        if r[1].find("\nFAIL") >= 0 or r[1].startswith("FAIL"):
+            fail = 1
+        names = chomp(os.run(["grep", "-v", "^#", "tests/os/expected-results.txt"])[1]).split("\n")
+        miss = ""
+        for n in names:
+            if n == "":
+                continue
+            ok = 0
+            for line in r[1].split("\n"):
+                if line == "PASS " + n or line == "FAIL " + n or line.startswith("PASS " + n + " ") or line.startswith("FAIL " + n + " "):
+                    ok = 1
+            if ok == 0:
+                miss = miss + " " + n
+        if miss == "":
+            say("PASS os/result-count (" + cnt + " results reported)")
+        else:
+            say("FAIL os/result-count (missing:" + miss + ")")
+            fail = 1
+        return fail
+    say("FAIL tests/os (qemu-system-x86_64 or grub-mkrescue missing: build/ostools reinstalls them; SKIP_OS=1 skips on purpose)")
+    return 1
+
+def main():
+    me = sys.argv[0]
+    if me.find("/") >= 0:
+        os.chdir(os.path.dirname(me) + "/..")
+    else:
+        os.chdir("..")
+    if not os.path.isdir("build"):
+        os.mkdir("build")
+    # --item NAME: run one item and exit with its status (used by the parallel lane capture)
+    if len(sys.argv) >= 3 and sys.argv[1] == "--item":
+        return dispatch(sys.argv[2])
+    items = selected_items()
+    fail = 0
+    par = par_dir()
+    os.run(["rm", "-rf", par])
+    os.run(["mkdir", "-p", par])
+    if nonempty("RUN_TESTS_SERIAL"):
+        for it in items:
+            rc = dispatch(it[2])
+            if rc != 0:
+                write_file(par + "/fail", "")
+                fail = 1
+    else:
+        self = me
+        pids = []
+        for lane in unique_lanes(items):
+            pid = os.fork()
+            if pid == 0:
+                run_lane(items, lane, par, 0)
+                os._exit(0)
+            pids.append(pid)
+        run_lane(items, "S", par, 0)
+        for pid in pids:
+            os.waitpid(pid)
+        run_lane(items, "alone", par, 0)
+        for it in items:
+            n = it[0]
+            l = it[1]
+            f = it[2]
+            logp = par + "/" + n + ".log"
+            rcp = par + "/" + n + ".rc"
+            if os.path.isfile(logp):
+                os.write(1, read_file(logp))
+            rc = ""
+            if os.path.isfile(rcp):
+                rc = chomp(read_file(rcp))
+            if rc == "":
+                say("FAIL run-tests/" + f + " (no exit status; log: " + logp + ")")
+                write_file(par + "/fail", "")
+                fail = 1
+            elif rc != "0":
+                say("# " + f + " (lane " + l + ") exited " + rc + ", log: " + logp)
+                write_file(par + "/fail", "")
+                fail = 1
+    if os.path.isfile(par + "/fail"):
+        fail = 1
+    if run_os_section() != 0:
+        fail = 1
+    return fail
+
+exit(main())

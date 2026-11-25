@@ -14,7 +14,8 @@
 #   its items in order, lane S (builds or reads the shared OS artifacts) in the foreground, lane alone
 #   (bounds timing) after every lane has finished; each item writes build/par/NN.log, printed in item order,
 #   so the output is the serial output. RUN_TESTS_SERIAL=1: every item in order, streaming, nothing in
-#   parallel. tests/os (QEMU) always runs after all items, alone (README.md, Tests)
+#   parallel. RUN_TESTS_ONLY (space-separated item names) runs only those
+#   items; FORGE_RUN_TESTS_INNER=1 omits t_forge_run_tests. RUN_TESTS_PAR is the per-item log dir (default build/par; a nested run must set it, or INNER defaults to build/par-inner, so the outer logs are not wiped). tests/os (QEMU) always runs after all items, alone (README.md, Tests)
 cd "$(dirname "$0")"; fail=0; mkdir -p build
 t_cases() {
 fail=0
@@ -205,6 +206,11 @@ return $fail
 t_forge_build() {
 fail=0
 tests/forge-build/run.sh || fail=1
+return $fail
+}
+t_forge_run_tests() {
+fail=0
+tests/forge-run-tests/run.sh || fail=1
 return $fail
 }
 t_pecheck() {
@@ -595,8 +601,29 @@ ITEMS='01 A t_cases
 61 E t_cdiv
 62 E t_float_global
 63 E t_input_missing
-64 S t_forge_build'
-P=build/par; rm -rf $P; mkdir -p $P
+64 S t_forge_build
+65 alone t_forge_run_tests'
+# RUN_TESTS_ONLY: optional space-separated item names (the Cuditor port honours the same).
+# FORGE_RUN_TESTS_INNER=1 omits t_forge_run_tests so a comparison can run inside the suite.
+# RUN_TESTS_PAR: per-item log dir (default build/par). If unset and INNER is set, build/par-inner.
+if [ -n "$FORGE_RUN_TESTS_INNER" ]; then
+  ITEMS=$(printf '%s\n' "$ITEMS" | while read n l f; do [ "$f" != "t_forge_run_tests" ] && echo "$n $l $f"; done)
+fi
+if [ -n "$RUN_TESTS_ONLY" ]; then
+  ITEMS=$(printf '%s\n' "$ITEMS" | while read n l f; do
+    case " $RUN_TESTS_ONLY " in
+      *" $f "*) echo "$n $l $f" ;;
+    esac
+  done)
+fi
+if [ -n "$RUN_TESTS_PAR" ]; then
+  P=$RUN_TESTS_PAR
+elif [ -n "$FORGE_RUN_TESTS_INNER" ]; then
+  P=build/par-inner
+else
+  P=build/par
+fi
+rm -rf "$P"; mkdir -p "$P"
 if [ -n "$RUN_TESTS_SERIAL" ]; then
   echo "$ITEMS" | while read n l f; do ( $f ) < /dev/null || : > $P/fail; done
 else
