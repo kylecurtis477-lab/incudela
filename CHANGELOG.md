@@ -9,10 +9,20 @@
 
 ## 0.23.0 (open): test/debug and release kernels; parallel run_tests.sh; public CI; per-CPU run-queue locks; USB smoke image; language server through include files; incremental LSP checks; LSP references, completion and struct fields; signed package index with publish times and yank flags; dependency cooldowns; index rollback protection; pkg vendor
 
+- `1818c58` Reservation 6 batch 2: `tools/run_tests.cud` (built to `build/forge-run-tests`) is a
+  Cuditor port of the repo-root `run_tests.sh`, which stays as the reference. It honours
+  `SKIP_OS`, `RUN_TESTS_SERIAL`, `CUDC_FLAGS`, optional `RUN_TESTS_ONLY`, and
+  `FORGE_RUN_TESTS_INNER`. `tests/forge-run-tests/run.sh` requires identical stdout, stderr
+  and exit code on a short serial `SKIP_OS` subset, and the same failure when
+  `tests/ci/run.sh` is replaced by a script that exits 1. Wired as item 65 (alone lane).
+  `RUN_TESTS_PAR` gives a nested comparison its own per-item log dir so it cannot
+  wipe the outer `build/par` (inv242: 64 false `no exit status` FAILs). The test
+  also checks `run-tests/par-isolated`. The test does not start QEMU. The kernel
+  unsafe cap stays 709.
 - `f73b94e` Reservation 6 batch 1: `tools/build.cud` (built to `build/forge-build`) is a Cuditor port
   of the repo-root `build.sh`, which stays as the reference. `tests/forge-build/run.sh` requires
   identical stdout, stderr, exit code and bootstrap artifacts on a default run, and the same
-  failure when `selfhost/runtime.cud` is hidden. The `run_tests.sh` port stays a later batch.
+  failure when `selfhost/runtime.cud` is hidden.
 - `af6e510` Item 7 batch 4: multi-hour soak support. `syssoak` takes an optional fourth argument, a
   wall-clock budget in `sys_ticks()` units (the 100 Hz LAPIC tick, 10 ms; 0 means run every
   requested seed; 360000 ticks is one hour). When the budget expires after a completed seed, it
