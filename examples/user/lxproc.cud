@@ -1,0 +1,236 @@
+# cuditor: no-runtime
+# cuditor: caps()
+# Item 9 batch 4: Linux newfstatat, readlink/readlinkat, and a read-only /proc (docs/linux-compat.md).
+# Built and sealed like lxtest (EI_OSABI = 3, examples/user/build.sh) and launched only with sh
+# `run lxproc` in the compat sandbox. Manifest grants fd 4 = /efi/incudela/docs and fd 5 = /proc.
+# Raw Linux syscalls only. Following /proc/self/exe is not attempted (the image path is not granted).
+# Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409 stay ktest_hooks gated.
+# The kernel unsafe cap is unchanged (709).
+
+EACCES = 0xFFFFFFFFFFFFFFF3
+EFAULT = 0xFFFFFFFFFFFFFFF2
+EROFS = 0xFFFFFFFFFFFFFFE2
+ENOENT = 0xFFFFFFFFFFFFFFFE
+EINVAL = 0xFFFFFFFFFFFFFFEA
+ENOSYS = 0xFFFFFFFFFFFFFFDA
+AT_FDCWD = 0xFFFFFFFFFFFFFF9C
+AT_SYMLINK_NOFOLLOW = 0x100
+AT_EMPTY_PATH = 0x1000
+O_WRONLY = 1
+O_RDWR = 2
+O_CREAT = 0x40
+DOCS = 4
+PROC = 5
+S_IFMT = 0xF000
+S_IFDIR = 0x4000
+S_IFREG = 0x8000
+S_IFLNK = 0xA000
+DT_DIR = 4
+DT_LNK = 10
+
+fails: u64
+checks: u64
+buf: u8[256]
+blen: u64
+st: u64[18]
+st2: u64[18]
+path: u8[128]
+link: u8[128]
+dents: u8[4096]
+pidbuf: u8[20]
+empty: u8[1]
+
+@naked
+def lsys(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
+    asm("mov %rdi,%rax", "mov %rsi,%rdi", "mov %rdx,%rsi", "mov %rcx,%rdx", "mov %r8,%r10",
+        "mov %r9,%r8", "xor %r9d,%r9d", "syscall", "ret")
+
+@unsafe
+def peek8(a: u64) -> u64:
+    return u64(ptr[u8](a)[0])
+
+@unsafe
+def peek16(a: u64) -> u64:
+    return u64(ptr[u16](a)[0])
+
+def flush():
+    lsys(1, 1, u64(addr(buf[0])), blen, 0, 0)
+    blen = 0
+
+def put(s: ptr[u8]):
+    putz(u64(s))
+
+def putn(v: u64):
+    d: u8[20]
+    n: u64 = 0
+    while n == 0 or v != 0:
+        d[n] = u8(48 + v % 10)
+        v = v / 10
+        n += 1
+    while n > 0 and blen < 255:
+        n -= 1
+        buf[blen] = d[n]
+        blen += 1
+
+def putz(p: u64):
+    i: u64 = 0
+    while peek8(p + i) != 0 and i < 200:
+        if blen >= 255:
+            flush()
+        buf[blen] = u8(peek8(p + i))
+        blen += 1
+        i += 1
+
+def check(ok: u64, what: ptr[u8]):
+    checks += 1
+    if ok == 0:
+        fails += 1
+        put("lxproc: FAIL ")
+        put(what)
+        put("\n")
+        flush()
+
+def setpath(s: ptr[u8]):
+    i: u64 = 0
+    while peek8(u64(s) + i) != 0:
+        path[i] = u8(peek8(u64(s) + i))
+        i += 1
+    path[i] = 0
+
+def eqmem(a: slice[u8], b: slice[u8], n: u64) -> u64:
+    i: u64 = 0
+    while i < n:
+        if a[i] != b[i]:
+            return 0
+        i += 1
+    return 1
+
+def decpid(pid: u64, dst: slice[u8]) -> u64:
+    t: u8[20]
+    if pid == 0:
+        dst[0] = 48
+        return 1
+    n = pid
+    i: u64 = 0
+    while n != 0 and i < 20:
+        t[i] = u8(48 + (n % 10))
+        n = n / 10
+        i += 1
+    j: u64 = 0
+    while j < i:
+        dst[j] = t[i - 1 - j]
+        j += 1
+    return i
+
+def streq(a: slice[u8], n: u64, s: ptr[u8]) -> u64:
+    i: u64 = 0
+    while i < n and peek8(u64(s) + i) != 0:
+        if a[i] != u8(peek8(u64(s) + i)):
+            return 0
+        i += 1
+    if peek8(u64(s) + i) != 0:
+        return 0
+    return 1
+
+def dent_has(n: u64, want: ptr[u8], typ: u64) -> u64:
+    j: u64 = 0
+    while j + 19 < n:
+        rl = peek16(u64(addr(dents[0])) + j + 16)
+        if rl < 20 or j + rl > n:
+            break
+        if peek8(u64(addr(dents[0])) + j + 18) == typ and streq(dents[j + 19:], 64, want) != 0:
+            return 1
+        j += rl
+    return 0
+
+def lx_main(sp: u64):
+    empty[0] = 0
+    # newfstatat(AT_FDCWD, granted file) matches stat
+    setpath("/efi/incudela/docs/big.bin")
+    check(lsys(4, u64(addr(path[0])), u64(addr(st[0])), 0, 0, 0) == 0, "stat big.bin")
+    check((st[3] & S_IFMT) == S_IFREG, "stat big.bin S_IFREG")
+    check(lsys(262, AT_FDCWD, u64(addr(path[0])), u64(addr(st2[0])), 0, 0) == 0, "newfstatat AT_FDCWD big.bin")
+    check(st2[3] == st[3] and st2[6] == st[6] and st2[1] == st[1], "newfstatat matches stat")
+    # newfstatat(dirfd, "big.bin")
+    setpath("big.bin")
+    check(lsys(262, DOCS, u64(addr(path[0])), u64(addr(st2[0])), 0, 0) == 0, "newfstatat dirfd big.bin")
+    check(st2[3] == st[3] and st2[6] == st[6], "newfstatat dirfd matches")
+    # newfstatat(dirfd, "", AT_EMPTY_PATH) matches fstat
+    check(lsys(5, DOCS, u64(addr(st[0])), 0, 0, 0) == 0, "fstat docs")
+    check(lsys(262, DOCS, u64(addr(empty[0])), u64(addr(st2[0])), AT_EMPTY_PATH, 0) == 0, "newfstatat AT_EMPTY_PATH")
+    check((st2[3] & S_IFMT) == S_IFDIR and st2[3] == st[3], "AT_EMPTY_PATH matches fstat")
+    # relative / outside / missing / bad buf
+    setpath("nosuch")
+    check(lsys(262, DOCS, u64(addr(path[0])), u64(addr(st2[0])), 0, 0) == ENOENT, "newfstatat missing -> ENOENT")
+    setpath("/efi/incudela/bin")
+    check(lsys(262, AT_FDCWD, u64(addr(path[0])), u64(addr(st2[0])), 0, 0) == EACCES, "newfstatat ungranted -> EACCES")
+    setpath("..")
+    check(lsys(262, DOCS, u64(addr(path[0])), u64(addr(st2[0])), 0, 0) == EACCES, "newfstatat .. -> EACCES")
+    setpath("/efi/incudela/docs/big.bin")
+    check(lsys(262, AT_FDCWD, u64(addr(path[0])), 1, 0, 0) == EFAULT, "newfstatat bad buf -> EFAULT")
+    # /proc: lstat/self is a symlink, stat/self is a directory
+    setpath("/proc/self")
+    check(lsys(6, u64(addr(path[0])), u64(addr(st[0])), 0, 0, 0) == 0, "lstat /proc/self")
+    check((st[3] & S_IFMT) == S_IFLNK, "lstat /proc/self S_IFLNK")
+    check(lsys(262, AT_FDCWD, u64(addr(path[0])), u64(addr(st2[0])), AT_SYMLINK_NOFOLLOW, 0) == 0, "newfstatat nofollow /proc/self")
+    check((st2[3] & S_IFMT) == S_IFLNK, "newfstatat nofollow S_IFLNK")
+    check(lsys(4, u64(addr(path[0])), u64(addr(st[0])), 0, 0, 0) == 0, "stat /proc/self")
+    check((st[3] & S_IFMT) == S_IFDIR, "stat /proc/self S_IFDIR")
+    # readlink /proc/self is the decimal pid
+    pid = lsys(39, 0, 0, 0, 0, 0)
+    pl = decpid(pid, pidbuf[:])
+    n = lsys(89, u64(addr(path[0])), u64(addr(link[0])), 128, 0, 0)
+    check(n == pl and eqmem(link[:], pidbuf[:], pl) != 0, "readlink /proc/self is pid")
+    # readlink /proc/self/exe and readlinkat
+    setpath("/proc/self/exe")
+    check(lsys(6, u64(addr(path[0])), u64(addr(st[0])), 0, 0, 0) == 0, "lstat /proc/self/exe")
+    check((st[3] & S_IFMT) == S_IFLNK, "lstat /proc/self/exe S_IFLNK")
+    n = lsys(89, u64(addr(path[0])), u64(addr(link[0])), 128, 0, 0)
+    check((n >> 63) == 0 and n > 8, "readlink /proc/self/exe")
+    # compare to the known launch path /efi/incudela/bin/lxproc
+    setpath("/efi/incudela/bin/lxproc")
+    i: u64 = 0
+    while i < n and path[i] != 0 and link[i] == path[i]:
+        i += 1
+    check(i == n and path[i] == 0, "readlink exe path")
+    setpath("self/exe")
+    n2 = lsys(267, PROC, u64(addr(path[0])), u64(addr(link[0])), 128, 0)
+    check(n2 == n, "readlinkat dirfd self/exe")
+    # readlink of a regular file is EINVAL
+    setpath("/efi/incudela/docs/big.bin")
+    check(lsys(89, u64(addr(path[0])), u64(addr(link[0])), 128, 0, 0) == EINVAL, "readlink regular -> EINVAL")
+    # write open of /proc is EROFS
+    setpath("/proc")
+    check(lsys(2, u64(addr(path[0])), O_WRONLY, 0, 0, 0) == EROFS, "open /proc O_WRONLY -> EROFS")
+    check(lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT, 0, 0, 0) == EROFS, "open /proc O_CREAT -> EROFS")
+    setpath("/proc/self")
+    check(lsys(2, u64(addr(path[0])), O_WRONLY, 0, 0, 0) == EROFS, "open /proc/self O_WRONLY -> EROFS")
+    # getdents of /proc includes self (DT_LNK) and the pid (DT_DIR)
+    setpath("/proc")
+    fd = lsys(2, u64(addr(path[0])), 0, 0, 0, 0)
+    check((fd >> 63) == 0, "open /proc")
+    dn = lsys(217, fd, u64(addr(dents[0])), 1024, 0, 0)
+    check((dn >> 63) == 0 and dn != 0, "getdents64 /proc")
+    check(dent_has(dn, "self", DT_LNK) != 0, "getdents has self DT_LNK")
+    # compare dent name to pidbuf via a NUL-terminated temp in path
+    i = 0
+    while i < pl:
+        path[i] = pidbuf[i]
+        i += 1
+    path[i] = 0
+    check(dent_has(dn, addr(path[0]), DT_DIR) != 0, "getdents has pid DT_DIR")
+    lsys(3, fd, 0, 0, 0, 0)
+    check(lsys(409, 0, 0, 0, 0, 0) == ENOSYS, "syscall 409 -> ENOSYS")
+    put("lxproc: newfstatat and readlink of a granted file and of /proc\n")
+    flush()
+    if fails == 0:
+        put("lxproc: PASS (")
+        putn(checks)
+        put(" checks)\n")
+    flush()
+    lsys(231, fails, 0, 0, 0, 0)
+
+@naked
+@export
+def _start():
+    asm("mov %rsp, %rdi", "and $-16, %rsp", "call lx_main", "ud2")

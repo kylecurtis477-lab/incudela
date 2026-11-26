@@ -1,0 +1,3 @@
+# lxproc (item 9 batch 4): newfstatat, readlink, and a read-only /proc
+dir /efi/incudela/docs
+dir /proc

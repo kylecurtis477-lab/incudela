@@ -25,15 +25,18 @@ Inside the personality a process reaches **only** the Linux table. No Forge sysc
 including the driver (400+), kexec/ktest (408/409, still also gated by `ktest_hooks`) and grant
 syscalls: they return -ENOSYS like any unknown number.
 
-## Syscalls (11.1a to 11.1e, then item 9; 45 in all)
+## Syscalls (11.1a to 11.1e, then item 9; 48 in all)
 
 | nr | name | notes |
 |----|------|-------|
 | 0 | read | Forge read on the fd (grants and rights checked) |
 | 1 | write | Forge write |
-| 2 | open | (11.1e part 4, item 9) no cwd, so the path must be absolute and name a held directory handle's label exactly (-> a dup of that handle, sharing its position) or lie under it (-> openat(handle, rest)); relative, `..`, outside every handle, or a mere label prefix -> EACCES; write flags on the ESP or /obj -> EROFS; write flags on `/data` (a mounted Incudela FS granted with `wdir`) create, trunc, append or exclusive-create a user-visible file; kernel and object-store names under `/data` -> EACCES; O_DIRECTORY / O_CLOEXEC as for openat |
+| 2 | open | (11.1e part 4, item 9) no cwd, so the path must be absolute and name a held directory handle's label exactly (-> a dup of that handle, sharing its position) or lie under it (-> openat(handle, rest)); relative, `..`, outside every handle, or a mere label prefix -> EACCES; write flags on the ESP, /obj or `/proc` -> EROFS; write flags on `/data` (a mounted Incudela FS granted with `wdir`) create, trunc, append or exclusive-create a user-visible file; kernel and object-store names under `/data` -> EACCES; O_DIRECTORY / O_CLOEXEC as for openat |
 | 3 | close | |
 | 87 | unlink | (item 9) a user-visible `/data` file through a held `wdir` handle with CAP_WRITE; reserved names and paths outside `/data` -> EACCES; missing -> ENOENT |
+| 89 | readlink | (item 9 batch 4) the target of a `/proc` symlink (`/proc/self` is the decimal pid, `/proc/self/exe` is the image path); not NUL-terminated; a regular file -> EINVAL; ungranted / missing paths as for open |
+| 267 | readlinkat | (item 9 batch 4) like readlink, relative to a held `/proc` handle or AT_FDCWD with an absolute path |
+| 262 | newfstatat | (item 9 batch 4) path resolved like open/openat, then fstat; AT_EMPTY_PATH with an empty path stats the handle; AT_SYMLINK_NOFOLLOW does not follow a `/proc` symlink; AT_NO_AUTOMOUNT is ignored; other flags -> EINVAL; bad buffer -> EFAULT |
 | 8 | lseek | (11.1e part 12) FAT32 files: SEEK_SET 0 / SEEK_CUR 1 / SEEK_END 2; past the end is allowed (reads there return 0), a result below 0 or another whence -> EINVAL; a directory only rewinds (SEEK_SET 0, else EINVAL); the console -> ESPIPE; bad fd -> EBADF |
 | 20 | writev | (11.1e part 2) iovecs copied in one at a time, each through write (same fd checks); iovcnt > 1024 -> EINVAL, bad iov -> EFAULT; a later fault or short write returns the bytes so far |
 | 33 | dup2 | (11.1e part 11) dup's rules (rights carried over, grant ledger counted), then the copy moves to newfd; what newfd held is closed only once the dup succeeded; newfd is not close-on-exec; oldfd == newfd returns it after checking oldfd; bad oldfd or newfd >= 16 -> EBADF |
@@ -42,10 +45,10 @@ syscalls: they return -ENOSYS like any unknown number.
 | 72 | fcntl | (11.1e part 7, item 9) F_DUPFD 0 / F_DUPFD_CLOEXEC 1030 (dup's rules, lowest free fd >= arg; arg >= 16 -> EINVAL), F_GETFD 1 / F_SETFD 2 (FD_CLOEXEC), F_GETFL 3 (console O_RDWR; a `/data` file O_RDONLY / O_WRONLY / O_RDWR and O_APPEND when opened that way; everything else O_RDONLY), F_SETFL 4 only when it changes nothing (O_NONBLOCK etc. -> EINVAL); bad fd -> EBADF, other commands -> EINVAL |
 | 79 | getcwd | (11.1e part 8) always "/" (returns 2, the length with the NUL): there is no working directory, relative paths stay EACCES; size < 2 -> ERANGE, bad pointer -> EFAULT |
 | 4 | stat | (11.1e part 5) path resolved exactly like open (absolute, at or under a held directory handle; else EACCES / ENOENT), then fstat of that handle, which is closed again; bad buffer -> EFAULT |
-| 6 | lstat | (11.1e part 6) identical to stat 4: the FAT32 ESP has no symbolic links, so there is no link to not follow; same EACCES / ENOENT / EFAULT |
-| 5 | fstat | (11.1c) 144-byte struct stat: st_dev 0xF0, st_ino = first cluster + 1, st_mode S_IFREG 0444 / S_IFDIR 0555 / S_IFCHR 0620 (console, st_rdev 0x401) / S_IFIFO 0600, st_size, st_blksize 4096, st_blocks; bad fd -> EBADF, bad pointer -> EFAULT, revoked grant -> EACCES |
+| 6 | lstat | (11.1e part 6, item 9 batch 4) like stat 4, but does not follow a `/proc` symlink (`/proc/self` is S_IFLNK); a regular FAT32 file is unchanged |
+| 5 | fstat | (11.1c, item 9 batch 4) 144-byte struct stat: st_dev 0xF0, st_ino = first cluster + 1, st_mode S_IFREG 0444 / S_IFDIR 0555 (0755 for `/data`) / S_IFLNK 0777 (`/proc` symlinks, st_size is the target length) / S_IFCHR 0620 (console, st_rdev 0x401) / S_IFIFO 0600, st_size, st_blksize 4096, st_blocks; bad fd -> EBADF, bad pointer -> EFAULT, revoked grant -> EACCES |
 | 107 | geteuid | (11.1e part 10) 1000, the uid the auxv already reports (AT_UID = AT_EUID = AT_GID = AT_EGID = 1000): an ordinary unprivileged id, because a sandboxed image holds no root capability and nothing in the kernel checks Linux uids; getuid 102 / getgid 104 / getegid 108 are not in the table yet (ENOSYS) and would return the same 1000 |
-| 217 | getdents64 | (11.1c) linux_dirent64 records (d_ino synthetic, d_off = directory position, d_type DT_DIR / DT_REG, 8-byte aligned); buffer must be >= 768 bytes (else EINVAL); non-directory -> ENOTDIR, no read right -> EPERM, revoked grant -> EACCES |
+| 217 | getdents64 | (11.1c, item 9 batch 4) linux_dirent64 records (d_ino synthetic, d_off = directory position, d_type DT_DIR / DT_REG / DT_LNK, 8-byte aligned); buffer must be >= 768 bytes (else EINVAL); non-directory -> ENOTDIR, no read right -> EPERM, revoked grant -> EACCES; a `/proc` listing includes `self` (DT_LNK) and the caller's pid (DT_DIR) |
 | 59 / 322 | execve / execveat | (11.1d) sealed Linux images only, reached through a held handle (see Exec below); Forge, unsealed or tampered images -> ENOEXEC, no cwd (relative path, AT_FDCWD) or outside every handle -> EACCES, live clone()d threads -> EBUSY, bad pointers -> EFAULT, argv over 16 entries / 127 bytes -> E2BIG, an argument with a space -> EINVAL, unknown flags -> EINVAL |
 | 13 | rt_sigaction | (11.1d part 2) signals 1..31; sigsetsize must be 8; SIGKILL / SIGSTOP, unknown flags (SA_ONSTACK included), or a handler without SA_RESTORER -> EINVAL; bad pointers -> EFAULT; SIG_IGN drops a pending one |
 | 14 | rt_sigprocmask | (11.1d part 2) per-thread blocked set; SIG_BLOCK / SIG_UNBLOCK / SIG_SETMASK, other how -> EINVAL; SIGKILL / SIGSTOP silently stay unblocked |
@@ -236,12 +239,22 @@ by the handler past the instruction with a new rax; and a load that faults with 
 r11 = 0xA5A5 sees both intact after the resume (`rcx + r11 ... 1515890085`). `run lxsig term` sends itself SIGTERM with the
 default action and exits 143.
 
+## Test: lxproc
+
+`run lxproc` (examples/user/lxproc.cud, raw syscalls only; manifest `dir /efi/incudela/docs` and
+`dir /proc`): newfstatat of a granted file matches stat and fstat (including AT_EMPTY_PATH on the
+directory handle and a relative name under it); ungranted / missing / `..` / a bad buffer are
+EACCES, ENOENT, EACCES, EFAULT. lstat and newfstatat(AT_SYMLINK_NOFOLLOW) of `/proc/self` are
+S_IFLNK; stat of `/proc/self` is S_IFDIR; readlink of `/proc/self` is the decimal pid; readlink and
+readlinkat of `/proc/self/exe` return `/efi/incudela/bin/lxproc`; a regular file is EINVAL; a write
+open of `/proc` is EROFS; getdents64 of `/proc` includes `self` (DT_LNK) and the pid (DT_DIR);
+syscall 409 is ENOSYS. `lxproc: PASS (N checks)` and `[lxproc exited 0 (sandboxed)]`.
+
 ## Not yet
 
 - Timed futex waits, FUTEX_REQUEUE/WAKE_OP, threads running in parallel on several CPUs.
-- newfstatat by path, readlink.
 - Real-time signals (32..64), sigaltstack, signals to other processes, interrupting a futex wait.
-- /proc, sockets, and a coherent MAP_SHARED file map (file-backed MAP_PRIVATE is done; MAP_SHARED+PROT_WRITE of an ESP file stays EACCES). Writable files on `/data` are done (an explicitly created Incudela FS partition only). vfork is implemented as an eager-copy fork (not a shared-memory vfork).
+- Sockets, and a coherent MAP_SHARED file map (file-backed MAP_PRIVATE is done; MAP_SHARED+PROT_WRITE of an ESP file stays EACCES). Writable files on `/data` are done (an explicitly created Incudela FS partition only). A read-only `/proc` (`self` and `self/exe` only; a `dir /proc` grant is required) is done. vfork is implemented as an eager-copy fork (not a shared-memory vfork).
 - Busybox (the Phase 11.1 acceptance test) needs a third-party static binary; it will be added only
   after the owner approves downloading one, and it will run under the same gate (sealed + sandboxed).
 - OSABI 0 Linux binaries (most static musl builds) are not detected as Linux; they are refused today
@@ -264,7 +277,7 @@ Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; s
 
 ## Application pass/fail list (item 9)
 
-Updated 2026-11-26 (batch 3). Programs are launched with `run` in the OS boot script unless noted.
+Updated 2026-11-26 (batch 4). Programs are launched with `run` in the OS boot script unless noted.
 
 ### Pass
 
@@ -272,8 +285,9 @@ Updated 2026-11-26 (batch 3). Programs are launched with `run` in the OS boot sc
 - `lxipc`: pipe and pipe2, fork, vfork and `clone(SIGCHLD)` reaped by wait4, and a file-backed mmap of `/efi/incudela/docs/hello.sh`. A bare `lxipc` without `run` is refused.
 - BusyBox applets already in the 11.1e gate: echo, true, false, basename, env, seq, expr, uname, wc, sha256sum, cat of a granted file, ls of a granted directory and a denied one, printf, pwd, sleep, `sh -c exit 3`, ash `<` / `>` redirections, tail, `sh /efi/incudela/docs/hello.sh`, grep.
 - Ash pipelines and ash running an external command, via `run busybox sh /efi/incudela/docs/pipeline.sh`: a builtin `echo | while read` pipeline, a pipeline to `/efi/incudela/docs/busybox wc -c`, and a simple `/efi/incudela/docs/busybox echo`. The external image is a sealed copy of busybox under the existing docs grant (`/efi/incudela/bin` stays denied).
+- `lxproc`: newfstatat (AT_FDCWD, relative to a held dir, AT_EMPTY_PATH, AT_SYMLINK_NOFOLLOW), readlink and readlinkat of `/proc/self` (the decimal pid) and `/proc/self/exe` (the image path), lstat of those links, stat of `/proc/self` as a directory, getdents of `/proc` (`self` is DT_LNK), and a write open of `/proc` -> EROFS. A bare path outside every grant stays EACCES. Launched with `run lxproc` in the main OS boot (manifest: docs and `/proc`). Following `/proc/self/exe` to the image is not in the test (the bin directory is not granted).
 - `lxwrite`, via `tests/os/lxwrite.sh` (`run lxwrite` on a boot whose NVMe disk has an explicitly created Incudela FS partition): write opens of a granted ESP file stay EROFS; `wdir /data` allows create, write, read, append, lseek, fstat, unlink and O_EXCL on a user-visible file; kernel and object-store names (`persist.dat`, `hello.txt`, `objects.*`) stay EACCES and are hidden from getdents. The ESP and every other GPT partition are byte-identical afterwards. Ash `>` onto `/data` is not in the gate (the busybox manifest cannot grant `/data` on boots that have no Incudela partition).
 
 ### Not yet in the gate
 
-- Sockets, `/proc`, a coherent MAP_SHARED file map, and OSABI 0 binaries.
+- Sockets, a coherent MAP_SHARED file map, and OSABI 0 binaries.

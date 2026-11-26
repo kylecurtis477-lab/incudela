@@ -26,7 +26,7 @@ def script():
 # a third element holds the line back until that text has appeared
     s = [["k", "ls"], ["s", "cat /efi/incudela/docs/Long File Name Notes.txt"], ["k", "forktest"], ["s", "hello a b"], ["k", "nosuch"], ["k", "ls /EFI/Incudela"], ["s", "crash 40"]]
     s += [["s", "sum /efi/incudela/docs/big.bin"], ["s", "captest"], ["s", "chantest"], ["s", "run sbtest"], ["s", "run grtest &"], ["s", "grants"], ["s", "revoke grtest", "grtest: halfway"], ["s", "wait", "grtest: cut off"]]
-    s += [["s", "grants"], ["s", "audit"], ["s", "wxtest"], ["s", "unsealed"], ["s", "tampered"], ["s", "forged"], ["s", "linuxabi"], ["s", "lxtest"], ["s", "run lxtest"], ["s", "run lxthreads"], ["s", "run lxfs"], ["s", "run lxexec"], ["s", "lxipc"], ["s", "run lxipc"]]
+    s += [["s", "grants"], ["s", "audit"], ["s", "wxtest"], ["s", "unsealed"], ["s", "tampered"], ["s", "forged"], ["s", "linuxabi"], ["s", "lxtest"], ["s", "run lxtest"], ["s", "run lxthreads"], ["s", "run lxfs"], ["s", "run lxexec"], ["s", "lxipc"], ["s", "run lxipc"], ["s", "run lxproc"]]
     s += [["s", "run lxsig"], ["s", "run lxsig term"], ["s", "run busybox echo hello from busybox"], ["s", "run busybox basename /a/b/forge-bb"], ["s", "run busybox false"], ["s", "run busybox seq -s , 3 5"]]
     s += [["s", "run busybox expr 6 + 7"], ["s", "run busybox uname -s -m"], ["s", "run busybox wc -c /efi/incudela/docs/big.bin"], ["s", "run busybox sha256sum /efi/incudela/docs/big.bin"], ["s", "run busybox cat /efi/incudela/bin/cat"]]
     s += [["s", "run busybox ls /efi/incudela/bin"], ["s", "run busybox ls /efi/incudela/docs"], ["s", "run busybox printf %d-%s 42 ok"], ["s", "run busybox pwd"], ["s", "run busybox sleep 1"], ["s", "run busybox sh -c exit${IFS}3"]]

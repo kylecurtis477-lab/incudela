@@ -75,6 +75,10 @@ struct Proc:
     sig_pend: u64  # process-directed pending signals (kill)
 
 procs: u64[64]
+# /proc/self/exe paths for Linux processes, indexed by the procs[] slot (not added to Proc, so
+# kexec records and unsafe sys_fork are unchanged). Linux processes do not cross a kexec.
+lx_exepid: u64[64]
+lx_exepath: u8[8192]
 reap_code: u64  # exit code of the child last found by sys_wait_ex
 reap_found: u64  # Proc* unlinked but not yet destroyed (0 if none)
 reap_slot: u64  # procs[] index to put the zombie back on a failed status copy
@@ -304,6 +308,8 @@ F_ODIR = 6
 F_PIPE = 7  # item 9: Linux pipe/pipe2 ends (pipe.cudi); clu = pipe index, pos = 0 read / 1 write
 F_FFILE = 8  # item 9: a user-visible Incudela FS file under /data; clu = inode slot, cidx bit 0 = O_APPEND
 F_FDIR = 9  # item 9: the /data directory (the user-visible view of a mounted Incudela FS)
+F_PDIR = 10  # item 9: a read-only /proc directory (clu 0 = /proc, clu 1 = /proc/<pid> or followed /proc/self)
+F_PLNK = 11  # item 9: a /proc symlink (clu 0 = self -> pid, clu 1 = exe -> the image path)
 ofs_m: Mutex
 
 ovfs_o: u64  # ovfs_resolve results: object id, clock
@@ -1279,6 +1285,8 @@ def sys_open(upath: u64) -> u64:
         return EACCES
     if ffs_path_kind(path[:]) != 0:
         return ffs_open_abs(p, path[:], p.fdr[CAP_ROOT_FD], 0, 0)
+    if proc_path_kind(path[:]) != 0:
+        return proc_open_abs(p, path[:], p.fdr[CAP_ROOT_FD], 0, 0, 0)
     o = ovfs_open(path[:])
     if o != OB_ERR:
         return fd_label(p, ovfs_install(p, o, p.fdr[CAP_ROOT_FD]), path[:], 0)
@@ -1393,6 +1401,8 @@ def sys_getdents(fd: u64, ubuf: u64, n: u64) -> u64:
         return odir_read(fl, ubuf, n, 0, z[:])
     if fl.type == F_FDIR:
         return fdir_read(fl, ubuf, n)
+    if fl.type == F_PDIR:
+        return pdir_read(fl, ubuf, n)
     if fl.type != F_DIR:
         return ENOTDIR
     return dir_read(fl, ubuf, n, 0)
@@ -1807,6 +1817,267 @@ def ffs_open_abs(p: ptr[Proc], path: slice[u8], rights: u64, flags: u64, gid: u6
         i += 1
     return ffs_open_name(p, path[6:], rights, flags, gid)
 
+# ---- item 9: a read-only /proc (self and self/exe only) ----
+# Kinds returned by proc_parse: 0 = not under /proc, 1 = /proc, 2 = /proc/self, 3 = /proc/self/exe,
+# 4 = /proc/<our pid>, 5 = /proc/<our pid>/exe. Any other name under /proc is ENOENT (including
+# another process's pid, so /proc does not leak other images).
+def proc_path_kind(path: slice[u8]) -> u64:
+    if len(path) >= 5 and path[0] == 47 and path[1] == 112 and path[2] == 114 and path[3] == 111 and path[4] == 99:
+        if len(path) == 5 or path[5] == 0 or path[5] == 47:
+            return 1
+    return 0
+
+def proc_dec(n: u64, dst: slice[u8]) -> u64:
+    t: u8[20]
+    if n == 0:
+        dst[0] = 48
+        return 1
+    i: u64 = 0
+    while n != 0 and i < 20:
+        t[i] = u8(48 + (n % 10))
+        n = n / 10
+        i += 1
+    j: u64 = 0
+    while j < i:
+        dst[j] = t[i - 1 - j]
+        j += 1
+    return i
+
+def proc_parse(path: slice[u8], pid: u64) -> u64:
+    if proc_path_kind(path) == 0:
+        return 0
+    # /proc or /proc/
+    if len(path) == 5 or (len(path) == 6 and path[5] == 47) or (len(path) > 5 and path[5] == 0):
+        return 1
+    if path[5] != 47:
+        return 0
+    rest = path[6:]
+    # strip a trailing slash for the first component only when the rest is empty after it
+    if rest[0] == 0:
+        return 1
+    # self or self/exe
+    if len(rest) >= 4 and rest[0] == 115 and rest[1] == 101 and rest[2] == 108 and rest[3] == 102:
+        if len(rest) == 4 or rest[4] == 0:
+            return 2
+        if rest[4] == 47:
+            if len(rest) == 5 or rest[5] == 0:
+                return 2
+            if len(rest) >= 8 and rest[5] == 101 and rest[6] == 120 and rest[7] == 101 and (len(rest) == 8 or rest[8] == 0):
+                return 3
+            return ENOENT
+        return ENOENT
+    # decimal pid
+    d: u8[20]
+    pl = proc_dec(pid, d[:])
+    i: u64 = 0
+    while i < pl and i < len(rest) and rest[i] == d[i]:
+        i += 1
+    if i != pl:
+        return ENOENT
+    if rest[i] == 0:
+        return 4
+    if rest[i] == 47:
+        if rest[i + 1] == 0:
+            return 4
+        if rest[i + 1] == 101 and rest[i + 2] == 120 and rest[i + 3] == 101 and (len(rest) == i + 4 or rest[i + 4] == 0):
+            return 5
+        return ENOENT
+    return ENOENT
+
+def proc_slot_of(p: ptr[Proc]) -> u64:
+    i: u64 = 0
+    while i < 64:
+        if procs[i] == u64(p):
+            return i
+        i += 1
+    return 64
+
+def lx_exe_set(p: ptr[Proc], path: slice[u8]):
+    s = proc_slot_of(p)
+    if s == 64:
+        return
+    lx_exepid[s] = p.pid
+    i: u64 = 0
+    while i < 127 and i < len(path) and path[i] != 0:
+        lx_exepath[s * 128 + i] = path[i]
+        i += 1
+    lx_exepath[s * 128 + i] = 0
+
+def lx_exe_get(p: ptr[Proc], dst: slice[u8]) -> u64:
+    s = proc_slot_of(p)
+    if s == 64 or lx_exepid[s] != p.pid:
+        return 0
+    i: u64 = 0
+    while i < 127 and i < len(dst) and lx_exepath[s * 128 + i] != 0:
+        dst[i] = lx_exepath[s * 128 + i]
+        i += 1
+    if i < len(dst):
+        dst[i] = 0
+    return i
+
+def lx_exe_dup_pid(oldpid: u64, newpid: u64):
+# copy the parent's exe path onto the child (called from the parent after a Linux fork)
+    src: u64 = 64
+    dst: u64 = 64
+    i: u64 = 0
+    while i < 64:
+        if procs[i] != 0:
+            q = as_proc(procs[i])
+            if q.pid == oldpid:
+                src = i
+            if q.pid == newpid:
+                dst = i
+        i += 1
+    if src == 64 or dst == 64 or lx_exepid[src] != oldpid:
+        return
+    lx_exepid[dst] = newpid
+    i = 0
+    while i < 128:
+        lx_exepath[dst * 128 + i] = lx_exepath[src * 128 + i]
+        i += 1
+
+def proc_target(p: ptr[Proc], clu: u64, dst: slice[u8]) -> u64:
+# length of a /proc symlink target (clu 0 = pid digits, clu 1 = exe path)
+    if clu == 0:
+        return proc_dec(p.pid, dst)
+    return lx_exe_get(p, dst)
+
+def proc_install(p: ptr[Proc], typ: u64, clu: u64, rights: u64, gid: u64, lab: slice[u8]) -> u64:
+    fd = fd_free(p)
+    if fd == NFD:
+        return EMFILE
+    fl = file_new(typ)
+    if u64(fl) == 0:
+        return ENOSPC
+    fl.clu = clu
+    fl.pos = 0
+    p.fds[fd] = u64(fl)
+    p.fdr[fd] = rights & (CAP_READ | CAP_LOOKUP | CAP_DUP | CAP_XFER)
+    return fd_label(p, fd, lab, gid)
+
+def proc_open_kind(p: ptr[Proc], kind: u64, rights: u64, gid: u64, nofollow: u64) -> u64:
+    lab: u8[32]
+    lab[0] = 47
+    lab[1] = 112
+    lab[2] = 114
+    lab[3] = 111
+    lab[4] = 99
+    lab[5] = 0
+    if kind == 1:
+        return proc_install(p, F_PDIR, 0, rights, gid, lab[:])
+    if kind == 2 or kind == 4:
+        if nofollow != 0 and kind == 2:
+            return proc_install(p, F_PLNK, 0, rights, gid, lab[:])
+        return proc_install(p, F_PDIR, 1, rights, gid, lab[:])
+    if kind == 3 or kind == 5:
+    # exe is always a symlink this batch; following it would open the image, which may be ungranted
+        return proc_install(p, F_PLNK, 1, rights, gid, lab[:])
+    return ENOENT
+
+def proc_open_abs(p: ptr[Proc], path: slice[u8], rights: u64, flags: u64, gid: u64, nofollow: u64) -> u64:
+    kind = proc_parse(path, p.pid)
+    if kind == 0:
+        return EACCES
+    if (kind >> 63) != 0:
+        return kind
+    return proc_open_kind(p, kind, rights, gid, nofollow)
+
+def proc_open_name(p: ptr[Proc], name: slice[u8], rights: u64, flags: u64, gid: u64, nofollow: u64, base: u64) -> u64:
+# name is relative to a held /proc handle: base 0 is /proc, base 1 is /proc/<pid>
+    path: u8[64]
+    path[0] = 47
+    path[1] = 112
+    path[2] = 114
+    path[3] = 111
+    path[4] = 99
+    i: u64 = 5
+    if base == 1:
+        path[5] = 47
+        n = proc_dec(p.pid, path[6:])
+        i = 6 + n
+    if name[0] != 0:
+        path[i] = 47
+        i += 1
+        k: u64 = 0
+        while k < 40 and k < len(name) and name[k] != 0 and i < 63:
+            path[i] = name[k]
+            i += 1
+            k += 1
+    path[i] = 0
+    return proc_open_abs(p, path[:], rights, flags, gid, nofollow)
+
+def pdir_put(fl: ptr[File], dst: slice[u8]) -> u64:
+# Forge getdents records: is_dir 1 = directory, 2 = symlink, 0 = file
+    rec: u8[32]
+    nm: u8[20]
+    p = cur_proc()
+    n = len(dst)
+    done: u64 = 0
+    # two entries at most; fl.pos is the next index (0 or 1)
+    while fl.pos < 2:
+        isdir: u64 = 2
+        l: u64 = 0
+        if fl.clu == 0:
+            if fl.pos == 0:
+            # self
+                nm[0] = 115
+                nm[1] = 101
+                nm[2] = 108
+                nm[3] = 102
+                nm[4] = 0
+                l = 4
+            else:
+                l = proc_dec(p.pid, nm[:])
+                nm[l] = 0
+                isdir = 1
+        else:
+            if fl.pos == 0:
+                nm[0] = 101
+                nm[1] = 120
+                nm[2] = 101
+                nm[3] = 0
+                l = 3
+            else:
+                break
+        rl = 9 + l + 1
+        if done + rl > n:
+            break
+        i: u64 = 0
+        while i < 8:
+            rec[i] = 0
+            i += 1
+        rec[8] = u8(isdir)
+        i = 0
+        while i <= l:
+            rec[9 + i] = nm[i]
+            i += 1
+        i = 0
+        while i < rl:
+            dst[done + i] = rec[i]
+            i += 1
+        done += rl
+        fl.pos += 1
+    return done
+
+def pdir_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
+    kb: u8[128]
+    done: u64 = 0
+    while done < n:
+        want = n - done
+        if want > 128:
+            want = 128
+        r = pdir_put(fl, kb[0:want])
+        if r == 0:
+            break
+        if copy_user(ubuf + done, u64(addr(kb[0])), r) != 0:
+            if done != 0:
+                return done
+            return EFAULT
+        done += r
+        if r < want:
+            break
+    return done
+
 def open_install(p: ptr[Proc], c: u64, path: ptr[u8], r: u64) -> u64:
     fd = fd_free(p)
     if fd == NFD:
@@ -1846,6 +2117,8 @@ def sys_openat(dirfd: u64, upath: u64) -> u64:
         return EACCES
     if d.type == F_FDIR:
         return ffs_open_name(p, path[:], p.fdr[dirfd], 0, d.gid)
+    if d.type == F_PDIR:
+        return proc_open_name(p, path[:], p.fdr[dirfd], 0, d.gid, 0, d.clu)
     if d.type != F_DIR:
         return ENOTDIR
     # a file found through a granted directory belongs to the same grant
@@ -1926,12 +2199,12 @@ def syscall_do(nr: u64, a: u64, b: u64, c: u64, d: u64, frame: u64) -> u64:
         elif nr == 56:
             r = lx_clone(frame, a, b, c, d, sf.r8)
         elif nr == 57:
-            r = sys_fork(frame, 0)
+            r = lx_fork(frame)
         elif nr == 58:
         # item 9: Linux vfork. Implemented as the same eager-copy fork as 57:
         # address spaces are not shared and the parent is not suspended. Ash
         # uses vfork to run an external command; a shared-memory vfork is not needed.
-            r = sys_fork(frame, 0)
+            r = lx_fork(frame)
         elif nr == 61:
             r = lx_wait4(a, b, c, d)
         elif nr == 59:

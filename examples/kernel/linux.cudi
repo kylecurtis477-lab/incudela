@@ -38,7 +38,9 @@
 # names a held directory handle's label ("<label>" itself -> a dup of that handle, sharing its
 # position) or lies under it ("<label>/<rest>" -> openat(handle, rest)) opens; anything else is EACCES.
 # 11.1e: stat 4 -- open's path rules, then fstat of that handle, then close.
-# 11.1e: lstat 6 -- the same as stat: the FAT32 ESP has no symbolic links, so there is nothing to not follow.
+# 11.1e: lstat 6 -- like stat, but does not follow a /proc symlink (self, self/exe).
+# item 9 batch 4: newfstatat 262 (path, AT_EMPTY_PATH, AT_SYMLINK_NOFOLLOW; AT_NO_AUTOMOUNT ignored),
+# readlink 89, readlinkat 267, and a read-only /proc (self and self/exe only; a dir /proc grant is required).
 # 11.1e: fcntl 72 -- F_DUPFD / F_DUPFD_CLOEXEC (dup's rules), F_GETFD / F_SETFD (FD_CLOEXEC), F_GETFL,
 # F_SETFL only when it changes nothing (no status flag is settable); other commands EINVAL.
 # 11.1e: getcwd 79 -- always "/": there is no working directory, so relative paths stay EACCES.
@@ -53,7 +55,7 @@
 # waiting; the console reports ready and its read then blocks as usual), closed fds get POLLNVAL.
 # Not yet: real-time signals (32..64), sigaltstack, signals to other processes.
 LX_ABI = 1
-LX_NSYS = 45  # syscalls in the table above (item 9: pipe 22, pipe2 293, fork 57, vfork 58, wait4 61, unlink 87)
+LX_NSYS = 48  # syscalls in the table above (item 9: + newfstatat 262, readlink 89, readlinkat 267)
 ARCH_SET_FS = 0x1002
 ARCH_GET_FS = 0x1003
 ERANGE = 0xFFFFFFFFFFFFFFDE
@@ -97,6 +99,7 @@ def lx_stack(p: ptr[Proc], entry: u64, pa: slice[u8]) -> u64:
         if pa[k] == 47:
             nm = k + 1  # argv[0] is the last path component
         k += 1
+    lx_exe_set(p, pa)
     k = 0
     while k < 127 and pa[128 + k] != 0:
         st[128 + k] = pa[128 + k]
@@ -351,14 +354,22 @@ def lx_wait4(pid: u64, ustatus: u64, options: u64, urusage: u64) -> u64:
     wait_commit()
     return r
 
+def lx_fork(frame: u64) -> u64:
+# Linux fork/vfork: sys_fork, then copy /proc/self/exe onto the child (parent side only)
+    r = sys_fork(frame, 0)
+    if (r >> 63) == 0 and r != 0:
+        lx_exe_dup_pid(cur_proc().pid, r)
+    return r
+
 def lx_clone(frame: u64, flags: u64, stack: u64, ptid: u64, ctid: u64, tls: u64) -> u64:
+
     p = cur_proc()
     t = cur_thread()
     if (flags & CLONE_THREAD_REQ) != CLONE_THREAD_REQ:
     # item 9: fork-style clone (no CLONE_VM): only the CSIGNAL byte, like musl's fork()
         if (flags & 0xFFFFFF00) != 0:
             return EINVAL
-        return sys_fork(frame, 0)
+        return lx_fork(frame)
     if (flags & ~CLONE_OK) != 0 or stack == 0 or stack >= USER_TOP:
         return EINVAL
     if (flags & CLONE_SETTLS) != 0 and tls >= USER_TOP:
@@ -546,6 +557,8 @@ O_CREAT = 0x40
 O_TRUNC = 0x200
 O_APPEND = 0x400
 O_DIRECTORY = 0x10000
+AT_SYMLINK_NOFOLLOW = 0x100
+AT_NO_AUTOMOUNT = 0x800
 LX_DENT_MIN = 768  # getdents64 needs room for the largest record (documented)
 
 def lx_open_write(dirfd: u64, upath: u64, flags: u64) -> u64:
@@ -561,7 +574,7 @@ def lx_open_write(dirfd: u64, upath: u64, flags: u64) -> u64:
         i: u64 = 0
         while i < NFD:
             d = fd_get(p, i)
-            if u64(d) != 0 and (d.type == F_DIR or d.type == F_FDIR) and (p.fdr[i] & CAP_LOOKUP) != 0:
+            if u64(d) != 0 and (d.type == F_DIR or d.type == F_FDIR or d.type == F_PDIR) and (p.fdr[i] & CAP_LOOKUP) != 0:
                 k: u64 = 0
                 while k < 31 and d.lab[k] != 0 and path[k] == d.lab[k]:
                     k += 1
@@ -635,20 +648,39 @@ def lx_openat(dirfd: u64, upath: u64, flags: u64) -> u64:
         return lx_open_write(dirfd, upath, flags)
     fd: u64 = 0
     if dirfd == AT_FDCWD:
-        fd = lx_open_abs(upath)
+        fd = lx_open_abs(upath, 0)
     else:
-        fd = sys_openat(dirfd & 0xFFFFFFFF, upath)
+        fd = lx_open_rel(dirfd, upath, 0)
     if fd >= NFD:
         return fd
     if (flags & O_DIRECTORY) != 0:
         fl = fd_get(cur_proc(), fd)
-        if u64(fl) == 0 or (fl.type != F_DIR and fl.type != F_ODIR and fl.type != F_FDIR):
+        if u64(fl) == 0 or (fl.type != F_DIR and fl.type != F_ODIR and fl.type != F_FDIR and fl.type != F_PDIR):
             sys_close(fd)
             return ENOTDIR
     lx_cx(fd, (flags >> 19) & 1)  # 11.1d: O_CLOEXEC (0x80000) is honoured by execve
     return fd
 
-def lx_open_abs(upath: u64) -> u64:
+def lx_open_rel(dirfd: u64, upath: u64, nofollow: u64) -> u64:
+# a relative path under a held directory handle (LOOKUP), including a /proc handle
+    p = cur_proc()
+    d = fd_get(p, dirfd & 0xFFFFFFFF)
+    if u64(d) == 0:
+        return EBADF
+    if d.type == F_PDIR:
+        if (p.fdr[dirfd & 0xFFFFFFFF] & CAP_LOOKUP) == 0:
+            return EPERM
+        rel: u8[128]
+        if copy_str_user(u64(addr(rel[0])), upath, 128) > 127:
+            return EFAULT
+        if rel[0] == 47:
+            return EACCES
+        if gr_use(d.gid, "openat") != 0:
+            return EACCES
+        return proc_open_name(p, rel[:], p.fdr[dirfd & 0xFFFFFFFF], 0, d.gid, nofollow, d.clu)
+    return sys_openat(dirfd & 0xFFFFFFFF, upath)
+
+def lx_open_abs(upath: u64, nofollow: u64) -> u64:
 # an absolute path at or under the label of a held directory handle (LOOKUP); else EACCES
     path: u8[128]
     if copy_str_user(u64(addr(path[0])), upath, 128) > 127:
@@ -659,7 +691,7 @@ def lx_open_abs(upath: u64) -> u64:
     i: u64 = 0
     while i < NFD:
         d = fd_get(p, i)
-        if u64(d) != 0 and (d.type == F_DIR or d.type == F_FDIR) and (p.fdr[i] & CAP_LOOKUP) != 0:
+        if u64(d) != 0 and (d.type == F_DIR or d.type == F_FDIR or d.type == F_PDIR) and (p.fdr[i] & CAP_LOOKUP) != 0:
             k: u64 = 0
             while k < 31 and d.lab[k] != 0 and path[k] == d.lab[k]:
                 k += 1
@@ -667,18 +699,82 @@ def lx_open_abs(upath: u64) -> u64:
                 if path[k] == 0:
                     return sys_dup(i, p.fdr[i])
                 if path[k] == 47 and path[k + 1] != 0:
+                    if d.type == F_PDIR:
+                        return proc_open_name(p, path[k + 1:], p.fdr[i], 0, d.gid, nofollow, d.clu)
                     return sys_openat(i, upath + k + 1)
         i += 1
     return EACCES
 
 def lx_stat(upath: u64, ubuf: u64) -> u64:
-# stat(path, buf): resolved like open (absolute, at or under a held directory handle), then fstat
-    fd = lx_open_abs(upath)
+# stat(path, buf): resolved like open (follows /proc/self)
+    return lx_stat_ex(upath, ubuf, 0)
+
+def lx_lstat_path(upath: u64, ubuf: u64) -> u64:
+# lstat(path, buf): like stat, but does not follow a /proc symlink
+    return lx_stat_ex(upath, ubuf, 1)
+
+def lx_stat_ex(upath: u64, ubuf: u64, nofollow: u64) -> u64:
+    fd = lx_open_abs(upath, nofollow)
     if fd >= NFD:
         return fd
     r = lx_fstat(fd, ubuf)
     sys_close(fd)
     return r
+
+def lx_newfstatat(dirfd: u64, upath: u64, ubuf: u64, flags: u64) -> u64:
+# newfstatat(dirfd, path, buf, flags): AT_EMPTY_PATH stats the handle; AT_SYMLINK_NOFOLLOW does
+# not follow a /proc symlink; AT_NO_AUTOMOUNT is ignored; any other flag is EINVAL
+    if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_EMPTY_PATH)) != 0:
+        return EINVAL
+    path0: u8[128]
+    if copy_str_user(u64(addr(path0[0])), upath, 128) > 127:
+        return EFAULT
+    if path0[0] == 0:
+        if (flags & AT_EMPTY_PATH) != 0:
+            return lx_fstat(dirfd & 0xFFFFFFFF, ubuf)
+        return ENOENT
+    nofollow: u64 = 0
+    if (flags & AT_SYMLINK_NOFOLLOW) != 0:
+        nofollow = 1
+    fd: u64 = 0
+    if dirfd == AT_FDCWD:
+        fd = lx_open_abs(upath, nofollow)
+    else:
+        fd = lx_open_rel(dirfd, upath, nofollow)
+    if fd >= NFD:
+        return fd
+    r = lx_fstat(fd, ubuf)
+    sys_close(fd)
+    return r
+
+def lx_readlinkat(dirfd: u64, upath: u64, ubuf: u64, n: u64) -> u64:
+# readlinkat: only /proc symlinks this batch; a regular file is EINVAL; not NUL-terminated
+    if n == 0:
+        return EINVAL
+    if user_ptr_ok(ubuf, n) == 0:
+        return EFAULT
+    fd: u64 = 0
+    if dirfd == AT_FDCWD:
+        fd = lx_open_abs(upath, 1)
+    else:
+        fd = lx_open_rel(dirfd, upath, 1)
+    if fd >= NFD:
+        return fd
+    fl = fd_get(cur_proc(), fd)
+    if u64(fl) == 0 or fl.type != F_PLNK:
+        sys_close(fd)
+        return EINVAL
+    tb: u8[128]
+    tl = proc_target(cur_proc(), fl.clu, tb[:])
+    sys_close(fd)
+    if tl > n:
+        tl = n
+    if copy_user(ubuf, u64(addr(tb[0])), tl) != 0:
+        return EFAULT
+    return tl
+
+def lx_readlink(upath: u64, ubuf: u64, n: u64) -> u64:
+    return lx_readlinkat(AT_FDCWD, upath, ubuf, n)
 
 def lx_fcntl(fd: u64, cmd: u64, arg: u64) -> u64:
 # fcntl: F_DUPFD 0 / F_DUPFD_CLOEXEC 1030 (sys_dup's rules, then the lowest free fd >= arg),
@@ -767,7 +863,7 @@ def lx_lseek(fd: u64, off: u64, whence: u64) -> u64:
     fl = fd_get(p, fd)
     if fl == 0:
         return EBADF
-    if fl.type == F_DIR or fl.type == F_FDIR:
+    if fl.type == F_DIR or fl.type == F_FDIR or fl.type == F_PDIR:
         if whence == 0 and off == 0:
             fl.pos = 0
             return 0
@@ -881,11 +977,16 @@ def lx_fstat(fd: u64, ubuf: u64) -> u64:
         return EACCES
     mode: u64 = 0x8124  # S_IFREG | 0444
     st[2] = 1
-    if fl.type == F_DIR or fl.type == F_ODIR or fl.type == F_FDIR:
+    if fl.type == F_DIR or fl.type == F_ODIR or fl.type == F_FDIR or fl.type == F_PDIR:
         mode = 0x416D  # S_IFDIR | 0555
         if fl.type == F_FDIR:
             mode = 0x41ED  # S_IFDIR | 0755
         st[2] = 2
+    elif fl.type == F_PLNK:
+        mode = 0xA1FF  # S_IFLNK | 0777
+        st[2] = 1
+        tb: u8[128]
+        st[6] = proc_target(cur_proc(), fl.clu, tb[:])
     elif fl.type == F_CONSOLE:
         mode = 0x2190  # S_IFCHR | 0620
         st[5] = 0x401  # rdev: tty1 (4, 1)
@@ -918,7 +1019,7 @@ def lx_getdents64(fd: u64, ubuf: u64, n: u64) -> u64:
     fl = fd_get(p, fd)
     if u64(fl) == 0:
         return EBADF
-    if fl.type != F_DIR and fl.type != F_ODIR and fl.type != F_FDIR:
+    if fl.type != F_DIR and fl.type != F_ODIR and fl.type != F_FDIR and fl.type != F_PDIR:
         return ENOTDIR
     if (p.fdr[fd] & CAP_READ) == 0:
         return EPERM
@@ -936,6 +1037,8 @@ def lx_getdents64(fd: u64, ubuf: u64, n: u64) -> u64:
             k = odir_read(fl, 0, fb, 1, kb[:])
         elif fl.type == F_FDIR:
             k = fdir_put(fl, kb[0:fb])
+        elif fl.type == F_PDIR:
+            k = pdir_put(fl, kb[0:fb])
         else:
             k = dir_read(fl, u64(addr(kb[0])), fb, 1)
         if k > 0xFFFFFFFFFFFFF000:
@@ -958,9 +1061,11 @@ def lx_getdents64(fd: u64, ubuf: u64, n: u64) -> u64:
             lx_le(rec[:], 0, p.lx_dino, 8)
             lx_le(rec[:], 8, fl.pos, 8)
             lx_le(rec[:], 16, rl, 2)
-            rec[18] = 8
-            if kb[j + 8] != 0:
-                rec[18] = 4
+            rec[18] = 8  # DT_REG
+            if kb[j + 8] == 2:
+                rec[18] = 10  # DT_LNK
+            elif kb[j + 8] != 0:
+                rec[18] = 4  # DT_DIR
             i = 0
             while i < l:
                 rec[19 + i] = kb[j + 9 + i]
@@ -1522,7 +1627,7 @@ def lx_dispatch(nr: u64, a: u64, b: u64, c: u64, d: u64) -> u64:
 # mmap (9, six arguments) is routed by syscall_dispatch, which reads r8/r9 from the frame
     p = cur_proc()
     p.lx_calls += 1
-    if nr == 0 or nr == 1 or nr == 2 or nr == 4 or nr == 6 or nr == 72 or nr == 20 or nr == 16 or nr == 5 or nr == 217 or nr == 257 or nr == 33 or nr == 8 or nr == 87:
+    if nr == 0 or nr == 1 or nr == 2 or nr == 4 or nr == 6 or nr == 72 or nr == 20 or nr == 16 or nr == 5 or nr == 217 or nr == 257 or nr == 33 or nr == 8 or nr == 87 or nr == 89 or nr == 262 or nr == 267:
         atomic_fetch_add(addr(p.fdbusy), 1, acq_rel)
         r: u64 = 0
         if nr == 0:
@@ -1531,12 +1636,20 @@ def lx_dispatch(nr: u64, a: u64, b: u64, c: u64, d: u64) -> u64:
             r = sys_write(a, b, c)
         elif nr == 87:
             r = lx_unlink(a)
+        elif nr == 89:
+            r = lx_readlink(a, b, c)
         elif nr == 20:
             r = lx_writev(a, b, c)
         elif nr == 2:
             r = lx_openat(AT_FDCWD, a, b)
-        elif nr == 4 or nr == 6:
+        elif nr == 4:
             r = lx_stat(a, b)
+        elif nr == 6:
+            r = lx_lstat_path(a, b)
+        elif nr == 262:
+            r = lx_newfstatat(a, b, c, d)
+        elif nr == 267:
+            r = lx_readlinkat(a, b, c, d)
         elif nr == 5:
             r = lx_fstat(a, b)
         elif nr == 72:
