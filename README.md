@@ -187,6 +187,7 @@ Subsystem docs (design, formats, APIs, tests, limits):
 - docs/livepatch.md: live patching of kernel functions
 - docs/GRAMMAR.md, docs/SYSTEMS.md, docs/BUILD_PLAN.md: the language grammar (v1.2; effect annotations `def f() uses fs, ipc:` are reserved syntax that the checker rejects with E0106), systems features and the plan
 - docs/kernel-core.md: kernel core interface spec v1 (scheduler, IPC channels, capabilities), with Appendix A (verification scope: what the tests pin, what they do not, assumptions, the seven DMA/IOMMU gaps, all closed now with their remaining limits, verifier-ready conventions)
+- docs/spec-exec.md: speculative-execution policy: IBPB, VERW (MD_CLEAR) and retpoline are not implemented; related hardening that is (SMEP/SMAP, W^X, canaries, guard pages, KASLR) is listed there and is not a substitute
 - docs/SYSTEMS.md "Process-state format": process-state v2 with a per-record checksum (examples/kernel/pstate.cudi), the single versioned per-process record; the kexec handoff (format v5) carries exactly these
 - docs/SYSTEMS.md "Nondeterminism hook": the kernel's single hook point for syscall results, timer interrupts, scheduler choices and random values (examples/kernel/nondet.cudi), recording off by default
 - docs/tools-ostools.md: the OS-test toolchain preflight (tools/ostools.cud) the gate runs before any test, and how it reinstalls the tools offline-verified after a box reset

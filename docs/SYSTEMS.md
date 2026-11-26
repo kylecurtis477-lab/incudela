@@ -409,6 +409,14 @@ keep the step 1-3 rules: any frame address still stops promotion there.
 - FORGEKRN header: entry, phys start, phys end, krel start, krel end. The Incudela UEFI loader and kexec refuse a kernel whose table is empty; kexec'd kernels pick a fresh slide.
 - Limits: slide granularity 2 MiB, about 9 bits of entropy; the low boot stub at 1 MiB (phys) is not randomized; physical placement (kdelta) only varies under kexec.
 
+## Speculative-execution policy
+IBPB, VERW (MD_CLEAR) and retpoline are not implemented. The kernel does not program
+`IA32_PRED_CMD` or `IA32_SPEC_CTRL`, does not flush buffers with `verw`, and the
+compiler does not emit retpoline thunks. Process page tables keep the kernel half
+mapped (`as_new`). The statement of what is and is not present is
+[spec-exec.md](spec-exec.md). SMEP/SMAP, W^X, canaries, guard pages and KASLR above
+are not substitutes for those mitigations.
+
 ## Kernel core interface (plan v1.3 item 8)
 The contract of the scheduler, IPC channels and the two capability layers is specified in
 [kernel-core.md](kernel-core.md) (spec v1); changing any of it bumps that version.

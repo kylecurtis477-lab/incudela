@@ -269,7 +269,8 @@ is part of that baseline. Counts may shrink; they must not rise.
 
 The tests do not prove the kernel correct on every machine, under every interleaving, or against
 a formal model of x86, ACPI, PCI or VT-d. In particular they do not cover: timing or
-cache/side-channel behaviour; AArch64 or physical hardware; Secure Boot; multiple outstanding
+cache/side-channel behaviour (IBPB, VERW and retpoline are not implemented; see
+[spec-exec.md](spec-exec.md)); AArch64 or physical hardware; Secure Boot; multiple outstanding
 virtio requests; packed virtqueues; IOAPIC interrupt remapping; DMA under translation from devices other
 than the granted virtio-blk and the edu test device; or more than one remapping unit.
 Commentary in SYSTEMS.md or BUILD_PLAN.md that is not pinned by a
