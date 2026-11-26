@@ -27,6 +27,10 @@
   wait probes. `badptr` is unchanged. `lxipc` also checks Linux `wait4`. The
   `lxthreads` boot pattern is `PASS (11 checks)` after fork-style clone grew
   by a wait4 check. The kernel unsafe cap stays 709.
+- `tests/user-build/run.sh`: the expected artifact count is 134, not 130.
+  `0862dc4` added `lxipc` (`.s` `.o` `.elf` `.raw`). Shell and Forge builds
+  already matched (exit codes agreed; `fresh-keys` passed); only the expected
+  count was stale. Default and O0 still skip BusyBox (`BB_SRC=/nonexist`).
 
 
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
