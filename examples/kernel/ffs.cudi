@@ -4,6 +4,10 @@
 # range), then claims that LBA range on the NVMe driver; nvme_write refuses anything outside it.
 # Layout (4 KiB blocks from the partition start): 0 superblock, 1 inode table (64 x 64 bytes), 2.. data
 # (contiguous extents, first fit). Commit order: data, inode table, superblock (generation + checksums), flush.
+# Item 9: a mounted volume is also visible to processes at /data. Writes (Linux open/write/unlink, and
+# native sys_write on a handle that carries CAP_WRITE) are allowed only there. Kernel and object-store
+# names (persist.dat, hello.txt, scratch.dat, and anything beginning objects.) are not visible under
+# /data and cannot be opened, created or unlinked through it. The ESP stays read-only.
 FFS_MAGIC = 0x3153464547524F46  # "FORGEFS1"
 FFS_NI = 64
 FFS_T0 = 0x4F0A6B7FD0C2E3A1
@@ -17,6 +21,8 @@ ffs_b: u64[512]  # one block
 ffs_sb: u64[512]
 ffs_it: u64[512]  # inode table: per inode name w0..4, size, start, nblk
 ffs_nm: u64[5]
+ffs_m: Mutex  # serialises ffs_it / ffs_b; holders may sleep on NVMe I/O
+FFS_USER_MAX = 1048576  # 1 MiB cap on a /data file
 
 def ffs_rd(w: u64, i: u64) -> u64:
 # w: 0 block buffer, 1 superblock, 2 inode table
@@ -380,6 +386,278 @@ def ffs_nfiles() -> u64:
             n += 1
         i += 1
     return n
+
+
+def ffs_lock():
+    mutex_lock(addr(ffs_m))
+
+def ffs_unlock():
+    mutex_unlock(addr(ffs_m))
+
+def ffs_eq(s: slice[u8], lit: ptr[u8]) -> u64:
+# 1 if the slice (NUL-terminated or exact) equals the kernel string literal
+    i: u64 = 0
+    n = len(s)
+    while i < n and s[i] != 0 and ffs_ch(lit, i) != 0:
+        if u64(s[i]) != ffs_ch(lit, i):
+            return 0
+        i += 1
+    if i < n and s[i] != 0:
+        return 0
+    if ffs_ch(lit, i) != 0:
+        return 0
+    return 1
+
+def ffs_reserved(s: slice[u8]) -> u64:
+# kernel and object-store files are not reachable through /data
+    if ffs_eq(s, "persist.dat") != 0 or ffs_eq(s, "hello.txt") != 0 or ffs_eq(s, "scratch.dat") != 0:
+        return 1
+    if len(s) >= 8 and s[0] == 111 and s[1] == 98 and s[2] == 106 and s[3] == 101 and s[4] == 99 and s[5] == 116 and s[6] == 115 and s[7] == 46:
+        return 1
+    return 0
+
+def ffs_user_ok(s: slice[u8]) -> u64:
+# a /data name: 1..39 bytes, no slash or NUL in the middle, not reserved
+    n = len(s)
+    i: u64 = 0
+    while i < n and s[i] != 0:
+        if s[i] == 47:
+            return 0
+        i += 1
+    if i == 0 or i > 39:
+        return 0
+    if ffs_reserved(s) != 0:
+        return 0
+    return 1
+
+def ffs_pack_slice(s: slice[u8]) -> u64:
+# pack a (possibly NUL-terminated) slice into ffs_nm; 0 if empty or longer than 39
+    i: u64 = 0
+    while i < 5:
+        ffs_nm[i] = 0
+        i += 1
+    n = len(s)
+    i = 0
+    while i < n and s[i] != 0:
+        if i >= 39:
+            return 0
+        ffs_nm[i / 8] = ffs_nm[i / 8] | (u64(s[i]) << ((i % 8) * 8))
+        i += 1
+    return i
+
+def ffs_find_slice(s: slice[u8]) -> u64:
+    if ffs_pack_slice(s) == 0:
+        return FFS_NI
+    i: u64 = 0
+    while i < FFS_NI:
+        k = i * 8
+        if ffs_it[k] != 0 and ffs_it[k] == ffs_nm[0] and ffs_it[k + 1] == ffs_nm[1] and ffs_it[k + 2] == ffs_nm[2] and ffs_it[k + 3] == ffs_nm[3] and ffs_it[k + 4] == ffs_nm[4]:
+            return i
+        i += 1
+    return FFS_NI
+
+def ffs_create_empty(s: slice[u8]) -> u64:
+# a new zero-length file; returns the slot, or FFS_NI. Caller holds ffs_m.
+    if ffs_ok == 0 or ffs_user_ok(s) == 0 or ffs_find_slice(s) != FFS_NI:
+        return FFS_NI
+    slot: u64 = 0
+    while slot < FFS_NI and ffs_it[slot * 8] != 0:
+        slot += 1
+    if slot == FFS_NI or ffs_pack_slice(s) == 0:
+        return FFS_NI
+    k = slot * 8
+    i: u64 = 0
+    while i < 5:
+        ffs_it[k + i] = ffs_nm[i]
+        i += 1
+    ffs_it[k + 5] = 0
+    ffs_it[k + 6] = 0
+    ffs_it[k + 7] = 0
+    if ffs_commit() == 0:
+        return FFS_NI
+    return slot
+
+def ffs_extent_free(st: u64, n: u64, skip: u64) -> u64:
+# 1 if [st, st+n) does not overlap any inode except skip (FFS_NI: none)
+    if n == 0:
+        return 1
+    if st + n > ffs_nblk:
+        return 0
+    i: u64 = 0
+    while i < FFS_NI:
+        if i != skip:
+            k = i * 8
+            if ffs_it[k] != 0 and ffs_it[k + 7] != 0 and ffs_it[k + 6] < st + n and st < ffs_it[k + 6] + ffs_it[k + 7]:
+                return 0
+        i += 1
+    return 1
+
+def ffs_grow(slot: u64, size: u64) -> u64:
+# make inode slot hold at least size bytes (may relocate the extent). 1 on success. Caller holds ffs_m.
+    if slot >= FFS_NI or ffs_it[slot * 8] == 0:
+        return 0
+    if size > FFS_USER_MAX:
+        return 0
+    k = slot * 8
+    old = ffs_it[k + 5]
+    st = ffs_it[k + 6]
+    nb = ffs_it[k + 7]
+    need = (size + 4095) / 4096
+    if need <= nb:
+        if size > old:
+            ffs_it[k + 5] = size
+            if ffs_commit() == 0:
+                ffs_it[k + 5] = old
+                return 0
+        elif size != old:
+            ffs_it[k + 5] = size
+            if ffs_commit() == 0:
+                ffs_it[k + 5] = old
+                return 0
+        return 1
+    nst = st
+    if nb == 0 or ffs_extent_free(st + nb, need - nb, slot) == 0:
+        nst = ffs_alloc(need)
+        if nst == 0:
+            return 0
+        b: u64 = 0
+        while b < nb:
+            if ffs_get(st + b, 0) == 0 or ffs_put(nst + b, 0) == 0:
+                return 0
+            b += 1
+    b = nb
+    while b < need:
+        w: u64 = 0
+        while w < 512:
+            ffs_b[w] = 0
+            w += 1
+        if ffs_put(nst + b, 0) == 0:
+            return 0
+        b += 1
+    if nvme_flush() == 0:
+        return 0
+    ffs_it[k + 5] = size
+    ffs_it[k + 6] = nst
+    ffs_it[k + 7] = need
+    if ffs_commit() == 0:
+        ffs_it[k + 5] = old
+        ffs_it[k + 6] = st
+        ffs_it[k + 7] = nb
+        return 0
+    return 1
+
+def ffs_kread(slot: u64, off: u64, dst: slice[u8]) -> u64:
+# copy up to len(dst) bytes of file slot at off into a kernel buffer. Caller holds ffs_m.
+    if slot >= FFS_NI or ffs_it[slot * 8] == 0:
+        return 0
+    k = slot * 8
+    size = ffs_it[k + 5]
+    st = ffs_it[k + 6]
+    n = len(dst)
+    if off >= size:
+        return 0
+    if n > size - off:
+        n = size - off
+    done: u64 = 0
+    while done < n:
+        b = (off + done) / 4096
+        o = (off + done) % 4096
+        if ffs_get(st + b, 0) == 0:
+            break
+        k = 4096 - o
+        if k > n - done:
+            k = n - done
+        i: u64 = 0
+        while i < k:
+            dst[done + i] = u8((ffs_b[(o + i) / 8] >> (((o + i) % 8) * 8)) & 255)
+            i += 1
+        done += k
+    return done
+
+def ffs_kwrite(slot: u64, off: u64, src: slice[u8]) -> u64:
+# write len(src) bytes from a kernel buffer at off, growing the file. Caller holds ffs_m.
+# 0 means an error; a successful write returns the length (which may be 0).
+    n = len(src)
+    if slot >= FFS_NI or ffs_it[slot * 8] == 0:
+        return 0
+    if n == 0:
+        return 0
+    end = off + n
+    if end < off or end > FFS_USER_MAX:
+        return 0
+    k = slot * 8
+    if end > ffs_it[k + 5]:
+        if ffs_grow(slot, end) == 0:
+            return 0
+    st = ffs_it[k + 6]
+    done: u64 = 0
+    while done < n:
+        b = (off + done) / 4096
+        o = (off + done) % 4096
+        if ffs_get(st + b, 0) == 0:
+            return 0
+        k = 4096 - o
+        if k > n - done:
+            k = n - done
+        i: u64 = 0
+        while i < k:
+            sh = ((o + i) % 8) * 8
+            w = (o + i) / 8
+            ffs_b[w] = (ffs_b[w] & (~(u64(255) << sh))) | (u64(src[done + i]) << sh)
+            i += 1
+        if ffs_put(st + b, 0) == 0:
+            return 0
+        done += k
+    if nvme_flush() == 0:
+        return 0
+    return done
+
+def ffs_unlink_slice(s: slice[u8]) -> u64:
+# 1 if the user-visible file was removed. Caller holds ffs_m.
+    if ffs_ok == 0 or ffs_user_ok(s) == 0:
+        return 0
+    i = ffs_find_slice(s)
+    if i == FFS_NI:
+        return 0
+    k: u64 = 0
+    while k < 8:
+        ffs_it[i * 8 + k] = 0
+        k += 1
+    return ffs_commit()
+
+def ffs_name_of(slot: u64, dst: slice[u8]) -> u64:
+# write the inode's name (NUL-terminated) into dst; returns the length. Caller holds ffs_m.
+    if slot >= FFS_NI or ffs_it[slot * 8] == 0 or len(dst) == 0:
+        if len(dst) != 0:
+            dst[0] = u8(0)
+        return 0
+    k = slot * 8
+    last = len(dst) - 1
+    if last > 39:
+        last = 39
+    i: u64 = 0
+    while i < last:
+        c = (ffs_it[k + i / 8] >> ((i % 8) * 8)) & 255
+        dst[i] = u8(c)
+        if c == 0:
+            return i
+        i += 1
+    dst[last] = u8(0)
+    return last
+
+def ffs_dir_next(pos: u64, name: slice[u8], sz: slice[u64]) -> u64:
+# the next user-visible inode at or after pos; writes the name and size, returns the index after it, or 0.
+# Caller holds ffs_m.
+    i = pos
+    while i < FFS_NI:
+        if ffs_it[i * 8] != 0:
+            n = ffs_name_of(i, name)
+            if n != 0 and ffs_user_ok(name) != 0:
+                if len(sz) != 0:
+                    sz[0] = ffs_it[i * 8 + 5]
+                return i + 1
+        i += 1
+    return 0
 
 def ffs_check(s: ptr[u8], size: u64, seed: u64, text: ptr[u8]):
     if ffs_hash(s) != ffs_expect(size, seed, text):

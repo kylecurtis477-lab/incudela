@@ -72,6 +72,12 @@ $S lxsig.cud $B/lxsig.elf $K ../../tests/unsafe/baseline.txt >/dev/null
 ../../build/fld -o $B/lxipc.raw $B/lxipc.o
 python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); d[7]=3; open(sys.argv[2],'wb').write(d)" $B/lxipc.raw $B/lxipc.elf
 $S lxipc.cud $B/lxipc.elf $K ../../tests/unsafe/baseline.txt >/dev/null
+# item 9: lxwrite (writable files on /data), built and tagged the same way
+../../build/cudc lxwrite.cud $B/lxwrite.s --fs-ssa $CUDC_FLAGS
+../../build/fas -o $B/lxwrite.o $B/lxwrite.s
+../../build/fld -o $B/lxwrite.raw $B/lxwrite.o
+python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); d[7]=3; open(sys.argv[2],'wb').write(d)" $B/lxwrite.raw $B/lxwrite.elf
+$S lxwrite.cud $B/lxwrite.elf $K ../../tests/unsafe/baseline.txt >/dev/null
 # 11.1e: BusyBox from verified source (tools/busybox), only when the source tarballs are on the box
 if [ -f ${BB_SRC:-/workspace/bb}/busybox-1.38.0.tar.bz2 ]; then
     sh ../../tools/busybox/build.sh $B/busybox.elf $K

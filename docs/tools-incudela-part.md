@@ -18,4 +18,4 @@ bytes_le = pack('<QQ', N, 0) in both the Python and Forge versions. That setting
 Implementation: the image is read whole, patched in memory and written back. This works for the 64-128 MiB test
 disks; a seek/pwrite version can follow once the runtime has those calls.
 
-Used by tests/os/forgefs.sh, which builds it with build/cudc, build/fas and build/fld.
+Used by tests/os/forgefs.sh and tests/os/lxwrite.sh, which build it with build/cudc, build/fas and build/fld.

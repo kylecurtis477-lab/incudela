@@ -1,0 +1,3 @@
+# lxwrite (item 9): writable files on a mounted Incudela FS at /data; docs is read-only so ESP writes stay EROFS
+dir /efi/incudela/docs
+wdir /data

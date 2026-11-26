@@ -25,20 +25,21 @@ Inside the personality a process reaches **only** the Linux table. No Forge sysc
 including the driver (400+), kexec/ktest (408/409, still also gated by `ktest_hooks`) and grant
 syscalls: they return -ENOSYS like any unknown number.
 
-## Syscalls (11.1a to 11.1e, then item 9; 43 in all)
+## Syscalls (11.1a to 11.1e, then item 9; 45 in all)
 
 | nr | name | notes |
 |----|------|-------|
 | 0 | read | Forge read on the fd (grants and rights checked) |
 | 1 | write | Forge write |
-| 2 | open | (11.1e part 4) no cwd, so the path must be absolute and name a held directory handle's label exactly (-> a dup of that handle, sharing its position) or lie under it (-> openat(handle, rest)); relative, `..`, outside every handle, or a mere label prefix -> EACCES; write flags -> EROFS; O_DIRECTORY / O_CLOEXEC as for openat |
+| 2 | open | (11.1e part 4, item 9) no cwd, so the path must be absolute and name a held directory handle's label exactly (-> a dup of that handle, sharing its position) or lie under it (-> openat(handle, rest)); relative, `..`, outside every handle, or a mere label prefix -> EACCES; write flags on the ESP or /obj -> EROFS; write flags on `/data` (a mounted Incudela FS granted with `wdir`) create, trunc, append or exclusive-create a user-visible file; kernel and object-store names under `/data` -> EACCES; O_DIRECTORY / O_CLOEXEC as for openat |
 | 3 | close | |
+| 87 | unlink | (item 9) a user-visible `/data` file through a held `wdir` handle with CAP_WRITE; reserved names and paths outside `/data` -> EACCES; missing -> ENOENT |
 | 8 | lseek | (11.1e part 12) FAT32 files: SEEK_SET 0 / SEEK_CUR 1 / SEEK_END 2; past the end is allowed (reads there return 0), a result below 0 or another whence -> EINVAL; a directory only rewinds (SEEK_SET 0, else EINVAL); the console -> ESPIPE; bad fd -> EBADF |
 | 20 | writev | (11.1e part 2) iovecs copied in one at a time, each through write (same fd checks); iovcnt > 1024 -> EINVAL, bad iov -> EFAULT; a later fault or short write returns the bytes so far |
 | 33 | dup2 | (11.1e part 11) dup's rules (rights carried over, grant ledger counted), then the copy moves to newfd; what newfd held is closed only once the dup succeeded; newfd is not close-on-exec; oldfd == newfd returns it after checking oldfd; bad oldfd or newfd >= 16 -> EBADF |
 | 35 | nanosleep | (11.1e part 9) sleeps whole 10 ms scheduler ticks (100 Hz), rounded up, capped at one day; not interrupted by signals yet, so rem is never written; tv_nsec >= 1e9 or negative tv_sec -> EINVAL, bad pointer -> EFAULT |
 | 63 | uname | (11.1e part 3) sysname `Linux`, nodename `forge`, release `0.2.6-forge`, version `#1 Forge Linux compat sandbox`, machine `x86_64`, domainname `(none)`; bad pointer -> EFAULT |
-| 72 | fcntl | (11.1e part 7) F_DUPFD 0 / F_DUPFD_CLOEXEC 1030 (dup's rules, lowest free fd >= arg; arg >= 16 -> EINVAL), F_GETFD 1 / F_SETFD 2 (FD_CLOEXEC), F_GETFL 3 (console O_RDWR, everything else O_RDONLY), F_SETFL 4 only when it changes nothing (O_NONBLOCK etc. -> EINVAL); bad fd -> EBADF, other commands -> EINVAL |
+| 72 | fcntl | (11.1e part 7, item 9) F_DUPFD 0 / F_DUPFD_CLOEXEC 1030 (dup's rules, lowest free fd >= arg; arg >= 16 -> EINVAL), F_GETFD 1 / F_SETFD 2 (FD_CLOEXEC), F_GETFL 3 (console O_RDWR; a `/data` file O_RDONLY / O_WRONLY / O_RDWR and O_APPEND when opened that way; everything else O_RDONLY), F_SETFL 4 only when it changes nothing (O_NONBLOCK etc. -> EINVAL); bad fd -> EBADF, other commands -> EINVAL |
 | 79 | getcwd | (11.1e part 8) always "/" (returns 2, the length with the NUL): there is no working directory, relative paths stay EACCES; size < 2 -> ERANGE, bad pointer -> EFAULT |
 | 4 | stat | (11.1e part 5) path resolved exactly like open (absolute, at or under a held directory handle; else EACCES / ENOENT), then fstat of that handle, which is closed again; bad buffer -> EFAULT |
 | 6 | lstat | (11.1e part 6) identical to stat 4: the FAT32 ESP has no symbolic links, so there is no link to not follow; same EACCES / ENOENT / EFAULT |
@@ -238,9 +239,9 @@ default action and exits 143.
 ## Not yet
 
 - Timed futex waits, FUTEX_REQUEUE/WAKE_OP, threads running in parallel on several CPUs.
-- newfstatat by path, readlink, writable files.
+- newfstatat by path, readlink.
 - Real-time signals (32..64), sigaltstack, signals to other processes, interrupting a futex wait.
-- /proc, sockets, writable files, and a coherent MAP_SHARED file map (file-backed MAP_PRIVATE is done). vfork is implemented as an eager-copy fork (not a shared-memory vfork).
+- /proc, sockets, and a coherent MAP_SHARED file map (file-backed MAP_PRIVATE is done; MAP_SHARED+PROT_WRITE of an ESP file stays EACCES). Writable files on `/data` are done (an explicitly created Incudela FS partition only). vfork is implemented as an eager-copy fork (not a shared-memory vfork).
 - Busybox (the Phase 11.1 acceptance test) needs a third-party static binary; it will be added only
   after the owner approves downloading one, and it will run under the same gate (sealed + sandboxed).
 - OSABI 0 Linux binaries (most static musl builds) are not detected as Linux; they are refused today
@@ -259,11 +260,11 @@ BusyBox is built from source only; no prebuilt third-party binary is used.
 - Image: static EXEC at 0x400000, EI_OSABI set to 3, sealed `cudseal.py --foreign` (level 3, unsafe 0, caps 0). `image_verify` refuses a level-3 seal on anything but a capability-free Linux image (reason 8); the 6.4 gate still refuses it outside the compat sandbox.
 - Manifest `examples/apps/busybox.mf`: one `dir /efi/incudela/docs` grant.
 
-Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; seq, expr now work; lxtest checks it); uname 63 (11.1e part 3: sysname Linux, nodename forge, release 0.2.6-forge, machine x86_64; `uname -s -m` works). open 2 (11.1e part 4: absolute paths under a grant; wc, sha256sum and cat of granted files work, a file outside is EACCES). stat 4 (11.1e part 5; `ls` of a directory outside the grant -> Permission denied). lstat 6 (11.1e part 6; same as stat, no symlinks). fcntl 72 (11.1e part 7; `ls` of the granted directory and `printf` work). getcwd 79 (11.1e part 8; `pwd` prints /). nanosleep 35 (11.1e part 9; `sleep 1` works). geteuid 107 (11.1e part 10; ash starts without an ENOSYS, `sh -c exit 3` exits 3). dup2 33 (11.1e part 11; ash `<` / `>` redirections). lseek 8 (11.1e part 12; `tail` works). ppoll 271 (11.1e part 13; ash's `read` builtin). 11.1 accepted: `busybox sh /efi/incudela/docs/hello.sh` (functions, loops, arithmetic, case, test, a `while read` over a redirected file, printf) runs to completion in the sandbox; the config also enables grep, test and head/tail options. Fork (57), vfork (58, the same eager-copy fork), fork-style clone, pipe (22), pipe2 (293) and file-backed mmap are implemented and tested by `run lxipc`. Ash pipelines and ash running an external command are in the gate: `run busybox sh /efi/incudela/docs/pipeline.sh` (a builtin pipeline, a pipeline to `/efi/incudela/docs/busybox wc`, and a simple `/efi/incudela/docs/busybox echo`). The manifest still grants only `dir /efi/incudela/docs`; `/efi/incudela/bin` stays denied, so a sealed copy of busybox is installed under docs for the external command. A `sh -c` line with `${IFS}` is not used for a pipeline: IFS includes a newline and breaks the script.
+Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; seq, expr now work; lxtest checks it); uname 63 (11.1e part 3: sysname Linux, nodename forge, release 0.2.6-forge, machine x86_64; `uname -s -m` works). open 2 (11.1e part 4: absolute paths under a grant; wc, sha256sum and cat of granted files work, a file outside is EACCES). stat 4 (11.1e part 5; `ls` of a directory outside the grant -> Permission denied). lstat 6 (11.1e part 6; same as stat, no symlinks). fcntl 72 (11.1e part 7; `ls` of the granted directory and `printf` work). getcwd 79 (11.1e part 8; `pwd` prints /). nanosleep 35 (11.1e part 9; `sleep 1` works). geteuid 107 (11.1e part 10; ash starts without an ENOSYS, `sh -c exit 3` exits 3). dup2 33 (11.1e part 11; ash `<` / `>` redirections). lseek 8 (11.1e part 12; `tail` works). ppoll 271 (11.1e part 13; ash's `read` builtin). 11.1 accepted: `busybox sh /efi/incudela/docs/hello.sh` (functions, loops, arithmetic, case, test, a `while read` over a redirected file, printf) runs to completion in the sandbox; the config also enables grep, test and head/tail options. Fork (57), vfork (58, the same eager-copy fork), fork-style clone, pipe (22), pipe2 (293) and file-backed mmap are implemented and tested by `run lxipc`. Ash pipelines and ash running an external command are in the gate: `run busybox sh /efi/incudela/docs/pipeline.sh` (a builtin pipeline, a pipeline to `/efi/incudela/docs/busybox wc`, and a simple `/efi/incudela/docs/busybox echo`). The manifest still grants only `dir /efi/incudela/docs`; `/efi/incudela/bin` stays denied, so a sealed copy of busybox is installed under docs for the external command. A `sh -c` line with `${IFS}` is not used for a pipeline: IFS includes a newline and breaks the script. Writable files on `/data` (item 9 batch 3) are tested by `run lxwrite` in `tests/os/lxwrite.sh`, not in the main boot script (that boot has no Incudela partition). The personality has 45 syscalls, including unlink 87.
 
 ## Application pass/fail list (item 9)
 
-Updated 2026-11-26 (batch 2). Programs are launched with `run` in the OS boot script unless noted.
+Updated 2026-11-26 (batch 3). Programs are launched with `run` in the OS boot script unless noted.
 
 ### Pass
 
@@ -271,7 +272,8 @@ Updated 2026-11-26 (batch 2). Programs are launched with `run` in the OS boot sc
 - `lxipc`: pipe and pipe2, fork, vfork and `clone(SIGCHLD)` reaped by wait4, and a file-backed mmap of `/efi/incudela/docs/hello.sh`. A bare `lxipc` without `run` is refused.
 - BusyBox applets already in the 11.1e gate: echo, true, false, basename, env, seq, expr, uname, wc, sha256sum, cat of a granted file, ls of a granted directory and a denied one, printf, pwd, sleep, `sh -c exit 3`, ash `<` / `>` redirections, tail, `sh /efi/incudela/docs/hello.sh`, grep.
 - Ash pipelines and ash running an external command, via `run busybox sh /efi/incudela/docs/pipeline.sh`: a builtin `echo | while read` pipeline, a pipeline to `/efi/incudela/docs/busybox wc -c`, and a simple `/efi/incudela/docs/busybox echo`. The external image is a sealed copy of busybox under the existing docs grant (`/efi/incudela/bin` stays denied).
+- `lxwrite`, via `tests/os/lxwrite.sh` (`run lxwrite` on a boot whose NVMe disk has an explicitly created Incudela FS partition): write opens of a granted ESP file stay EROFS; `wdir /data` allows create, write, read, append, lseek, fstat, unlink and O_EXCL on a user-visible file; kernel and object-store names (`persist.dat`, `hello.txt`, `objects.*`) stay EACCES and are hidden from getdents. The ESP and every other GPT partition are byte-identical afterwards. Ash `>` onto `/data` is not in the gate (the busybox manifest cannot grant `/data` on boots that have no Incudela partition).
 
 ### Not yet in the gate
 
-- Writable files, sockets, `/proc`, a coherent MAP_SHARED file map, and OSABI 0 binaries.
+- Sockets, `/proc`, a coherent MAP_SHARED file map, and OSABI 0 binaries.

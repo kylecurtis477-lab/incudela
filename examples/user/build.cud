@@ -120,7 +120,7 @@ def main():
     patch(out + "/hello.raw", out + "/linuxabi.elf", 7, 0, 3)
     quiet([s, "hello.cud", out + "/linuxabi.elf", k, bl])
     # 11.1: raw-syscall Linux programs, tagged EI_OSABI = 3 before sealing so the seal covers the tag
-    for p in ["lxtest", "lxthreads", "lxfs", "lxexec", "lxsig", "lxipc"]:
+    for p in ["lxtest", "lxthreads", "lxfs", "lxexec", "lxsig", "lxipc", "lxwrite"]:
         b = out + "/" + p
         step(["../../build/cudc", p + ".cud", b + ".s"] + flags)
         step(["../../build/fas", "-o", b + ".o", b + ".s"])

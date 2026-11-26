@@ -32,6 +32,8 @@
 # short write or a fault after some bytes, like Linux).
 # 11.1e: uname 63 (sysname Linux -- the personality's ABI --, nodename forge, release 0.2.6-forge,
 # machine x86_64).
+# item 9: unlink 87, and write opens (O_WRONLY / O_RDWR / O_CREAT / O_TRUNC / O_APPEND / O_EXCL) on
+# /data only (a mounted Incudela FS granted with wdir). Write opens of the ESP or /obj stay EROFS.
 # 11.1e: open 2, and openat(AT_FDCWD, absolute): there is still no cwd, so only an absolute path that
 # names a held directory handle's label ("<label>" itself -> a dup of that handle, sharing its
 # position) or lies under it ("<label>/<rest>" -> openat(handle, rest)) opens; anything else is EACCES.
@@ -51,7 +53,7 @@
 # waiting; the console reports ready and its read then blocks as usual), closed fds get POLLNVAL.
 # Not yet: real-time signals (32..64), sigaltstack, signals to other processes.
 LX_ABI = 1
-LX_NSYS = 44  # syscalls in the table above (item 9: pipe 22, pipe2 293, fork 57, vfork 58, wait4 61)
+LX_NSYS = 45  # syscalls in the table above (item 9: pipe 22, pipe2 293, fork 57, vfork 58, wait4 61, unlink 87)
 ARCH_SET_FS = 0x1002
 ARCH_GET_FS = 0x1003
 ERANGE = 0xFFFFFFFFFFFFFFDE
@@ -539,14 +541,98 @@ def lx_proc_done(p: ptr[Proc]):
 AT_FDCWD = 0xFFFFFFFFFFFFFF9C
 O_ACCMODE = 3
 O_WRITEISH = 0x640  # O_CREAT | O_TRUNC | O_APPEND
+O_EXCL = 0x80
+O_CREAT = 0x40
+O_TRUNC = 0x200
+O_APPEND = 0x400
 O_DIRECTORY = 0x10000
 LX_DENT_MIN = 768  # getdents64 needs room for the largest record (documented)
+
+def lx_open_write(dirfd: u64, upath: u64, flags: u64) -> u64:
+# write opens are allowed only on /data (a mounted Incudela FS). A write open of the ESP or /obj
+# is still EROFS. MAP_SHARED+PROT_WRITE of an ESP file stays EACCES (not a coherent shared map).
+    if dirfd == AT_FDCWD:
+        path: u8[128]
+        if copy_str_user(u64(addr(path[0])), upath, 128) > 127:
+            return EFAULT
+        if path[0] != 47 or path_ok(path[:]) == 0:
+            return EACCES
+        p = cur_proc()
+        i: u64 = 0
+        while i < NFD:
+            d = fd_get(p, i)
+            if u64(d) != 0 and (d.type == F_DIR or d.type == F_FDIR) and (p.fdr[i] & CAP_LOOKUP) != 0:
+                k: u64 = 0
+                while k < 31 and d.lab[k] != 0 and path[k] == d.lab[k]:
+                    k += 1
+                if k > 0 and k < 31 and d.lab[k] == 0:
+                    if path[k] == 0:
+                        if d.type != F_FDIR:
+                            return EROFS
+                        return EISDIR
+                    if path[k] == 47 and path[k + 1] != 0:
+                        if d.type != F_FDIR:
+                            return EROFS
+                        if gr_use(d.gid, "openat") != 0:
+                            return EACCES
+                        return ffs_open_name(p, path[k + 1:], p.fdr[i], flags, d.gid)
+            i += 1
+        return EACCES
+    p = cur_proc()
+    d = fd_get(p, dirfd & 0xFFFFFFFF)
+    if u64(d) == 0:
+        return EBADF
+    if (p.fdr[dirfd & 0xFFFFFFFF] & CAP_LOOKUP) == 0:
+        return EPERM
+    if d.type != F_FDIR:
+        return EROFS
+    rel: u8[128]
+    if copy_str_user(u64(addr(rel[0])), upath, 128) > 127:
+        return EFAULT
+    if rel[0] == 47 or path_ok(rel[:]) == 0:
+        return EACCES
+    if gr_use(d.gid, "openat") != 0:
+        return EACCES
+    return ffs_open_name(p, rel[:], p.fdr[dirfd & 0xFFFFFFFF], flags, d.gid)
+
+def lx_unlink(upath: u64) -> u64:
+# unlink(path): a user-visible /data file only, through a held F_FDIR handle with CAP_WRITE
+    path: u8[128]
+    if copy_str_user(u64(addr(path[0])), upath, 128) > 127:
+        return EFAULT
+    if path[0] != 47 or path_ok(path[:]) == 0:
+        return EACCES
+    p = cur_proc()
+    i: u64 = 0
+    while i < NFD:
+        d = fd_get(p, i)
+        if u64(d) != 0 and d.type == F_FDIR and (p.fdr[i] & CAP_LOOKUP) != 0:
+            k: u64 = 0
+            while k < 31 and d.lab[k] != 0 and path[k] == d.lab[k]:
+                k += 1
+            if k > 0 and k < 31 and d.lab[k] == 0 and path[k] == 47 and path[k + 1] != 0:
+                if (p.fdr[i] & CAP_WRITE) == 0:
+                    return EACCES
+                if gr_use(d.gid, "unlink") != 0:
+                    return EACCES
+                ffs_lock()
+                r = ffs_unlink_slice(path[k + 1:])
+                ffs_unlock()
+                if r == 0:
+                    if ffs_ok == 0:
+                        return ENOENT
+                    if ffs_user_ok(path[k + 1:]) == 0:
+                        return EACCES
+                    return ENOENT
+                return 0
+        i += 1
+    return EACCES
 
 def lx_openat(dirfd: u64, upath: u64, flags: u64) -> u64:
 # no current directory, so no ambient lookup: AT_FDCWD and absolute paths are refused; a relative
 # path resolves under a held directory handle with LOOKUP (sys_openat: rights, grants, no "..")
-    if (flags & O_ACCMODE) != 0 or (flags & O_WRITEISH) != 0:
-        return EROFS  # the mounted file systems are read-only to applications
+    if (flags & O_ACCMODE) != 0 or (flags & O_WRITEISH) != 0 or (flags & O_EXCL) != 0:
+        return lx_open_write(dirfd, upath, flags)
     fd: u64 = 0
     if dirfd == AT_FDCWD:
         fd = lx_open_abs(upath)
@@ -556,7 +642,7 @@ def lx_openat(dirfd: u64, upath: u64, flags: u64) -> u64:
         return fd
     if (flags & O_DIRECTORY) != 0:
         fl = fd_get(cur_proc(), fd)
-        if u64(fl) == 0 or (fl.type != F_DIR and fl.type != F_ODIR):
+        if u64(fl) == 0 or (fl.type != F_DIR and fl.type != F_ODIR and fl.type != F_FDIR):
             sys_close(fd)
             return ENOTDIR
     lx_cx(fd, (flags >> 19) & 1)  # 11.1d: O_CLOEXEC (0x80000) is honoured by execve
@@ -573,7 +659,7 @@ def lx_open_abs(upath: u64) -> u64:
     i: u64 = 0
     while i < NFD:
         d = fd_get(p, i)
-        if u64(d) != 0 and d.type == F_DIR and (p.fdr[i] & CAP_LOOKUP) != 0:
+        if u64(d) != 0 and (d.type == F_DIR or d.type == F_FDIR) and (p.fdr[i] & CAP_LOOKUP) != 0:
             k: u64 = 0
             while k < 31 and d.lab[k] != 0 and path[k] == d.lab[k]:
                 k += 1
@@ -596,8 +682,9 @@ def lx_stat(upath: u64, ubuf: u64) -> u64:
 
 def lx_fcntl(fd: u64, cmd: u64, arg: u64) -> u64:
 # fcntl: F_DUPFD 0 / F_DUPFD_CLOEXEC 1030 (sys_dup's rules, then the lowest free fd >= arg),
-# F_GETFD 1 / F_SETFD 2 (FD_CLOEXEC), F_GETFL 3 (console O_RDWR, everything else O_RDONLY: no
-# writable files), F_SETFL 4 (only a no-op: no status flag can be changed); anything else EINVAL
+# F_GETFD 1 / F_SETFD 2 (FD_CLOEXEC), F_GETFL 3 (console O_RDWR; a /data file O_RDONLY / O_WRONLY /
+# O_RDWR and O_APPEND when opened that way; everything else O_RDONLY), F_SETFL 4 (only a no-op:
+# no status flag can be changed); anything else EINVAL
     p = cur_proc()
     if fd >= NFD or p.fds[fd] == 0:
         return EBADF
@@ -632,6 +719,13 @@ def lx_fcntl(fd: u64, cmd: u64, arg: u64) -> u64:
     if fl != 0:
         if fl.type == F_CONSOLE:
             cur = 2
+        elif fl.type == F_FFILE or fl.type == F_FDIR:
+            if (p.fdr[fd] & CAP_WRITE) != 0 and (p.fdr[fd] & CAP_READ) != 0:
+                cur = 2
+            elif (p.fdr[fd] & CAP_WRITE) != 0:
+                cur = 1
+            if fl.type == F_FFILE and (fl.cidx & 1) != 0:
+                cur = cur | O_APPEND
     if cmd == 3:
         return cur
     if cmd == 4:
@@ -673,12 +767,12 @@ def lx_lseek(fd: u64, off: u64, whence: u64) -> u64:
     fl = fd_get(p, fd)
     if fl == 0:
         return EBADF
-    if fl.type == F_DIR:
+    if fl.type == F_DIR or fl.type == F_FDIR:
         if whence == 0 and off == 0:
             fl.pos = 0
             return 0
         return EINVAL
-    if fl.type != F_FILE:
+    if fl.type != F_FILE and fl.type != F_FFILE:
         return ESPIPE
     base: u64 = 0
     if whence == 1:
@@ -787,8 +881,10 @@ def lx_fstat(fd: u64, ubuf: u64) -> u64:
         return EACCES
     mode: u64 = 0x8124  # S_IFREG | 0444
     st[2] = 1
-    if fl.type == F_DIR or fl.type == F_ODIR:
+    if fl.type == F_DIR or fl.type == F_ODIR or fl.type == F_FDIR:
         mode = 0x416D  # S_IFDIR | 0555
+        if fl.type == F_FDIR:
+            mode = 0x41ED  # S_IFDIR | 0755
         st[2] = 2
     elif fl.type == F_CONSOLE:
         mode = 0x2190  # S_IFCHR | 0620
@@ -798,8 +894,11 @@ def lx_fstat(fd: u64, ubuf: u64) -> u64:
     st[0] = 0xF0  # st_dev: one device number for the Forge VFS
     st[1] = fl.clu + 1
     st[3] = mode
-    if fl.type == F_FILE or fl.type == F_OBJ:
+    if fl.type == F_FILE or fl.type == F_OBJ or fl.type == F_FFILE:
         st[6] = fl.size
+        if fl.type == F_FFILE:
+            mode = 0x81B6  # S_IFREG | 0666
+            st[3] = mode
     st[7] = 4096
     st[8] = (st[6] + 511) / 512
     if copy_user(ubuf, u64(addr(st[0])), 144) != 0:
@@ -819,7 +918,7 @@ def lx_getdents64(fd: u64, ubuf: u64, n: u64) -> u64:
     fl = fd_get(p, fd)
     if u64(fl) == 0:
         return EBADF
-    if fl.type != F_DIR and fl.type != F_ODIR:
+    if fl.type != F_DIR and fl.type != F_ODIR and fl.type != F_FDIR:
         return ENOTDIR
     if (p.fdr[fd] & CAP_READ) == 0:
         return EPERM
@@ -835,6 +934,8 @@ def lx_getdents64(fd: u64, ubuf: u64, n: u64) -> u64:
         k: u64 = 0
         if fl.type == F_ODIR:
             k = odir_read(fl, 0, fb, 1, kb[:])
+        elif fl.type == F_FDIR:
+            k = fdir_put(fl, kb[0:fb])
         else:
             k = dir_read(fl, u64(addr(kb[0])), fb, 1)
         if k > 0xFFFFFFFFFFFFF000:
@@ -883,7 +984,6 @@ def lx_getdents64(fd: u64, ubuf: u64, n: u64) -> u64:
 LX_NODIR = 0xFFFFFFFFFFFFFFFF
 AT_EMPTY_PATH = 0x1000
 E2BIG = 0xFFFFFFFFFFFFFFF9
-EIO = 0xFFFFFFFFFFFFFFFB
 lx_execs: u64
 lx_exec_refused: u64
 
@@ -1422,13 +1522,15 @@ def lx_dispatch(nr: u64, a: u64, b: u64, c: u64, d: u64) -> u64:
 # mmap (9, six arguments) is routed by syscall_dispatch, which reads r8/r9 from the frame
     p = cur_proc()
     p.lx_calls += 1
-    if nr == 0 or nr == 1 or nr == 2 or nr == 4 or nr == 6 or nr == 72 or nr == 20 or nr == 16 or nr == 5 or nr == 217 or nr == 257 or nr == 33 or nr == 8:
+    if nr == 0 or nr == 1 or nr == 2 or nr == 4 or nr == 6 or nr == 72 or nr == 20 or nr == 16 or nr == 5 or nr == 217 or nr == 257 or nr == 33 or nr == 8 or nr == 87:
         atomic_fetch_add(addr(p.fdbusy), 1, acq_rel)
         r: u64 = 0
         if nr == 0:
             r = sys_read(a, b, c)
         elif nr == 1:
             r = sys_write(a, b, c)
+        elif nr == 87:
+            r = lx_unlink(a)
         elif nr == 20:
             r = lx_writev(a, b, c)
         elif nr == 2:

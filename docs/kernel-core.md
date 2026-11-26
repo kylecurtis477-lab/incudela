@@ -153,7 +153,7 @@ outside that configuration. The interface in §§0–5 is unchanged.
 ### A.1 What is verified, and by which tests
 
 Markers in this section are exact serial (or framebuffer) substrings required by `tests/os/run.sh`
-or a kernel self-test. A result name is one of the 68 entries in `tests/os/expected-results.txt`
+or a kernel self-test. A result name is one of the 69 entries in `tests/os/expected-results.txt`
 (`os/result-count` fails if any is missing). The framebuffer check on the BIOS, UEFI, EFI-loader
 and IOMMU boots requires `back == front` and a row that decodes as `KERNEL OK`.
 
@@ -256,7 +256,7 @@ the build output.
 **Linux personality, modules, live patch, nondeterminism.** `lxtest: PASS`, `lxthreads: PASS`,
 `lxfs: PASS`, `lxexec: PASS`, `lxipc: PASS`, `lxsig: PASS`, and BusyBox ash (`hello from ash, forge`,
 `script done: ok`) run only in the compat sandbox; a plain exec of a Linux image is refused.
-The Linux personality has 44 syscalls after item 9 batch 2 (pipe, fork/wait4, vfork as an eager-copy fork, file-backed mmap, and an ash pipeline in the gate).
+The Linux personality has 45 syscalls after item 9 batch 3 (pipe, fork/wait4, vfork as an eager-copy fork, file-backed mmap, an ash pipeline in the gate, and writable files on `/data` with unlink).
 Modules: `module ABI OK: 1002 loads, 1002 unloads, 7 rejected`. Live patch:
 `live patching OK`. The nondeterminism hook: `nondet: recording off by default`, `nondet hook OK`.
 

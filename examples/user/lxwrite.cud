@@ -1,0 +1,163 @@
+# cuditor: no-runtime
+# cuditor: caps()
+# Item 9 Linux-ABI writable files on /data (docs/linux-compat.md). Built and sealed like lxtest
+# (EI_OSABI = 3, examples/user/build.sh) and launched only with sh `run lxwrite` in the compat
+# sandbox, on a boot whose NVMe disk has an explicitly created Incudela FS partition. Raw Linux
+# syscalls only. Writes on the ESP stay EROFS; kernel and object-store names under /data stay
+# EACCES. Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409 stay ktest_hooks gated. The
+# kernel unsafe cap is unchanged (709).
+
+ENOSYS = 0xFFFFFFFFFFFFFFDA
+EINVAL = 0xFFFFFFFFFFFFFFEA
+EFAULT = 0xFFFFFFFFFFFFFFF2
+EEXIST = 0xFFFFFFFFFFFFFFEF
+ENOENT = 0xFFFFFFFFFFFFFFFE
+EROFS = 0xFFFFFFFFFFFFFFE2
+EACCES = 0xFFFFFFFFFFFFFFF3
+EISDIR = 0xFFFFFFFFFFFFFFEB
+
+O_WRONLY = 1
+O_RDWR = 2
+O_CREAT = 0x40
+O_EXCL = 0x80
+O_TRUNC = 0x200
+O_APPEND = 0x400
+F_GETFL = 3
+
+fails: u64
+checks: u64
+buf: u8[256]
+blen: u64
+st: u64[18]
+path: u8[48]
+got: u8[32]
+msg: u8[16]
+dents: u8[1024]
+
+@naked
+def lsys(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
+    asm("mov %rdi,%rax", "mov %rsi,%rdi", "mov %rdx,%rsi", "mov %rcx,%rdx", "mov %r8,%r10",
+        "mov %r9,%r8", "xor %r9d,%r9d", "syscall", "ret")
+
+@unsafe
+def peek(a: u64) -> u64:
+    return ptr[u64](a)[0]
+
+@unsafe
+def peek8(a: u64) -> u64:
+    return u64(ptr[u8](a)[0])
+
+def flush():
+    lsys(1, 1, u64(addr(buf[0])), blen, 0, 0)
+    blen = 0
+
+def putz(p: u64):
+    i: u64 = 0
+    while peek8(p + i) != 0 and blen < 255 and i < 200:
+        buf[blen] = u8(peek8(p + i))
+        blen += 1
+        i += 1
+
+def put(s: ptr[u8]):
+    putz(u64(s))
+
+def putn(n: u64):
+    if n >= 10:
+        putn(n / 10)
+    if blen < 255:
+        buf[blen] = u8(48 + n % 10)
+        blen += 1
+
+def check(ok: u64, what: ptr[u8]):
+    checks += 1
+    if ok == 0:
+        fails += 1
+        put("lxwrite: FAIL ")
+        put(what)
+        put("\n")
+        flush()
+
+def setpath(s: ptr[u8]):
+    i: u64 = 0
+    while peek8(u64(s) + i) != 0:
+        path[i] = u8(peek8(u64(s) + i))
+        i += 1
+    path[i] = 0
+
+def lx_main(sp: u64):
+    setpath("/efi/incudela/docs/hello.sh")
+    check(lsys(2, u64(addr(path[0])), O_WRONLY, 0, 0, 0) == EROFS, "ESP O_WRONLY -> EROFS")
+    check(lsys(2, u64(addr(path[0])), O_WRONLY | O_CREAT | O_TRUNC, 0, 0, 0) == EROFS, "ESP O_CREAT -> EROFS")
+    setpath("/data")
+    dd = lsys(2, u64(addr(path[0])), 0, 0, 0, 0)
+    check((dd >> 63) == 0, "open /data")
+    check(lsys(5, dd, u64(addr(st[0])), 0, 0, 0) == 0, "fstat /data")
+    check((st[3] & 0xF000) == 0x4000, "fstat /data S_IFDIR")
+    n = lsys(217, dd, u64(addr(dents[0])), 1024, 0, 0)
+    check((n >> 63) == 0, "getdents64 /data")
+    lsys(3, dd, 0, 0, 0, 0)
+    setpath("/data/persist.dat")
+    check(lsys(2, u64(addr(path[0])), 0, 0, 0, 0) == EACCES, "open persist.dat -> EACCES")
+    setpath("/data/hello.txt")
+    check(lsys(2, u64(addr(path[0])), 0, 0, 0, 0) == EACCES, "open hello.txt -> EACCES")
+    setpath("/data/objects.log")
+    check(lsys(2, u64(addr(path[0])), 0, 0, 0, 0) == EACCES, "open objects.log -> EACCES")
+    setpath("/data/lxwrite.dat")
+    fd = lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT | O_TRUNC, 0, 0, 0)
+    check((fd >> 63) == 0, "create /data/lxwrite.dat")
+    msg[0] = 104
+    msg[1] = 101
+    msg[2] = 108
+    msg[3] = 108
+    msg[4] = 111
+    msg[5] = 45
+    msg[6] = 100
+    msg[7] = 97
+    msg[8] = 116
+    msg[9] = 97
+    wr = lsys(1, fd, u64(addr(msg[0])), 10, 0, 0)
+    check(wr == 10, "write 10")
+    check(lsys(8, fd, 0, 0, 0, 0) == 0, "lseek SET 0")
+    rd = lsys(0, fd, u64(addr(got[0])), 16, 0, 0)
+    check(rd == 10, "read 10")
+    check(got[0] == 104 and got[4] == 111 and got[9] == 97, "read bytes")
+    check(lsys(5, fd, u64(addr(st[0])), 0, 0, 0) == 0, "fstat file")
+    check((st[3] & 0xF000) == 0x8000 and st[6] == 10, "fstat S_IFREG size 10")
+    fl = lsys(72, fd, F_GETFL, 0, 0, 0)
+    check(fl == O_RDWR, "F_GETFL O_RDWR")
+    lsys(3, fd, 0, 0, 0, 0)
+    fd = lsys(2, u64(addr(path[0])), O_WRONLY | O_APPEND, 0, 0, 0)
+    check((fd >> 63) == 0, "reopen O_APPEND")
+    msg[10] = 33
+    check(lsys(1, fd, u64(addr(msg[10])), 1, 0, 0) == 1, "append 1")
+    lsys(3, fd, 0, 0, 0, 0)
+    fd = lsys(2, u64(addr(path[0])), 0, 0, 0, 0)
+    rd = lsys(0, fd, u64(addr(got[0])), 16, 0, 0)
+    check(rd == 11 and got[10] == 33, "read after append")
+    lsys(3, fd, 0, 0, 0, 0)
+    check(lsys(87, u64(addr(path[0])), 0, 0, 0, 0) == 0, "unlink lxwrite.dat")
+    check(lsys(2, u64(addr(path[0])), 0, 0, 0, 0) == ENOENT, "open after unlink -> ENOENT")
+    fd = lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT | O_EXCL, 0, 0, 0)
+    check((fd >> 63) == 0, "O_CREAT|O_EXCL")
+    lsys(3, fd, 0, 0, 0, 0)
+    check(lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT | O_EXCL, 0, 0, 0) == EEXIST, "second O_EXCL -> EEXIST")
+    fd = lsys(2, u64(addr(path[0])), O_RDWR, 0, 0, 0)
+    check((fd >> 63) == 0, "reopen existing")
+    lsys(3, fd, 0, 0, 0, 0)
+    check(lsys(87, u64(addr(path[0])), 0, 0, 0, 0) == 0, "unlink again")
+    check(lsys(409, 0, 0, 0, 0, 0) == ENOSYS, "syscall 409 -> ENOSYS")
+    put("lxwrite: ESP write EROFS, reserved /data names EACCES\n")
+    flush()
+    put("lxwrite: create/write/read/append/unlink/O_EXCL on /data/lxwrite.dat\n")
+    flush()
+    if fails == 0:
+        put("lxwrite: PASS (")
+        putn(checks)
+        put(" checks)\n")
+    flush()
+    lsys(231, fails, 0, 0, 0, 0)
+
+@naked
+@export
+def _start():
+    asm("mov %rsp, %rdi", "and $-16, %rsp", "call lx_main", "ud2")

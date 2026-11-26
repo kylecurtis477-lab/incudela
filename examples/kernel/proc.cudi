@@ -20,6 +20,9 @@ ENOTDIR = 0xFFFFFFFFFFFFFFEC
 EISDIR = 0xFFFFFFFFFFFFFFEB
 EINVAL = 0xFFFFFFFFFFFFFFEA
 EROFS = 0xFFFFFFFFFFFFFFE2
+EEXIST = 0xFFFFFFFFFFFFFFEF
+ENOSPC = 0xFFFFFFFFFFFFFFE4
+EIO = 0xFFFFFFFFFFFFFFFB
 ENOSYS = 0xFFFFFFFFFFFFFFDA
 EACCES = 0xFFFFFFFFFFFFFFF3
 CAP_READ = 1
@@ -299,6 +302,8 @@ def dir_read(fl: ptr[File], ubuf: u64, n: u64, kern: u64) -> u64:
 F_OBJ = 5
 F_ODIR = 6
 F_PIPE = 7  # item 9: Linux pipe/pipe2 ends (pipe.cudi); clu = pipe index, pos = 0 read / 1 write
+F_FFILE = 8  # item 9: a user-visible Incudela FS file under /data; clu = inode slot, cidx bit 0 = O_APPEND
+F_FDIR = 9  # item 9: the /data directory (the user-visible view of a mounted Incudela FS)
 ofs_m: Mutex
 
 ovfs_o: u64  # ovfs_resolve results: object id, clock
@@ -1272,6 +1277,8 @@ def sys_open(upath: u64) -> u64:
         return EACCES
     if path_ok(path[:]) == 0:
         return EACCES
+    if ffs_path_kind(path[:]) != 0:
+        return ffs_open_abs(p, path[:], p.fdr[CAP_ROOT_FD], 0, 0)
     o = ovfs_open(path[:])
     if o != OB_ERR:
         return fd_label(p, ovfs_install(p, o, p.fdr[CAP_ROOT_FD]), path[:], 0)
@@ -1301,6 +1308,13 @@ def sys_stat(upath: u64, ubuf: u64) -> u64:
         return EACCES
     if path_ok(path[:]) == 0:
         return EACCES
+    if ffs_path_kind(path[:]) != 0:
+        r = ffs_stat(path[:], st[:])
+        if r != 0:
+            return r
+        if user_ptr_ok(ubuf, 16) == 0 or copy_user(ubuf, u64(addr(st[0])), 16) != 0:
+            return EFAULT
+        return 0
     fl = ovfs_open(path[:])
     if fl == OB_ERR:
         fl = vfs_open(addr(path[0]))
@@ -1338,6 +1352,10 @@ def sys_read(fd: u64, ubuf: u64, n: u64) -> u64:
         r = ofile_read(fl, ubuf, n)
         au_moved(fl.gid, r)
         return r
+    if fl.type == F_FFILE:
+        r = ffile_read(fl, ubuf, n)
+        au_moved(fl.gid, r)
+        return r
     return EISDIR
 
 def sys_write(fd: u64, ubuf: u64, n: u64) -> u64:
@@ -1354,6 +1372,10 @@ def sys_write(fd: u64, ubuf: u64, n: u64) -> u64:
         return con_write_user(ubuf, n)
     if fl.type == F_PIPE:
         return pipe_write(fl, ubuf, n)
+    if fl.type == F_FFILE:
+        r = ffile_write(fl, ubuf, n)
+        au_moved(fl.gid, r)
+        return r
     return EROFS
 
 def sys_getdents(fd: u64, ubuf: u64, n: u64) -> u64:
@@ -1369,6 +1391,8 @@ def sys_getdents(fd: u64, ubuf: u64, n: u64) -> u64:
     if fl.type == F_ODIR:
         z: u8[1]
         return odir_read(fl, ubuf, n, 0, z[:])
+    if fl.type == F_FDIR:
+        return fdir_read(fl, ubuf, n)
     if fl.type != F_DIR:
         return ENOTDIR
     return dir_read(fl, ubuf, n, 0)
@@ -1529,6 +1553,260 @@ def cap_deny(p: ptr[Proc], what: ptr[u8], path: ptr[u8]):
     puts(what)
     puts(" (no root capability)\n")
 
+
+def ffs_stat(path: slice[u8], st: slice[u64]) -> u64:
+# native stat of /data: st[0] = size, st[1] = 1 if the path is the directory. 0 or an errno.
+    kind = ffs_path_kind(path)
+    if kind == 0 or ffs_ok == 0:
+        return ENOENT
+    if kind == 1:
+        st[0] = 0
+        st[1] = 1
+        return 0
+    i: u64 = 6
+    n = len(path)
+    while i < n and path[i] != 0:
+        if path[i] == 47:
+            return EACCES
+        i += 1
+    if ffs_user_ok(path[6:]) == 0:
+        return EACCES
+    ffs_lock()
+    slot = ffs_find_slice(path[6:])
+    if slot == FFS_NI:
+        ffs_unlock()
+        return ENOENT
+    st[0] = ffs_it[slot * 8 + 5]
+    st[1] = 0
+    ffs_unlock()
+    return 0
+
+def ffs_path_kind(s: slice[u8]) -> u64:
+# 0 = not under /data, 1 = /data or /data/, 2 = /data/<name>
+    n = len(s)
+    i: u64 = 0
+    while i < n and s[i] != 0:
+        i += 1
+    if i < 5:
+        return 0
+    if s[0] != 47 or s[1] != 100 or s[2] != 97 or s[3] != 116 or s[4] != 97:
+        return 0
+    if i == 5:
+        return 1
+    if s[5] != 47:
+        return 0
+    if i == 6:
+        return 1
+    return 2
+
+def ffs_install(p: ptr[Proc], fl: u64, r: u64) -> u64:
+# an Incudela FS handle: CAP_WRITE may pass through (it is stripped for FAT and /obj)
+    fd = fd_free(p)
+    if fd == NFD:
+        file_put(fl)
+        return EMFILE
+    if fl == 0:
+        return ENOENT
+    p.fds[fd] = fl
+    p.fdr[fd] = r & (CAP_READ | CAP_WRITE | CAP_LOOKUP | CAP_DUP | CAP_XFER)
+    return fd
+
+def ffile_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
+    kb: u8[512]
+    done: u64 = 0
+    ffs_lock()
+    if ffs_ok == 0 or fl.clu >= FFS_NI or ffs_it[fl.clu * 8] == 0:
+        ffs_unlock()
+        return EIO
+    fl.size = ffs_it[fl.clu * 8 + 5]
+    while done < n:
+        k = 512
+        if k > n - done:
+            k = n - done
+        r = ffs_kread(fl.clu, fl.pos, kb[0:k])
+        if r == 0:
+            break
+        if copy_user(ubuf + done, u64(addr(kb[0])), r) != 0:
+            ffs_unlock()
+            if done != 0:
+                return done
+            return EFAULT
+        fl.pos += r
+        done += r
+        if r < k:
+            break
+    ffs_unlock()
+    return done
+
+def ffile_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
+    kb: u8[512]
+    if (fl.cidx & 1) != 0:
+        fl.pos = fl.size
+    done: u64 = 0
+    ffs_lock()
+    if ffs_ok == 0 or fl.clu >= FFS_NI or ffs_it[fl.clu * 8] == 0:
+        ffs_unlock()
+        return EIO
+    fl.size = ffs_it[fl.clu * 8 + 5]
+    if (fl.cidx & 1) != 0:
+        fl.pos = fl.size
+    while done < n:
+        k = 512
+        if k > n - done:
+            k = n - done
+        if copy_user(u64(addr(kb[0])), ubuf + done, k) != 0:
+            ffs_unlock()
+            if done != 0:
+                return done
+            return EFAULT
+        r = ffs_kwrite(fl.clu, fl.pos, kb[0:k])
+        if r == 0:
+            break
+        fl.pos += r
+        if fl.pos > fl.size:
+            fl.size = fl.pos
+        done += r
+        if r < k:
+            break
+    ffs_unlock()
+    if done == 0 and n != 0:
+        return ENOSPC
+    return done
+
+def fdir_put(fl: ptr[File], dst: slice[u8]) -> u64:
+# Forge getdents records for the user-visible /data names (same layout as dir_read) into a kernel slice
+    nm: u8[40]
+    rec: u8[64]
+    sz: u64[1]
+    n = len(dst)
+    done: u64 = 0
+    ffs_lock()
+    if ffs_ok == 0:
+        ffs_unlock()
+        return 0
+    while 1:
+        nx = ffs_dir_next(fl.pos, nm[:], sz[:])
+        if nx == 0:
+            break
+        l: u64 = 0
+        while l < 40 and nm[l] != 0:
+            l += 1
+        rl = 9 + l + 1
+        if done + rl > n:
+            break
+        v = sz[0]
+        i: u64 = 0
+        while i < 8:
+            rec[i] = u8((v >> (i * 8)) & 255)
+            i += 1
+        rec[8] = u8(0)
+        i = 0
+        while i <= l:
+            rec[9 + i] = nm[i]
+            i += 1
+        i = 0
+        while i < rl:
+            dst[done + i] = rec[i]
+            i += 1
+        done += rl
+        fl.pos = nx
+    ffs_unlock()
+    return done
+
+def fdir_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
+# user-buffer getdents of /data: fill a bounce slice, then copy_user
+    kb: u8[512]
+    done: u64 = 0
+    while done < n:
+        want = n - done
+        if want > 512:
+            want = 512
+        r = fdir_put(fl, kb[0:want])
+        if r == 0:
+            break
+        if copy_user(ubuf + done, u64(addr(kb[0])), r) != 0:
+            if done != 0:
+                return done
+            return EFAULT
+        done += r
+        if r < want:
+            break
+    return done
+
+def ffs_open_name(p: ptr[Proc], name: slice[u8], rights: u64, flags: u64, gid: u64) -> u64:
+# open or create a /data file relative to the directory handle. flags are the Linux O_* bits (0 for
+# a native open: existing file, read). Caller has already checked LOOKUP and the grant.
+    if ffs_ok == 0:
+        return ENOENT
+    if (flags & O_DIRECTORY) != 0:
+        return ENOTDIR
+    if ffs_user_ok(name) == 0:
+        return EACCES
+    acc = flags & O_ACCMODE
+    wr = 0
+    if acc != 0 or (flags & (O_CREAT | O_TRUNC | O_APPEND | O_EXCL)) != 0:
+        wr = 1
+    if wr != 0 and (rights & CAP_WRITE) == 0:
+        return EACCES
+    ffs_lock()
+    slot = ffs_find_slice(name)
+    if slot == FFS_NI:
+        if (flags & O_CREAT) == 0:
+            ffs_unlock()
+            return ENOENT
+        if wr == 0 or (rights & CAP_WRITE) == 0:
+            ffs_unlock()
+            return EACCES
+        slot = ffs_create_empty(name)
+        if slot == FFS_NI:
+            ffs_unlock()
+            return ENOSPC
+    elif (flags & O_CREAT) != 0 and (flags & O_EXCL) != 0:
+        ffs_unlock()
+        return EEXIST
+    elif (flags & O_TRUNC) != 0:
+        if (rights & CAP_WRITE) == 0:
+            ffs_unlock()
+            return EACCES
+        if ffs_grow(slot, 0) == 0:
+            ffs_unlock()
+            return EIO
+    size = ffs_it[slot * 8 + 5]
+    ffs_unlock()
+    fl = file_new(F_FFILE)
+    fl.clu = slot
+    fl.size = size
+    fl.ccl = slot
+    if (flags & O_APPEND) != 0:
+        fl.cidx = 1
+        fl.pos = size
+    r = rights
+    if acc == 1:
+        r = r & ~CAP_READ
+    if acc == 0:
+        r = r & ~CAP_WRITE
+    return fd_label(p, ffs_install(p, u64(fl), r), name, gid)
+
+def ffs_open_abs(p: ptr[Proc], path: slice[u8], rights: u64, flags: u64, gid: u64) -> u64:
+    kind = ffs_path_kind(path)
+    if kind == 0:
+        return ENOENT
+    if ffs_ok == 0:
+        return ENOENT
+    if kind == 1:
+        if (flags & 0x10000) == 0 and (flags & 3) != 0:
+            return EISDIR
+        fl = file_new(F_FDIR)
+        return fd_label(p, ffs_install(p, u64(fl), rights), path, gid)
+    # /data/name -- reject a further slash (the volume is flat)
+    i: u64 = 6
+    n = len(path)
+    while i < n and path[i] != 0:
+        if path[i] == 47:
+            return EACCES
+        i += 1
+    return ffs_open_name(p, path[6:], rights, flags, gid)
+
 def open_install(p: ptr[Proc], c: u64, path: ptr[u8], r: u64) -> u64:
     fd = fd_free(p)
     if fd == NFD:
@@ -1560,14 +1838,16 @@ def sys_openat(dirfd: u64, upath: u64) -> u64:
     d = fd_get(p, dirfd)
     if u64(d) == 0:
         return EBADF
-    if d.type != F_DIR:
-        return ENOTDIR
     if (p.fdr[dirfd] & CAP_LOOKUP) == 0:
         return EPERM
     if path[0] == 47 or path_ok(path[:]) == 0:
         return EACCES
     if gr_use(d.gid, "openat") != 0:
         return EACCES
+    if d.type == F_FDIR:
+        return ffs_open_name(p, path[:], p.fdr[dirfd], 0, d.gid)
+    if d.type != F_DIR:
+        return ENOTDIR
     # a file found through a granted directory belongs to the same grant
     return fd_label(p, open_install(p, d.clu, addr(path[0]), p.fdr[dirfd]), path[:], d.gid)
 

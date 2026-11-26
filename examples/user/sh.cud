@@ -34,8 +34,9 @@ def setpath(dst: ptr[u8], pre: ptr[u8], name: ptr[u8], suf: ptr[u8]):
     mem_set8(u64(dst) + pl, 0)
 
 def run_app(name: ptr[u8], args: ptr[u8], bgr: u64) -> u64:
-# launch through /efi/incudela/apps/<name>.mf: each "read PATH" / "dir PATH" line becomes a handle
-# (fds 4.. in manifest order) with only READ (+LOOKUP for dirs); the app gets nothing else
+# launch through /efi/incudela/apps/<name>.mf: each "read PATH" / "dir PATH" / "wdir PATH" line
+# becomes a handle (fds 4.. in manifest order) with READ (+LOOKUP for dirs, +WRITE for wdir).
+# The kernel will not put WRITE on a FAT or /obj handle, so wdir is only useful for /data.
     setpath(addr(mpath[0]), "/efi/incudela/apps/", name, ".mf")
     fd = sys_open(addr(mpath[0]))
     if is_err(fd):
@@ -66,6 +67,9 @@ def run_app(name: ptr[u8], args: ptr[u8], bgr: u64) -> u64:
             if mf[i] == 100 and mf[i + 1] == 105 and mf[i + 2] == 114 and mf[i + 3] == 32:
                 r = CAP_READ | CAP_LOOKUP | CAP_DUP
                 o = 4
+            if mf[i] == 119 and mf[i + 1] == 100 and mf[i + 2] == 105 and mf[i + 3] == 114 and mf[i + 4] == 32:
+                r = CAP_READ | CAP_WRITE | CAP_LOOKUP | CAP_DUP
+                o = 5
             if r != 0:
                 g = sys_open(addr(mf[i + o]))
                 if is_err(g) or is_err(sys_restrict(g, r)):
