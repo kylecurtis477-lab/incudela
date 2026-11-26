@@ -40,6 +40,21 @@
   `docs/BUILD_PLAN.md`, `docs/SYSTEMS.md` and `docs/kernel-core.md`
   Appendix A.2 point at the note. No compiler, kernel or runtime change.
   The kernel unsafe cap stays 709.
+- `ceac345` Linux `vfork` (58) is the same eager-copy process fork as
+  `fork` (57): address spaces are not shared and the parent is not
+  suspended. Ash uses vfork to run a simple external command. A first
+  sandbox run of a BusyBox pipeline got ENOSYS on syscall 58 after the
+  builtin pipeline and a pipeline to an external image had both worked.
+  The personality is 44 syscalls. `lxipc` reaps a vfork child. Syscalls
+  408/409 stay `ktest_hooks` gated. The kernel unsafe cap stays 709.
+- `20cdd09` `run busybox sh /efi/incudela/docs/pipeline.sh` is in the
+  OS boot script: a builtin `echo | while read` pipeline, a pipeline to
+  `/efi/incudela/docs/busybox wc -c`, and a simple
+  `/efi/incudela/docs/busybox echo`. The busybox manifest still grants
+  only `dir /efi/incudela/docs`, so a sealed copy of busybox is installed
+  under docs; `/efi/incudela/bin` stays denied. `lxfs` expects five docs
+  dirents. The application pass/fail list in `docs/linux-compat.md` is
+  updated. The kernel unsafe cap stays 709.
 
 
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
