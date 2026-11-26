@@ -1,7 +1,10 @@
 #!/bin/sh
 # tests/*.cud: stdout must match .expected
 # tests/runtime/*.cud: stdout+stderr+exit code must match .expected (line-numbered runtime errors)
-# tests/errors/*.cud: compiler must fail with "error: line N: ..."
+# tests/errors/*.cud: compiler must fail with "error: line N: ..."; each compile is under
+#   timeout 60 (was 20; inv259 O2: a 20s cap killed the first compile under parallel-start
+#   load, and a bare FAIL hid the 124). A timeout or other non-diagnostic failure reports
+#   the exit status (124 means timeout). The test is never skipped.
 # tests/os/run.sh: QEMU boot tests (kernel via multiboot2 on BIOS and OVMF, native PE32+ EFI app on a GPT disk)
 # tests/fs/*.cud: freestanding (--freestanding / no-runtime pragma) programs linked with plain ld, no runtime
 #   (each one again with --fs-opt, which must not change its output)
@@ -33,9 +36,27 @@ done
 return $fail
 }
 t_errors() {
+# compiler must reject the file with "error: line ...". timeout 60 is long enough that a
+# first compile during the O2 parallel-start stampede (inv259: 20s fired on
+# tests/errors/arity.cud, which otherwise finishes immediately) cannot fail the test,
+# while a real hang still fails the lane. The FAIL line always reports a timeout or exit
+# status (timeout returns 124); never a bare FAIL. No silent retry; the test is not skipped.
 fail=0
 for t in tests/errors/*.cud; do
-  m=$(timeout 20 build/cudc "$t" build/t_err.s 2>&1) && { echo "FAIL $t (no error)"; fail=1; } || { echo "$m" | grep -q "error: line" && echo "PASS $t: $m" || { echo "FAIL $t"; fail=1; }; }
+  m=$(timeout 60 build/cudc "$t" build/t_err.s 2>&1)
+  rc=$?
+  if [ $rc -eq 0 ]; then
+    echo "FAIL $t (no error)"
+    fail=1
+  elif echo "$m" | grep -q "error: line"; then
+    echo "PASS $t: $m"
+  elif [ $rc -eq 124 ]; then
+    echo "FAIL $t (timeout 60s, exit 124)"
+    fail=1
+  else
+    echo "FAIL $t (exit $rc)"
+    fail=1
+  fi
 done
 return $fail
 }

@@ -145,8 +145,11 @@ A call whose argument list hits a closer that does not match, for example `f(}` 
 compiler: `skip_arg` stops at a mismatched closer at depth 0, and the argument loops (`count_pos`,
 `need_slots`, `push_slots`) never advanced. The loops now go through `arg_step`, which reports
 `error: line N: expected ')', found '<tok>'` and stops. Regression tests: `tests/errors/call_stray_*.cud`.
-`run_tests.sh` also runs every error test under `timeout 20`, so a future hang fails the test instead of
-stalling the suite.
+`run_tests.sh` (and the Cuditor port `tools/run_tests.cud`) also runs every error test under
+`timeout 60`, so a future hang fails the test instead of stalling the suite. The cap was 20s;
+inv259's O2 run killed the first compile (`tests/errors/arity.cud`) under parallel-start load
+and recorded a bare FAIL. A timeout now reports `timeout 60s, exit 124` (GNU timeout's 124),
+and any other non-diagnostic failure reports its exit status. The test is never skipped.
 
 ## Diagnostics note: a module-level declaration appears once
 A module-level `NAME: T` declaration (with or without `= value`) may appear only once per program. A second one

@@ -289,19 +289,26 @@ def t_runtime():
     return fail
 
 def t_errors():
+# compiler must reject the file with "error: line ...". timeout 60 is long enough that a
+# first compile during the O2 parallel-start stampede (inv259: 20s fired on
+# tests/errors/arity.cud, which otherwise finishes immediately) cannot fail the test,
+# while a real hang still fails the lane. The FAIL line always reports a timeout or exit
+# status (timeout returns 124); never a bare FAIL. No silent retry; the test is not skipped.
     fail = 0
     for t in glob_dir("tests/errors", ".cud"):
-        r = os.run(["timeout", "20", "build/cudc", t, "build/t_err.s"], merge=True)
+        r = os.run(["timeout", "60", "build/cudc", t, "build/t_err.s"], merge=True)
         m = chomp(r[1])
         if r[0] == 0:
             say("FAIL " + t + " (no error)")
             fail = 1
+        elif m.find("error: line") >= 0:
+            say("PASS " + t + ": " + m)
+        elif r[0] == 124:
+            say("FAIL " + t + " (timeout 60s, exit 124)")
+            fail = 1
         else:
-            if m.find("error: line") >= 0:
-                say("PASS " + t + ": " + m)
-            else:
-                say("FAIL " + t)
-                fail = 1
+            say("FAIL " + t + " (exit " + str(r[0]) + ")")
+            fail = 1
     return fail
 
 def t_typeerrors():
