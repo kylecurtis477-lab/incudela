@@ -12,6 +12,7 @@ BRK_MAX = 0x0000100000000000
 ENOENT = 0xFFFFFFFFFFFFFFFE
 ENOEXEC = 0xFFFFFFFFFFFFFFF8
 EBADF = 0xFFFFFFFFFFFFFFF7
+ESTALE = 0xFFFFFFFFFFFFFF8C  # 116: a /data handle whose inode was unlinked or reused
 ECHILD = 0xFFFFFFFFFFFFFFF6
 ENOMEM = 0xFFFFFFFFFFFFFFF4
 EFAULT = 0xFFFFFFFFFFFFFFF2
@@ -154,7 +155,7 @@ struct File:
     clu: u64  # first cluster (file) / directory cluster
     size: u64
     pos: u64  # byte offset (file) / entry index (dir)
-    ccl: u64  # cached cluster for sequential reads
+    ccl: u64  # FAT: cached cluster; F_OBJ: snapshot clock; F_FFILE: inode generation
     cidx: u64  # its index in the chain
     gid: u64  # 10.2: grant id when this object was handed to a sandboxed app (0 = not a grant)
     lab: u8[32]  # 10.2: the path it was opened by (the grant ledger's resource label)
@@ -306,7 +307,7 @@ def dir_read(fl: ptr[File], ubuf: u64, n: u64, kern: u64) -> u64:
 F_OBJ = 5
 F_ODIR = 6
 F_PIPE = 7  # item 9: Linux pipe/pipe2 ends (pipe.cudi); clu = pipe index, pos = 0 read / 1 write
-F_FFILE = 8  # item 9: a user-visible Incudela FS file under /data; clu = inode slot, cidx bit 0 = O_APPEND
+F_FFILE = 8  # item 9: a user-visible Incudela FS file under /data; clu = inode slot, ccl = inode generation, cidx bit 0 = O_APPEND
 F_FDIR = 9  # item 9: the /data directory (the user-visible view of a mounted Incudela FS)
 F_PDIR = 10  # item 9: a read-only /proc directory (clu 0 = /proc, clu 1 = /proc/<pid> or followed /proc/self)
 F_PLNK = 11  # item 9: a /proc symlink (clu 0 = self -> pid, clu 1 = exe -> the image path)
@@ -1625,9 +1626,9 @@ def ffile_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
     kb: u8[512]
     done: u64 = 0
     ffs_lock()
-    if ffs_ok == 0 or fl.clu >= FFS_NI or ffs_it[fl.clu * 8] == 0:
+    if ffs_ok == 0 or ffs_check_gen(fl.clu, fl.ccl) == 0:
         ffs_unlock()
-        return EIO
+        return ESTALE
     fl.size = ffs_it[fl.clu * 8 + 5]
     while done < n:
         k = 512
@@ -1654,9 +1655,9 @@ def ffile_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
         fl.pos = fl.size
     done: u64 = 0
     ffs_lock()
-    if ffs_ok == 0 or fl.clu >= FFS_NI or ffs_it[fl.clu * 8] == 0:
+    if ffs_ok == 0 or ffs_check_gen(fl.clu, fl.ccl) == 0:
         ffs_unlock()
-        return EIO
+        return ESTALE
     fl.size = ffs_it[fl.clu * 8 + 5]
     if (fl.cidx & 1) != 0:
         fl.pos = fl.size
@@ -1782,11 +1783,14 @@ def ffs_open_name(p: ptr[Proc], name: slice[u8], rights: u64, flags: u64, gid: u
             ffs_unlock()
             return EIO
     size = ffs_it[slot * 8 + 5]
+    gen = ffs_igen[slot]
+    if gen == 0:
+        gen = 1
     ffs_unlock()
     fl = file_new(F_FFILE)
     fl.clu = slot
     fl.size = size
-    fl.ccl = slot
+    fl.ccl = gen
     if (flags & O_APPEND) != 0:
         fl.cidx = 1
         fl.pos = size

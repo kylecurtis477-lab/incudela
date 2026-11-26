@@ -4,6 +4,10 @@
 # range), then claims that LBA range on the NVMe driver; nvme_write refuses anything outside it.
 # Layout (4 KiB blocks from the partition start): 0 superblock, 1 inode table (64 x 64 bytes), 2.. data
 # (contiguous extents, first fit). Commit order: data, inode table, superblock (generation + checksums), flush.
+# Superblock words 7..70 hold a per-slot inode generation (never 0). A /data File handle snapshots it in
+# fl.ccl at open; unlink bumps it so a still-open handle cannot read, write or fstat a file later created
+# in the same slot (those calls return ESTALE). The table is in the superblock, so a remount or kexec
+# sees the same values; the handle's snapshot is packed into the kexec file record cluster word (slot in the low 8 bits, generation above that).
 # Item 9: a mounted volume is also visible to processes at /data. Writes (Linux open/write/unlink, and
 # native sys_write on a handle that carries CAP_WRITE) are allowed only there. Kernel and object-store
 # names (persist.dat, hello.txt, scratch.dat, and anything beginning objects.) are not visible under
@@ -21,8 +25,39 @@ ffs_b: u64[512]  # one block
 ffs_sb: u64[512]
 ffs_it: u64[512]  # inode table: per inode name w0..4, size, start, nblk
 ffs_nm: u64[5]
-ffs_m: Mutex  # serialises ffs_it / ffs_b; holders may sleep on NVMe I/O
+ffs_igen: u64[64]  # per-slot inode generation (superblock words 7..70); never 0 once mounted
+ffs_m: Mutex  # serialises ffs_it / ffs_b / ffs_igen; holders may sleep on NVMe I/O
 FFS_USER_MAX = 1048576  # 1 MiB cap on a /data file
+
+def ffs_igen_store():
+# copy the in-memory generations into the superblock (words 7..70). Caller holds ffs_m or is mounting.
+    i: u64 = 0
+    while i < FFS_NI:
+        ffs_sb[7 + i] = ffs_igen[i]
+        i += 1
+
+def ffs_igen_load():
+# load generations from the superblock; a 0 (a volume from before this field) becomes 1.
+    i: u64 = 0
+    while i < FFS_NI:
+        g = ffs_sb[7 + i]
+        if g == 0:
+            g = 1
+        ffs_igen[i] = g
+        i += 1
+
+def ffs_igen_bump(slot: u64):
+# next generation for this slot; never 0. Caller holds ffs_m (or is the only user during early boot).
+    g = ffs_igen[slot] + 1
+    if g == 0:
+        g = 1
+    ffs_igen[slot] = g
+
+def ffs_check_gen(slot: u64, gen: u64) -> u64:
+# 1 if slot is a live inode with this generation. Caller holds ffs_m.
+    if slot >= FFS_NI or gen == 0 or ffs_igen[slot] != gen or ffs_it[slot * 8] == 0:
+        return 0
+    return 1
 
 def ffs_rd(w: u64, i: u64) -> u64:
 # w: 0 block buffer, 1 superblock, 2 inode table
@@ -179,11 +214,12 @@ def ffs_put(blk: u64, src: u64) -> u64:
     return nvme_write(ffs_lo + blk * 8)
 
 def ffs_commit() -> u64:
-# inode table, then superblock with its generation and both checksums, flushing in between
+# inode table, then superblock with its generation, per-slot inode generations, and both checksums, flushing in between
     if ffs_put(1, 2) == 0 or nvme_flush() == 0:
         return 0
     ffs_gen += 1
     ffs_sb[3] = ffs_gen
+    ffs_igen_store()
     ffs_sb[6] = ffs_fnvw(2, 512)
     ffs_sb[511] = ffs_fnvw(1, 511)
     if ffs_put(0, 1) == 0:
@@ -198,6 +234,7 @@ def ffs_load() -> u64:
     if ffs_sb[511] != ffs_fnvw(1, 511) or ffs_sb[6] != ffs_fnvw(2, 512):
         return 0
     ffs_gen = ffs_sb[3]
+    ffs_igen_load()
     return 1
 
 def ffs_mount() -> u64:
@@ -228,6 +265,10 @@ def ffs_mount() -> u64:
     i = 0
     while i < 512:
         ffs_it[i] = 0
+        i += 1
+    i = 0
+    while i < FFS_NI:
+        ffs_igen[i] = 1
         i += 1
     if ffs_commit() == 0:
         return 0
@@ -341,6 +382,7 @@ def ffs_unlink(s: ptr[u8]) -> u64:
     i = ffs_find(s)
     if ffs_ok == 0 or i == FFS_NI:
         return 0
+    ffs_igen_bump(i)
     k: u64 = 0
     while k < 8:
         ffs_it[i * 8 + k] = 0
@@ -619,6 +661,7 @@ def ffs_unlink_slice(s: slice[u8]) -> u64:
     i = ffs_find_slice(s)
     if i == FFS_NI:
         return 0
+    ffs_igen_bump(i)
     k: u64 = 0
     while k < 8:
         ffs_it[i * 8 + k] = 0

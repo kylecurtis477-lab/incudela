@@ -870,6 +870,14 @@ def lx_lseek(fd: u64, off: u64, whence: u64) -> u64:
         return EINVAL
     if fl.type != F_FILE and fl.type != F_FFILE:
         return ESPIPE
+    if fl.type == F_FFILE:
+        ffs_lock()
+        live = ffs_check_gen(fl.clu, fl.ccl)
+        if live != 0:
+            fl.size = ffs_it[fl.clu * 8 + 5]
+        ffs_unlock()
+        if live == 0:
+            return ESTALE
     base: u64 = 0
     if whence == 1:
         base = fl.pos
@@ -975,6 +983,14 @@ def lx_fstat(fd: u64, ubuf: u64) -> u64:
         return EBADF
     if gr_use(fl.gid, "fstat") != 0:
         return EACCES
+    if fl.type == F_FFILE:
+        ffs_lock()
+        live = ffs_check_gen(fl.clu, fl.ccl)
+        if live != 0:
+            fl.size = ffs_it[fl.clu * 8 + 5]
+        ffs_unlock()
+        if live == 0:
+            return ESTALE
     mode: u64 = 0x8124  # S_IFREG | 0444
     st[2] = 1
     if fl.type == F_DIR or fl.type == F_ODIR or fl.type == F_FDIR or fl.type == F_PDIR:

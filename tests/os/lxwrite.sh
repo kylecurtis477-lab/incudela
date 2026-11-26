@@ -35,7 +35,7 @@ P
 }
 S0=$(snap $T/nv.img)
 FB=${FORGE_BOOT_LXWRITE_FB:-"back == front^KERNEL OK"}
-MARK="Incudela FS:|linux: Linux ABI personality ready (48 syscalls)|sh: run lxwrite: 2 grants from its manifest|lxwrite: ESP write EROFS, reserved /data names EACCES|lxwrite: create/write/read/append/unlink/O_EXCL on /data/lxwrite.dat|lxwrite: PASS (|[lxwrite exited 0 (sandboxed)]|KERNEL OK|debug-exit "
+MARK="Incudela FS:|linux: Linux ABI personality ready (48 syscalls)|sh: run lxwrite: 2 grants from its manifest|lxwrite: ESP write EROFS, reserved /data names EACCES|lxwrite: create/write/read/append/unlink/O_EXCL on /data/lxwrite.dat|lxwrite: stale fd after unlink/recreate -> ESTALE|lxwrite: PASS (|[lxwrite exited 0 (sandboxed)]|KERNEL OK|debug-exit "
 # no user key: objstore stays locked; ffs_test still formats and writes persist.dat / hello.txt
 out=$(FORGE_BOOT_LXWRITE=1 $B lxwrite-boot $L/lxwrite.log 360 "$MARK" "$FB" -- "$@" \
   -drive file=$T/nv.img,format=raw,if=none,id=nv,cache=writethrough -device nvme,drive=nv,serial=forge-nv0 \

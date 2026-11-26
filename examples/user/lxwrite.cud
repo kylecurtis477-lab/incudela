@@ -4,10 +4,12 @@
 # (EI_OSABI = 3, examples/user/build.sh) and launched only with sh `run lxwrite` in the compat
 # sandbox, on a boot whose NVMe disk has an explicitly created Incudela FS partition. Raw Linux
 # syscalls only. Writes on the ESP stay EROFS; kernel and object-store names under /data stay
-# EACCES. Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409 stay ktest_hooks gated. The
-# kernel unsafe cap is unchanged (709).
+# EACCES. After unlink and recreate of the same name, read/write/fstat/lseek of the old fd
+# return ESTALE (close and fcntl still work). Syscall 409 stays unreachable (ENOSYS).
+# Syscalls 408/409 stay ktest_hooks gated. The kernel unsafe cap is unchanged (709).
 
 ENOSYS = 0xFFFFFFFFFFFFFFDA
+ESTALE = 0xFFFFFFFFFFFFFF8C
 EINVAL = 0xFFFFFFFFFFFFFFEA
 EFAULT = 0xFFFFFFFFFFFFFFF2
 EEXIST = 0xFFFFFFFFFFFFFFEF
@@ -145,10 +147,31 @@ def lx_main(sp: u64):
     check((fd >> 63) == 0, "reopen existing")
     lsys(3, fd, 0, 0, 0, 0)
     check(lsys(87, u64(addr(path[0])), 0, 0, 0, 0) == 0, "unlink again")
+    fd = lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT | O_TRUNC, 0, 0, 0)
+    check((fd >> 63) == 0, "stale: create")
+    msg[0] = 65
+    check(lsys(1, fd, u64(addr(msg[0])), 1, 0, 0) == 1, "stale: write first")
+    check(lsys(87, u64(addr(path[0])), 0, 0, 0, 0) == 0, "stale: unlink while open")
+    nw = lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT | O_EXCL, 0, 0, 0)
+    check((nw >> 63) == 0, "stale: recreate same name")
+    msg[0] = 66
+    check(lsys(1, nw, u64(addr(msg[0])), 1, 0, 0) == 1, "stale: write new file")
+    check(lsys(0, fd, u64(addr(got[0])), 1, 0, 0) == ESTALE, "stale: read old fd -> ESTALE")
+    check(lsys(1, fd, u64(addr(msg[0])), 1, 0, 0) == ESTALE, "stale: write old fd -> ESTALE")
+    check(lsys(5, fd, u64(addr(st[0])), 0, 0, 0) == ESTALE, "stale: fstat old fd -> ESTALE")
+    check(lsys(8, fd, 0, 0, 0, 0) == ESTALE, "stale: lseek old fd -> ESTALE")
+    fl = lsys(72, fd, F_GETFL, 0, 0, 0)
+    check(fl == O_RDWR, "stale: F_GETFL still works")
+    check(lsys(5, nw, u64(addr(st[0])), 0, 0, 0) == 0 and st[6] == 1, "stale: fstat new fd")
+    lsys(3, fd, 0, 0, 0, 0)
+    lsys(3, nw, 0, 0, 0, 0)
+    check(lsys(87, u64(addr(path[0])), 0, 0, 0, 0) == 0, "stale: unlink new file")
     check(lsys(409, 0, 0, 0, 0, 0) == ENOSYS, "syscall 409 -> ENOSYS")
     put("lxwrite: ESP write EROFS, reserved /data names EACCES\n")
     flush()
     put("lxwrite: create/write/read/append/unlink/O_EXCL on /data/lxwrite.dat\n")
+    flush()
+    put("lxwrite: stale fd after unlink/recreate -> ESTALE\n")
     flush()
     if fails == 0:
         put("lxwrite: PASS (")
