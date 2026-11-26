@@ -55,6 +55,30 @@
   under docs; `/efi/incudela/bin` stays denied. `lxfs` expects five docs
   dirents. The application pass/fail list in `docs/linux-compat.md` is
   updated. The kernel unsafe cap stays 709.
+- `42b81e2` `hw_quiesce` and `nvme_init` disable NVMe MSI-X after the
+  controller is stopped, so a leftover vector 0x53 cannot #GP a kexec
+  successor before its IDT gate is installed. `hw_quiesce` already
+  cleared CC.EN, but PCI MSI-X Enable survives the jump; the successor
+  then re-enabled the controller while IDT[0x53] was still a null
+  descriptor (#GP err=0x29a). Needed so a boot with the Incudela NVMe
+  disk attached can finish the existing kexec self-test. The kernel
+  unsafe cap stays 709.
+- `11d0930` Writable files on `/data` for the Linux personality: an
+  explicitly created Incudela FS partition, never the ESP. `wdir /data`
+  in a sandbox manifest grants WRITE (the kernel still refuses WRITE on
+  a FAT or /obj handle). User-visible files can be created, written,
+  read, appended, listed and unlinked; kernel and object-store names
+  (`persist.dat`, `hello.txt`, `objects.*`) stay EACCES and are hidden
+  from getdents. Write opens of the ESP stay EROFS; MAP_SHARED+PROT_WRITE
+  of an ESP file stays EACCES. The personality is 45 syscalls, including
+  unlink 87. `examples/user/lxwrite.cud` (sealed like lxtest) is launched
+  with `run lxwrite` from `tests/os/lxwrite.sh`: ESP write EROFS, reserved
+  names EACCES, create/write/read/append/unlink/O_EXCL (27 checks). After
+  the boot, every byte outside the Incudela partition is unchanged.
+  `tests/os/expected-results.txt` grows from 68 to 69 entries. The
+  busybox manifest does not grant `/data` (main boots have no Incudela
+  partition). Ash `>` onto `/data` is not in the gate. Syscalls 408/409
+  stay `ktest_hooks` gated. The kernel unsafe cap stays 709.
 
 
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
