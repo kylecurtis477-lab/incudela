@@ -80,6 +80,16 @@
   partition). Ash `>` onto `/data` is not in the gate. Syscalls 408/409
   stay `ktest_hooks` gated. The kernel unsafe cap stays 709.
 
+- `ac41531` Linux `newfstatat` (262), `readlink` (89) and `readlinkat`
+  (267), plus a read-only `/proc` (`self` and `self/exe` only; a
+  `dir /proc` manifest grant is required). `lstat` and
+  `newfstatat(..., AT_SYMLINK_NOFOLLOW)` do not follow those
+  symlinks; `stat("/proc/self")` is a directory; write opens of
+  `/proc` stay EROFS. The personality is 48 syscalls.
+  `examples/user/lxproc.cud` (sealed like lxtest) is launched with
+  `run lxproc` in the main OS boot (34 checks). Syscall 409 stays
+  ENOSYS and `ktest_hooks` gated. The kernel unsafe cap stays 709.
+
 
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
