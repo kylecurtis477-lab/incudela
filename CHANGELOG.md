@@ -90,6 +90,33 @@
   `run lxproc` in the main OS boot (34 checks). Syscall 409 stays
   ENOSYS and `ktest_hooks` gated. The kernel unsafe cap stays 709.
 
+- `f764d19` A still-open `/data` fd after unlink and re-create of the same
+  name no longer touches the new file. Each Incudela FS inode slot has a
+  generation in superblock words 7..70, snapshotted in `File.ccl` at open
+  and checked on read, write, fstat and lseek. Unlink bumps the generation;
+  those calls then return ESTALE (Linux 116). close and fcntl still work.
+  The table lives in the superblock, and the handle's snapshot is packed
+  into the kexec file record cluster word (slot in the low 8 bits,
+  generation above that). `run lxwrite` covers the unlink/recreate case
+  (39 checks in this commit). A kexec variant is not practical: kexec
+  refuses while a sandboxed process is alive. Syscalls 408/409 stay
+  `ktest_hooks` gated. The kernel unsafe cap stays 709.
+
+- `7585432` Shrinking an Incudela FS file (Linux O_TRUNC is
+  `ffs_grow(slot, 0)`) zeros the stale tail and releases unused blocks;
+  an extend zeros the gap, so a sparse write after truncation never
+  exposes leftover bytes. `run lxwrite` writes a 64-byte pattern, reopens
+  with O_TRUNC, writes past the old start, and requires zeros in the hole
+  (51 checks total). Syscalls 408/409 stay `ktest_hooks` gated. The
+  kernel unsafe cap stays 709.
+
+- `b534840` `t_errors` in `run_tests.sh` and `tools/run_tests.cud` reports
+  a timeout or exit status on failure, never a bare FAIL, and the per-compile
+  cap is 60s (was 20). inv259's O2 run killed the first compile
+  (`tests/errors/arity.cud`) under parallel-start load and recorded a bare
+  FAIL; the same binary and the O0 half both printed the expected diagnostic
+  immediately. A timeout now reports `timeout 60s, exit 124`. The test is
+  never skipped. No compiler change.
 
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
