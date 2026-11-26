@@ -1647,6 +1647,11 @@ def syscall_do(nr: u64, a: u64, b: u64, c: u64, d: u64, frame: u64) -> u64:
             r = lx_clone(frame, a, b, c, d, sf.r8)
         elif nr == 57:
             r = sys_fork(frame, 0)
+        elif nr == 58:
+            # item 9: Linux vfork. Implemented as the same eager-copy fork as 57:
+            # address spaces are not shared and the parent is not suspended. Ash
+            # uses vfork to run an external command; a shared-memory vfork is not needed.
+            r = sys_fork(frame, 0)
         elif nr == 61:
             r = lx_wait4(a, b, c, d)
         elif nr == 59:

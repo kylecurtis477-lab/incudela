@@ -2,10 +2,10 @@
 # cuditor: caps()
 # Item 9 Linux-ABI pipe, fork, wait4 and file-backed mmap test (docs/linux-compat.md). Built and
 # sealed like lxtest (EI_OSABI = 3, examples/user/build.sh) and launched only with sh `run lxipc`
-# in the compat sandbox. Raw Linux syscalls only. Checks pipe (22) / pipe2 (293), fork (57) and
-# fork-style clone (56), wait4 (61), and a MAP_PRIVATE file mapping of a granted file. Syscall 409
-# stays unreachable (ENOSYS). Syscalls 408/409 stay ktest_hooks gated. The kernel unsafe cap is
-# unchanged (709).
+# in the compat sandbox. Raw Linux syscalls only. Checks pipe (22) / pipe2 (293), fork (57),
+# vfork (58, same eager-copy fork), fork-style clone (56), wait4 (61), and a MAP_PRIVATE file
+# mapping of a granted file. Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409 stay
+# ktest_hooks gated. The kernel unsafe cap is unchanged (709).
 
 ENOSYS = 0xFFFFFFFFFFFFFFDA
 EINVAL = 0xFFFFFFFFFFFFFFEA
@@ -130,7 +130,15 @@ def lx_main(sp: u64):
     status[0] = 0
     w = lsys(61, pid, u64(addr(status[0])), 0, 0, 0)
     check(w == pid and status[0] == (3 << 8), "wait4 reaps after EFAULT")
-    put("lxipc: fork and clone(SIGCHLD) children reaped by wait4\n")
+    pid = lsys(58, 0, 0, 0, 0, 0)
+    if pid == 0:
+        lsys(231, 9, 0, 0, 0, 0)
+    check((pid >> 63) == 0 and pid != 0, "vfork parent")
+    status[0] = 0
+    w = lsys(61, pid, u64(addr(status[0])), 0, 0, 0)
+    check(w == pid, "wait4 vfork pid")
+    check(status[0] == (9 << 8), "wait4 vfork status 9")
+    put("lxipc: fork, vfork and clone(SIGCHLD) children reaped by wait4\n")
     flush()
     pth = "/efi/incudela/docs/hello.sh"
     i: u64 = 0

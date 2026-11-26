@@ -51,7 +51,7 @@
 # waiting; the console reports ready and its read then blocks as usual), closed fds get POLLNVAL.
 # Not yet: real-time signals (32..64), sigaltstack, signals to other processes.
 LX_ABI = 1
-LX_NSYS = 43  # syscalls in the table above (item 9: pipe 22, pipe2 293, fork 57, wait4 61)
+LX_NSYS = 44  # syscalls in the table above (item 9: pipe 22, pipe2 293, fork 57, vfork 58, wait4 61)
 ARCH_SET_FS = 0x1002
 ARCH_GET_FS = 0x1003
 ERANGE = 0xFFFFFFFFFFFFFFDE
