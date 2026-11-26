@@ -8,6 +8,8 @@
 # fl.ccl at open; unlink bumps it so a still-open handle cannot read, write or fstat a file later created
 # in the same slot (those calls return ESTALE). The table is in the superblock, so a remount or kexec
 # sees the same values; the handle's snapshot is packed into the kexec file record cluster word (slot in the low 8 bits, generation above that).
+# On shrink (O_TRUNC) the stale tail is zeroed and unused blocks are released; a later sparse
+# extend zeros the gap so a read of a hole never returns leftover bytes.
 # Item 9: a mounted volume is also visible to processes at /data. Writes (Linux open/write/unlink, and
 # native sys_write on a handle that carries CAP_WRITE) are allowed only there. Kernel and object-store
 # names (persist.dat, hello.txt, scratch.dat, and anything beginning objects.) are not visible under
@@ -534,8 +536,38 @@ def ffs_extent_free(st: u64, n: u64, skip: u64) -> u64:
         i += 1
     return 1
 
+def ffs_zero_range(st: u64, nb: u64, off: u64, n: u64) -> u64:
+# zero n bytes at off in the extent starting at block st (nb blocks). 1 on success. Caller holds ffs_m.
+    if n == 0 or st == 0 or nb == 0:
+        return 1
+    cap = nb * 4096
+    if off >= cap:
+        return 1
+    if n > cap - off:
+        n = cap - off
+    done: u64 = 0
+    while done < n:
+        b = (off + done) / 4096
+        o = (off + done) % 4096
+        if ffs_get(st + b, 0) == 0:
+            return 0
+        k = 4096 - o
+        if k > n - done:
+            k = n - done
+        i: u64 = 0
+        while i < k:
+            sh = ((o + i) % 8) * 8
+            w = (o + i) / 8
+            ffs_b[w] = ffs_b[w] & (~(u64(255) << sh))
+            i += 1
+        if ffs_put(st + b, 0) == 0:
+            return 0
+        done += k
+    return 1
+
 def ffs_grow(slot: u64, size: u64) -> u64:
 # make inode slot hold at least size bytes (may relocate the extent). 1 on success. Caller holds ffs_m.
+# A shrink zeros the stale tail and releases unused blocks; an extend zeros the gap so a hole is not leftover data.
     if slot >= FFS_NI or ffs_it[slot * 8] == 0:
         return 0
     if size > FFS_USER_MAX:
@@ -546,14 +578,23 @@ def ffs_grow(slot: u64, size: u64) -> u64:
     nb = ffs_it[k + 7]
     need = (size + 4095) / 4096
     if need <= nb:
-        if size > old:
-            ffs_it[k + 5] = size
-            if ffs_commit() == 0:
-                ffs_it[k + 5] = old
+        if size < old:
+            if ffs_zero_range(st, nb, size, old - size) == 0:
                 return 0
-        elif size != old:
             ffs_it[k + 5] = size
-            if ffs_commit() == 0:
+            ffs_it[k + 7] = need
+            if need == 0:
+                ffs_it[k + 6] = 0
+            if nvme_flush() == 0 or ffs_commit() == 0:
+                ffs_it[k + 5] = old
+                ffs_it[k + 6] = st
+                ffs_it[k + 7] = nb
+                return 0
+        elif size > old:
+            if ffs_zero_range(st, nb, old, size - old) == 0:
+                return 0
+            ffs_it[k + 5] = size
+            if nvme_flush() == 0 or ffs_commit() == 0:
                 ffs_it[k + 5] = old
                 return 0
         return 1
@@ -576,6 +617,9 @@ def ffs_grow(slot: u64, size: u64) -> u64:
         if ffs_put(nst + b, 0) == 0:
             return 0
         b += 1
+    if size > old:
+        if ffs_zero_range(nst, need, old, size - old) == 0:
+            return 0
     if nvme_flush() == 0:
         return 0
     ffs_it[k + 5] = size
