@@ -117,6 +117,23 @@ def nv_wait_rdy(want: u64) -> u64:
 def nv_page(pa_out: ptr[u64]) -> u64:
     return dma_alloc(1, pa_out)
 
+def nv_msix_off():
+# drop MSI-X Enable / unmask so a leftover vector 0x53 from a previous kernel cannot fire
+# before the successor has idt_set(VEC_NVME). Called from hw_quiesce and at the start of nvme_init.
+    if nv_regs == 0:
+        return
+    c = pci_rd32(nv_bdf, 0x34) & 0xFC
+    g: u64 = 0
+    while c != 0 and g < 48:
+        h = pci_rd32(nv_bdf, c)
+        if (h & 0xFF) == 0x11:
+            break
+        c = (h >> 8) & 0xFC
+        g += 1
+    if c == 0 or g == 48:
+        return
+    pci_wr32(nv_bdf, c, (pci_rd32(nv_bdf, c) | 0x40000000) & ~u64(0x80000000))
+
 def nvme_init() -> u64:
     f = pci_find(0x010802, 0)
     if f == 0:
@@ -138,6 +155,7 @@ def nvme_init() -> u64:
     if nv_wait_rdy(0) == 0:
         puts("NVMe: controller did not stop\n")
         return 0
+    nv_msix_off()
     nv_asq = nv_page(addr(nv_asq_pa))
     nv_acq = nv_page(addr(nv_acq_pa))
     nv_iosq = nv_page(addr(nv_iosq_pa))

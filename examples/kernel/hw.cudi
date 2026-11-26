@@ -1,5 +1,5 @@
 # Phase 8: hardware driver probe + boot self-test, and quiesce before kexec (no device may keep
-# DMA running into the old kernel's frames).
+# DMA running into the old kernel's frames; NVMe MSI-X is masked so a leftover vector cannot #GP the successor).
 def hw_fnv(a: u64, n: u64) -> u64:
     h: u64 = 0xcbf29ce484222325
     i: u64 = 0
@@ -54,6 +54,7 @@ def hw_quiesce():
     if nv_regs != 0:
         mmio_wr(nv_regs + 0x14, 4, 0)
         nv_wait_rdy(0)
+        nv_msix_off()
     if ah_port != 0:
         mmio_wr(ah_regs + 4, 4, mmio_rd(ah_regs + 4, 4) & ~u64(2))  # GHC.IE off before kexec
         mmio_wr(ah_port + 0x14, 4, 0)
