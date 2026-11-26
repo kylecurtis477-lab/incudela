@@ -31,6 +31,15 @@
   `0862dc4` added `lxipc` (`.s` `.o` `.elf` `.raw`). Shell and Forge builds
   already matched (exit codes agreed; `fresh-keys` passed); only the expected
   count was stale. Default and O0 still skip BusyBox (`BB_SRC=/nonexist`).
+- `70ae881` docs-only speculative-execution policy (`docs/spec-exec.md`).
+  IBPB, VERW (MD_CLEAR) and retpoline are not implemented: the kernel does
+  not program `IA32_PRED_CMD` or `IA32_SPEC_CTRL`, does not flush buffers
+  with `verw`, and the compiler does not emit retpoline thunks. Process
+  page tables keep the kernel half mapped. SMEP/SMAP, W^X, canaries, guard
+  pages and KASLR are listed there and are not substitutes. README,
+  `docs/BUILD_PLAN.md`, `docs/SYSTEMS.md` and `docs/kernel-core.md`
+  Appendix A.2 point at the note. No compiler, kernel or runtime change.
+  The kernel unsafe cap stays 709.
 
 
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
