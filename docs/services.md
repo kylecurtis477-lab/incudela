@@ -47,5 +47,5 @@ With the other CPUs halted and input IRQs off, `kxd_save` writes a driver-state 
 ## Known limits
 - The echo path and the line discipline stay in the kernel.
 - The journal holds 256 entries; an overflow counts as dropped.
-- The NVMe admin queue, interrupts, and queue memory stay in the kernel. `hw_quiesce` stops the controller and disables MSI-X so a leftover vector 0x53 cannot #GP the successor.
+- The NVMe admin queue, interrupts, and queue memory stay in the kernel. `hw_quiesce` stops the controller and disables MSI-X so a leftover vector 0x53 cannot #GP the successor. On a kexec successor, `nvme_init` prints the MSI-X Enable bit it finds (`NVMe: MSI-X Enable on handoff: off` or `on`) before it clears it; `tests/os/lxwrite.sh` requires `off`.
 - Only the input service carries state across kexec. Driver processes are restarted, not carried.

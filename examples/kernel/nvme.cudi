@@ -3,6 +3,8 @@
 # scheduler running sleeps on nv_wq until the completion queue entry's phase flips (the handler wakes it, both
 # under rq_lock, so no wakeup is lost); early boot and interrupts-off callers keep polling. The driver has no
 # write path: nvme_write (end of file) only writes inside the range Incudela FS claimed (its validated GPT partition).
+# On a kexec successor (bi.kx_gen != 0), nvme_init prints the MSI-X Enable bit it finds before it
+# calls nv_msix_off: "NVMe: MSI-X Enable on handoff: off" or "on". hw_quiesce must have left it off.
 nv_regs: u64
 nv_dstrd: u64
 nv_asq: u64
@@ -134,6 +136,23 @@ def nv_msix_off():
         return
     pci_wr32(nv_bdf, c, (pci_rd32(nv_bdf, c) | 0x40000000) & ~u64(0x80000000))
 
+def nv_msix_report_handoff():
+# on a kexec successor, print the MSI-X Enable bit found before this kernel clears it.
+# hw_quiesce must have left it off; tests/os/lxwrite.sh requires "off".
+    c = pci_rd32(nv_bdf, 0x34) & 0xFC
+    g: u64 = 0
+    while c != 0 and g < 48:
+        h = pci_rd32(nv_bdf, c)
+        if (h & 0xFF) == 0x11:
+            break
+        c = (h >> 8) & 0xFC
+        g += 1
+    puts("NVMe: MSI-X Enable on handoff: ")
+    if c != 0 and g < 48 and (pci_rd32(nv_bdf, c) & 0x80000000) != 0:
+        puts("on\n")
+    else:
+        puts("off\n")
+
 def nvme_init() -> u64:
     f = pci_find(0x010802, 0)
     if f == 0:
@@ -141,6 +160,8 @@ def nvme_init() -> u64:
         return 0
     nv_bdf = f - 1
     nv_msix = 0
+    if bi.kx_gen != 0:
+        nv_msix_report_handoff()
     nv_regs = pci_map_bar(f - 1, 0, 0x4000)
     if nv_regs == 0:
         puts("NVMe: BAR0 not mappable\n")

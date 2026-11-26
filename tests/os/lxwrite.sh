@@ -4,7 +4,9 @@
 # kernel ISO with that image as NVMe (ESP stays the read-only virtio disk), and runs `run lxwrite`
 # in the compat sandbox. After the boot, every byte outside the Incudela partition must be unchanged
 # (snap() hashes the image with that GPT range masked out; it is plain shell, not python3,
-# and must match the former helper).
+# and must match the former helper). After `run lxwrite` exits, the same boot kexecs with
+# that NVMe disk attached; the log must contain NVMe MSI-X vector 0x53, kexec handoff OK,
+# and "NVMe: MSI-X Enable on handoff: off".
 # Invoked from tests/os/run.sh after the ISO and vdisk exist:
 #   bash tests/os/lxwrite.sh $B $L $Q $VD
 B=$1; L=$2; shift 2
@@ -51,7 +53,7 @@ snap() {
 }
 S0=$(snap $T/nv.img)
 FB=${FORGE_BOOT_LXWRITE_FB:-"back == front^KERNEL OK"}
-MARK="Incudela FS:|linux: Linux ABI personality ready (48 syscalls)|sh: run lxwrite: 2 grants from its manifest|lxwrite: ESP write EROFS, reserved /data names EACCES|lxwrite: create/write/read/append/unlink/O_EXCL on /data/lxwrite.dat|lxwrite: stale fd after unlink/recreate -> ESTALE|lxwrite: O_TRUNC sparse hole is zeros|lxwrite: PASS (|[lxwrite exited 0 (sandboxed)]|KERNEL OK|debug-exit "
+MARK="Incudela FS:|linux: Linux ABI personality ready (48 syscalls)|sh: run lxwrite: 2 grants from its manifest|lxwrite: ESP write EROFS, reserved /data names EACCES|lxwrite: create/write/read/append/unlink/O_EXCL on /data/lxwrite.dat|lxwrite: stale fd after unlink/recreate -> ESTALE|lxwrite: O_TRUNC sparse hole is zeros|lxwrite: PASS (|[lxwrite exited 0 (sandboxed)]|KERNEL OK|NVMe: I/O completions on MSI-X vector 0x53|NVMe: MSI-X Enable on handoff: off|kexec handoff OK|debug-exit "
 # no user key: objstore stays locked; ffs_test still formats and writes persist.dat / hello.txt
 out=$(FORGE_BOOT_LXWRITE=1 $B lxwrite-boot $L/lxwrite.log 360 "$MARK" "$FB" -- "$@" \
   -drive file=$T/nv.img,format=raw,if=none,id=nv,cache=writethrough -device nvme,drive=nv,serial=forge-nv0 \
