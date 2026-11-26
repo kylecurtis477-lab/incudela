@@ -2,7 +2,9 @@
 # Item 9: Linux writable files on /data, only on an explicitly created Incudela FS partition.
 # Builds incudela-part, adds a 16 MiB Incudela partition to a copy of the GPT disk, boots the
 # kernel ISO with that image as NVMe (ESP stays the read-only virtio disk), and runs `run lxwrite`
-# in the compat sandbox. After the boot, every byte outside the Incudela partition must be unchanged.
+# in the compat sandbox. After the boot, every byte outside the Incudela partition must be unchanged
+# (snap() hashes the image with that GPT range masked out; it is plain shell, not python3,
+# and must match the former helper).
 # Invoked from tests/os/run.sh after the ISO and vdisk exist:
 #   bash tests/os/lxwrite.sh $B $L $Q $VD
 B=$1; L=$2; shift 2
@@ -20,18 +22,32 @@ if ! build/cudc tools/incudela-part.cud $T/fp.s >/dev/null 2>$L/lxwrite-tool.err
 fi
 cp build/efi/disk.img $T/nv.img
 $T/incudela-part create $T/nv.img 16 --yes-add-incudela-partition >$T/tool.out
-# sha256 of the image with the Incudela partition's range (if any) masked out
-snap() { python3 - "$1" <<'P'
-import sys,struct,hashlib,uuid
-f=open(sys.argv[1],'rb'); d=f.read(); h=d[512:604]; elba,n=struct.unpack_from('<QI',h,72)
-F=uuid.UUID('D0C2E3A1-6B7F-4F0A-9E11-466F72676546').bytes_le; lo=hi=0
-for i in range(n):
-    e=d[elba*512+i*128:elba*512+i*128+128]
-    if e[:16]==b'\0'*16: continue
-    s,l=struct.unpack_from('<QQ',e,32)
-    if e[:16]==F: lo,hi=s*512,(l+1)*512
-print(hashlib.sha256(d[:lo]+d[hi:]).hexdigest())
-P
+# sha256 of the image with the Incudela partition's range (if any) masked out.
+# The type GUID is D0C2E3A1-6B7F-4F0A-9E11-466F72676546 in GPT mixed-endian
+# bytes. If that type is absent, lo=hi=0 and the hash covers the whole image.
+# Plain shell (od, dd, sha256sum); same digest as the former python3 helper.
+snap() {
+  _img=$1
+  _elba=$(od -An -t u8 -N 8 -j 584 "$_img" | tr -d ' \n')
+  _n=$(od -An -t u4 -N 4 -j 592 "$_img" | tr -d ' \n')
+  _lo=0
+  _hi=0
+  _i=0
+  while [ "$_i" -lt "$_n" ]; do
+    _off=$((_elba * 512 + _i * 128))
+    _typ=$(od -An -t x1 -N 16 -j $_off "$_img" | tr -d ' \n')
+    if [ "$_typ" = "a1e3c2d07f6b0a4f9e11466f72676546" ]; then
+      _s=$(od -An -t u8 -N 8 -j $((_off + 32)) "$_img" | tr -d ' \n')
+      _l=$(od -An -t u8 -N 8 -j $((_off + 40)) "$_img" | tr -d ' \n')
+      _lo=$((_s * 512))
+      _hi=$(((_l + 1) * 512))
+    fi
+    _i=$((_i + 1))
+  done
+  {
+    [ "$_lo" -gt 0 ] && dd if="$_img" bs=512 count=$((_lo / 512)) status=none
+    dd if="$_img" bs=512 skip=$((_hi / 512)) status=none
+  } | sha256sum | awk '{print $1}'
 }
 S0=$(snap $T/nv.img)
 FB=${FORGE_BOOT_LXWRITE_FB:-"back == front^KERNEL OK"}
