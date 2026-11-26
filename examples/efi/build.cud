@@ -87,6 +87,12 @@ def main():
     write_file(b + "/big.bin", "".join(parts))
     step(["mcopy", "-i", e, b + "/big.bin", "::/EFI/Incudela/docs/big.bin"])
     step(["mcopy", "-i", e, "scripts/hello.sh", "::/EFI/Incudela/docs/hello.sh"])
+    step(["mcopy", "-i", e, "scripts/pipeline.sh", "::/EFI/Incudela/docs/pipeline.sh"])
+    # sealed copy under the docs grant, after the other docs files so getdents order is stable
+    if os.path.isfile("../../build/user/busybox.elf"):
+        r = os.run(["mcopy", "-i", e, "../../build/user/busybox.elf", "::/EFI/Incudela/docs/busybox"])
+        os.write(1, r[1])
+        os.write(2, r[2])
     step(["mmd", "-i", e, "::/EFI/Incudela/apps"])
     for a in sorted(os.listdir("../apps")):
         if a.endswith(".mf"):

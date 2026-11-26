@@ -25,6 +25,9 @@ mcopy -i $B/esp.fat $B/notes.txt "::/EFI/Incudela/docs/Long File Name Notes.txt"
 python3 -c "import sys; sys.stdout.buffer.write(bytes((i * 7 + (i >> 9)) & 255 for i in range(98304)))" > $B/big.bin
 mcopy -i $B/esp.fat $B/big.bin ::/EFI/Incudela/docs/big.bin
 mcopy -i $B/esp.fat scripts/hello.sh ::/EFI/Incudela/docs/hello.sh
+mcopy -i $B/esp.fat scripts/pipeline.sh ::/EFI/Incudela/docs/pipeline.sh
+# a sealed copy under the docs grant, so ash can exec an external command without opening /efi/incudela/bin
+[ -f ../../build/user/busybox.elf ] && mcopy -i $B/esp.fat ../../build/user/busybox.elf ::/EFI/Incudela/docs/busybox
 mmd -i $B/esp.fat ::/EFI/Incudela/apps
 for a in ../apps/*.mf; do mcopy -i $B/esp.fat $a ::/EFI/Incudela/apps/$(basename $a); done
 mcopy -i $B/esp.fat $B/incudelax64.efi ::/EFI/BOOT/BOOTX64.EFI

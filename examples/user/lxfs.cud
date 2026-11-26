@@ -122,7 +122,7 @@ def lx_main(sp: u64):
         o += rl
     put("\n")
     flush()
-    check(n < 4096 and cnt == 3 and algn == 1 and big == 1, "getdents64: 3 linux_dirent64 records (hello.sh added in 11.1e part 12), big.bin a regular file")
+    check(n < 4096 and cnt == 5 and algn == 1 and big == 1, "getdents64: 5 linux_dirent64 records (pipeline.sh and docs/busybox added), big.bin a regular file")
     check(lsys(217, DOCS, u64(addr(dents[0])), 4096, 0, 0) == 0, "getdents64 at the end -> 0")
     fd = lsys(257, DOCS, u64("big.bin"), 0x80000, 0, 0)  # O_RDONLY | O_CLOEXEC
     ok: u64 = 0
