@@ -199,8 +199,10 @@ def lx_ioctl(fd: u64, req: u64, arg: u64) -> u64:
 def lx_mmap(a: u64, n: u64, prot: u64, flags: u64, fd: u64, off: u64) -> u64:
 # anonymous private, or a file-backed mapping of a granted regular file (item 9).
 # Never executable (W^X: a Linux program here cannot create code). No MAP_FIXED.
-# MAP_SHARED + PROT_WRITE -> EACCES (the ESP files are read-only). MAP_PRIVATE may be written;
-# the pages are a copy, not a coherent shared mapping.
+# MAP_SHARED+PROT_WRITE of an ESP / FAT file (F_FILE) stays EACCES. Of an Incudela FS
+# file (F_FFILE, /data) it is allowed when the fd has CAP_WRITE: stores are visible to
+# read() and write() is visible in the mapping; munmap and exit write the file back.
+# MAP_PRIVATE is still a copy. r8/r9 come from the saved frame.
     if (prot & 4) != 0:
         return EACCES
     if (flags & 0x10) != 0:
@@ -211,16 +213,19 @@ def lx_mmap(a: u64, n: u64, prot: u64, flags: u64, fd: u64, off: u64) -> u64:
         return sys_mmap(n)
     if (flags & 3) != 1 and (flags & 3) != 2:
         return EINVAL
-    if (prot & 2) != 0 and (flags & 3) == 1:
-        return EACCES
     if (off & 4095) != 0:
         return EINVAL
     p = cur_proc()
     fl = fd_get(p, fd)
     if u64(fl) == 0:
         return EBADF
-    if fl.type != F_FILE:
+    if fl.type != F_FILE and fl.type != F_FFILE:
         return ENODEV
+    if fl.type == F_FILE and (prot & 2) != 0 and (flags & 3) == 1:
+        return EACCES
+    if fl.type == F_FFILE and (prot & 2) != 0 and (flags & 3) == 1:
+        if (p.fdr[fd] & CAP_WRITE) == 0:
+            return EACCES
     if (p.fdr[fd] & CAP_READ) == 0:
         return EPERM
     if gr_use(fl.gid, "mmap") != 0:
@@ -239,13 +244,24 @@ def lx_mmap(a: u64, n: u64, prot: u64, flags: u64, fd: u64, off: u64) -> u64:
         want = fl.size - off
     r: u64 = 0
     if want != 0:
-        r = file_read(fl, va, want)
+        if fl.type == F_FFILE:
+            r = ffile_read(fl, va, want)
+        else:
+            r = file_read(fl, va, want)
     fl.pos = saved
     fl.ccl = scl
     fl.cidx = sidx
     if (r >> 63) != 0:
         sys_munmap(va, n)
         return r
+    if (flags & 3) == 1 and fl.type == F_FFILE:
+        wr: u64 = 0
+        if (prot & 2) != 0:
+            wr = 1
+        e = lx_smap_add(va, n, off, fl.clu, fl.ccl, p.pid, wr)
+        if e != 0:
+            sys_munmap(va, n)
+            return e
     return va
 
 def lx_unsupported(nr: u64) -> u64:
@@ -564,7 +580,7 @@ LX_DENT_MIN = 768  # getdents64 needs room for the largest record (documented)
 
 def lx_open_write(dirfd: u64, upath: u64, flags: u64) -> u64:
 # write opens are allowed only on /data (a mounted Incudela FS). A write open of the ESP or /obj
-# is still EROFS. MAP_SHARED+PROT_WRITE of an ESP file stays EACCES (not a coherent shared map).
+# is still EROFS. MAP_SHARED+PROT_WRITE of an ESP file stays EACCES; of a /data file it is coherent with read/write in the same process.
     if dirfd == AT_FDCWD:
         path: u8[128]
         if copy_str_user(u64(addr(path[0])), upath, 128) > 127:

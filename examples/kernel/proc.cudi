@@ -930,6 +930,7 @@ def proc_reap(t: ptr[Thread]) -> u64:
 def proc_exit(code: u64):
     t = cur_thread()
     p = ptr[Proc](t.proc)
+    lx_smap_sync_pid(p.pid)
     if p.abi == LX_ABI:
         code = lx_exit_begin(t, p, code)  # 11.1b: a clone()d thread never returns; main waits for them
     if p.drv == DRV_KBD:
@@ -1116,6 +1117,7 @@ def exec_image(frame: u64, img: u64, sz: u64, vc: u64, pa: slice[u8]) -> u64:
     t = cur_thread()
     p = ptr[Proc](t.proc)
     old = p.pml4
+    lx_smap_sync_pid(p.pid)
     f = irq_save()
     p.pml4 = pml4
     t.cr3 = pml4
@@ -1268,6 +1270,7 @@ def sys_munmap(va: u64, len: u64) -> u64:
     # DMA pages stay pinned while the device may still use them (freed only with the process)
     if p.dma_n != 0 and va < p.dma_va + p.dma_n * PAGE and va + len > p.dma_va:
         return EPERM
+    lx_smap_drop_va(p.pid, va, len)
     i: u64 = 0
     while i < len:
         user_unmap(p.pml4, va + i)
@@ -1622,6 +1625,123 @@ def ffs_install(p: ptr[Proc], fl: u64, r: u64) -> u64:
     p.fdr[fd] = r & (CAP_READ | CAP_WRITE | CAP_LOOKUP | CAP_DUP | CAP_XFER)
     return fd
 
+
+# MAP_SHARED maps of an Incudela FS file (F_FFILE) in one process: stores are visible
+# to read() and write() is visible in the mapping; munmap and exit write the file back.
+# ESP / FAT MAP_SHARED+PROT_WRITE stays EACCES. Fork is still an eager copy, so a
+# child's pages are not kept coherent with the parent's map. Cross-process shared
+# physical pages are not implemented (sockets are the other item 9 leftover).
+LX_SMAP_MAX = 4
+lx_smap_va: u64[4]
+lx_smap_n: u64[4]
+lx_smap_off: u64[4]
+lx_smap_slot: u64[4]
+lx_smap_gen: u64[4]
+lx_smap_pid: u64[4]
+lx_smap_wr: u64[4]
+
+def lx_smap_add(va: u64, n: u64, off: u64, slot: u64, gen: u64, pid: u64, wr: u64) -> u64:
+    i: u64 = 0
+    while i < LX_SMAP_MAX:
+        if lx_smap_va[i] == 0:
+            lx_smap_va[i] = va
+            lx_smap_n[i] = n
+            lx_smap_off[i] = off
+            lx_smap_slot[i] = slot
+            lx_smap_gen[i] = gen
+            lx_smap_pid[i] = pid
+            lx_smap_wr[i] = wr
+            return 0
+        i += 1
+    return ENOMEM
+
+def lx_smap_clear(i: u64):
+    lx_smap_va[i] = 0
+    lx_smap_n[i] = 0
+    lx_smap_off[i] = 0
+    lx_smap_slot[i] = 0
+    lx_smap_gen[i] = 0
+    lx_smap_pid[i] = 0
+    lx_smap_wr[i] = 0
+
+def lx_smap_sync_one(i: u64):
+# write a PROT_WRITE map back into the file (clipped to the current size); then clear it
+    if lx_smap_va[i] == 0:
+        return
+    va = lx_smap_va[i]
+    n = lx_smap_n[i]
+    off = lx_smap_off[i]
+    slot = lx_smap_slot[i]
+    gen = lx_smap_gen[i]
+    wr = lx_smap_wr[i]
+    lx_smap_clear(i)
+    if wr == 0 or n == 0:
+        return
+    kb: u8[512]
+    ffs_lock()
+    if ffs_ok == 0 or ffs_check_gen(slot, gen) == 0:
+        ffs_unlock()
+        return
+    sz = ffs_it[slot * 8 + 5]
+    end = off + n
+    if end > sz:
+        end = sz
+    o = off
+    while o < end:
+        k = 512
+        if k > end - o:
+            k = end - o
+        if copy_user(u64(addr(kb[0])), va + (o - off), k) != 0:
+            break
+        r = ffs_kwrite(slot, o, kb[0:k])
+        if r == 0:
+            break
+        o += r
+        if r < k:
+            break
+    ffs_unlock()
+
+def lx_smap_drop_va(pid: u64, va: u64, length: u64):
+    i: u64 = 0
+    while i < LX_SMAP_MAX:
+        if lx_smap_va[i] != 0 and lx_smap_pid[i] == pid:
+            ev = lx_smap_va[i]
+            en = lx_smap_n[i]
+            if va < ev + en and va + length > ev:
+                lx_smap_sync_one(i)
+        i += 1
+
+def lx_smap_sync_pid(pid: u64):
+    i: u64 = 0
+    while i < LX_SMAP_MAX:
+        if lx_smap_va[i] != 0 and lx_smap_pid[i] == pid:
+            lx_smap_sync_one(i)
+        i += 1
+
+def lx_smap_fill(slot: u64, gen: u64, pos: u64, dst: u64, k: u64) -> u64:
+# overlay k bytes at pos from a same-process shared map into a kernel buffer; 1 if filled
+    p = cur_proc()
+    i: u64 = 0
+    while i < LX_SMAP_MAX:
+        if lx_smap_va[i] != 0 and lx_smap_pid[i] == p.pid and lx_smap_slot[i] == slot and lx_smap_gen[i] == gen:
+            off = lx_smap_off[i]
+            if pos >= off and pos + k <= off + lx_smap_n[i]:
+                if copy_user(dst, lx_smap_va[i] + (pos - off), k) == 0:
+                    return 1
+        i += 1
+    return 0
+
+def lx_smap_store(slot: u64, gen: u64, pos: u64, src: u64, k: u64):
+# copy k bytes at pos from a kernel buffer into any covering same-process shared map
+    p = cur_proc()
+    i: u64 = 0
+    while i < LX_SMAP_MAX:
+        if lx_smap_va[i] != 0 and lx_smap_pid[i] == p.pid and lx_smap_slot[i] == slot and lx_smap_gen[i] == gen:
+            off = lx_smap_off[i]
+            if pos >= off and pos + k <= off + lx_smap_n[i]:
+                copy_user(lx_smap_va[i] + (pos - off), src, k)
+        i += 1
+
 def ffile_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
     kb: u8[512]
     done: u64 = 0
@@ -1637,6 +1757,7 @@ def ffile_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
         r = ffs_kread(fl.clu, fl.pos, kb[0:k])
         if r == 0:
             break
+        lx_smap_fill(fl.clu, fl.ccl, fl.pos, u64(addr(kb[0])), r)
         if copy_user(ubuf + done, u64(addr(kb[0])), r) != 0:
             ffs_unlock()
             if done != 0:
@@ -1673,6 +1794,7 @@ def ffile_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
         r = ffs_kwrite(fl.clu, fl.pos, kb[0:k])
         if r == 0:
             break
+        lx_smap_store(fl.clu, fl.ccl, fl.pos, u64(addr(kb[0])), r)
         fl.pos += r
         if fl.pos > fl.size:
             fl.size = fl.pos

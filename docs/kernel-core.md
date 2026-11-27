@@ -256,7 +256,7 @@ the build output.
 **Linux personality, modules, live patch, nondeterminism.** `lxtest: PASS`, `lxthreads: PASS`,
 `lxfs: PASS`, `lxexec: PASS`, `lxipc: PASS`, `lxsig: PASS`, and BusyBox ash (`hello from ash, forge`,
 `script done: ok`) run only in the compat sandbox; a plain exec of a Linux image is refused.
-The Linux personality has 48 syscalls after item 9 batch 4 (pipe, fork/wait4, vfork as an eager-copy fork, file-backed mmap, an ash pipeline in the gate, writable files on `/data` with unlink, newfstatat, readlink, and a read-only `/proc`).
+The Linux personality has 48 syscalls after item 9 batch 4 (pipe, fork/wait4, vfork as an eager-copy fork, file-backed mmap, an ash pipeline in the gate, writable files on `/data` with unlink, newfstatat, readlink, and a read-only `/proc`). A same-process coherent MAP_SHARED map of a `/data` file is also done; MAP_SHARED+PROT_WRITE of an ESP file stays EACCES.
 Modules: `module ABI OK: 1002 loads, 1002 unloads, 7 rejected`. Live patch:
 `live patching OK`. The nondeterminism hook: `nondet: recording off by default`, `nondet hook OK`.
 
