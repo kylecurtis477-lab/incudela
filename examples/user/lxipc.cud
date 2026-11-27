@@ -4,9 +4,10 @@
 # Built and sealed like lxtest (EI_OSABI = 3, examples/user/build.sh) and launched only with sh
 # `run lxipc` in the compat sandbox. Raw Linux syscalls only. Checks pipe (22) / pipe2 (293),
 # fork (57), vfork (58, same eager-copy fork), fork-style clone (56), wait4 (61), a MAP_PRIVATE
-# file mapping of a granted file, and socketpair 53 (AF_UNIX SOCK_STREAM). Syscall 409 stays
-# unreachable (ENOSYS). Syscalls 408/409 stay ktest_hooks gated. The kernel unsafe cap is
-# unchanged (709).
+# file mapping of a granted file, and socketpair 53 (AF_UNIX SOCK_STREAM). A write to a
+# pipe or socket with no reader raises SIGPIPE (default action ends the process; SIG_IGN
+# then the write returns EPIPE). Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409
+# stay ktest_hooks gated. The kernel unsafe cap is unchanged (709).
 
 ENOSYS = 0xFFFFFFFFFFFFFFDA
 EINVAL = 0xFFFFFFFFFFFFFFEA
@@ -18,6 +19,7 @@ EBADF = 0xFFFFFFFFFFFFFFF7
 EAFNOSUPPORT = 0xFFFFFFFFFFFFFF9F
 EPROTONOSUPPORT = 0xFFFFFFFFFFFFFFA3
 ESOCKTNOSUPPORT = 0xFFFFFFFFFFFFFFA2
+SIGPIPE = 13
 
 fails: u64
 checks: u64
@@ -29,6 +31,7 @@ msg: u8[8]
 got: u8[8]
 path: u8[40]
 status: u32[1]
+sa: u64[4]
 
 @naked
 def lsys(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
@@ -94,6 +97,37 @@ def lx_main(sp: u64):
     check(lsys(0, u64(fds[0]), u64(addr(got[0])), 8, 0, 0) == 0, "close-write then read EOF")
     lsys(3, u64(fds[0]), 0, 0, 0, 0)
     r = lsys(22, u64(addr(fds[0])), 0, 0, 0, 0)
+    check(r == 0, "pipe for SIGPIPE")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    pid = lsys(57, 0, 0, 0, 0, 0)
+    if pid == 0:
+        lsys(1, u64(fds[1]), u64(addr(msg[0])), 5, 0, 0)
+        lsys(231, 42, 0, 0, 0, 0)
+    check((pid >> 63) == 0 and pid != 0, "fork SIGPIPE pipe child")
+    status[0] = 0
+    w = lsys(61, pid, u64(addr(status[0])), 0, 0, 0)
+    check(w == pid, "wait4 SIGPIPE pipe child")
+    check(status[0] == (141 << 8), "wait4 SIGPIPE pipe status 141")
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
+    r = lsys(53, 1, 1, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair for SIGPIPE")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    pid = lsys(57, 0, 0, 0, 0, 0)
+    if pid == 0:
+        lsys(1, u64(fds[1]), u64(addr(msg[0])), 5, 0, 0)
+        lsys(231, 42, 0, 0, 0, 0)
+    check((pid >> 63) == 0 and pid != 0, "fork SIGPIPE socket child")
+    status[0] = 0
+    w = lsys(61, pid, u64(addr(status[0])), 0, 0, 0)
+    check(w == pid, "wait4 SIGPIPE socket child")
+    check(status[0] == (141 << 8), "wait4 SIGPIPE socket status 141")
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
+    sa[0] = 1
+    sa[1] = 0
+    sa[2] = 0
+    sa[3] = 0
+    check(lsys(13, SIGPIPE, u64(addr(sa[0])), 0, 8, 0) == 0, "sigaction SIGPIPE SIG_IGN")
+    r = lsys(22, u64(addr(fds[0])), 0, 0, 0, 0)
     check(r == 0, "pipe again")
     lsys(3, u64(fds[0]), 0, 0, 0, 0)
     check(lsys(1, u64(fds[1]), u64(addr(msg[0])), 5, 0, 0) == EPIPE, "close-read then write EPIPE")
@@ -107,6 +141,8 @@ def lx_main(sp: u64):
     check(lsys(293, u64(addr(fds[0])), 0x800, 0, 0, 0) == EINVAL, "pipe2 O_NONBLOCK -> EINVAL")
     check(lsys(409, 0, 0, 0, 0, 0) == ENOSYS, "syscall 409 -> ENOSYS")
     put("lxipc: pipe write/read 5 bytes, fstat S_IFIFO, close-write EOF, close-read EPIPE\n")
+    flush()
+    put("lxipc: SIGPIPE default ends a pipe or socket writer; SIG_IGN then write returns EPIPE\n")
     flush()
     put("lxipc: pipe2 O_CLOEXEC, EFAULT, lseek ESPIPE, syscall 409 -> ENOSYS\n")
     flush()

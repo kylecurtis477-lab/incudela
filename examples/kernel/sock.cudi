@@ -1,8 +1,9 @@
 # sock.cudi: Linux socketpair (syscall 53) for the compat sandbox (item 9).
 # AF_UNIX SOCK_STREAM only: two connected ends of one pair (File type F_SOCK, clu = sock
 # index, pos = 0 or 1). Each end is bidirectional. The last close of one end makes the
-# other see EOF on read and EPIPE on write. No path, no bind, no AF_INET. Syscalls
-# 408/409 stay ktest_hooks gated. The kernel unsafe cap is unchanged (709).
+# other see EOF on read and EPIPE plus SIGPIPE on write (see lx_epipe in
+# pipe.cudi). No path, no bind, no AF_INET. Syscalls 408/409 stay ktest_hooks
+# gated. The kernel unsafe cap is unchanged (709).
 SOCK_N = 8
 SOCK_CAP = 4096
 AF_UNIX = 1
@@ -119,12 +120,12 @@ def sock_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
             if ss.n1 == 0:
                 spin_unlock(addr(rq_lock))
                 irq_restore(f)
-                return EPIPE
+                return lx_epipe()
             wq_block_l(addr(ss.wq0))
         if ss.n1 == 0:
             spin_unlock(addr(rq_lock))
             irq_restore(f)
-            return EPIPE
+            return lx_epipe()
         if n > SOCK_CAP - ss.n01:
             n = SOCK_CAP - ss.n01
         i = 0
@@ -138,12 +139,12 @@ def sock_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
             if ss.n0 == 0:
                 spin_unlock(addr(rq_lock))
                 irq_restore(f)
-                return EPIPE
+                return lx_epipe()
             wq_block_l(addr(ss.wq1))
         if ss.n0 == 0:
             spin_unlock(addr(rq_lock))
             irq_restore(f)
-            return EPIPE
+            return lx_epipe()
         if n > SOCK_CAP - ss.n10:
             n = SOCK_CAP - ss.n10
         i = 0

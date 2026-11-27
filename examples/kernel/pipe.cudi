@@ -1,7 +1,9 @@
 # pipe.cudi: Linux pipe (syscall 22) and pipe2 (293) for the compat sandbox (item 9).
 # A pipe is a 4096-byte ring with a read end and a write end (File type F_PIPE, clu = pipe
 # index, pos = 0 read / 1 write). The last close of the write end makes readers see EOF; the
-# last close of the read end makes writers see EPIPE. Syscalls 408/409 stay ktest_hooks gated.
+# last close of the read end makes writers see EPIPE and raises SIGPIPE (Linux
+# personality only; SIG_IGN/blocked then write returns EPIPE, default action
+# ends the process with status 128+13). Syscalls 408/409 stay ktest_hooks gated.
 # The kernel unsafe cap is unchanged (709).
 PIPE_N = 16
 PIPE_CAP = 4096
@@ -19,6 +21,17 @@ struct Pipe:
 
 pipes: Pipe[16]
 pipe_used: u64[16]
+
+def lx_epipe() -> u64:
+# write with no reader: pending SIGPIPE (13) for the Linux personality, then EPIPE.
+# lx_sig_deliver on syscall exit applies the default action, SIG_IGN, or a handler.
+    p = cur_proc()
+    if p.abi != 0:
+        f = irq_save()
+        p.sig_pend = p.sig_pend | (u64(1) << 13)
+        p.sig_cd[13] = 0
+        irq_restore(f)
+    return EPIPE
 
 def pipe_of(i: u64) -> ptr[Pipe]:
     return addr(pipes[i])
@@ -91,12 +104,12 @@ def pipe_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
         if pp.nrd == 0:
             spin_unlock(addr(rq_lock))
             irq_restore(f)
-            return EPIPE
+            return lx_epipe()
         wq_block_l(addr(pp.wq))
     if pp.nrd == 0:
         spin_unlock(addr(rq_lock))
         irq_restore(f)
-        return EPIPE
+        return lx_epipe()
     if n > PIPE_CAP - pp.len:
         n = PIPE_CAP - pp.len
     i: u64 = 0
