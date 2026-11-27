@@ -1,16 +1,17 @@
 # cuditor: no-runtime
 # cuditor: caps()
-# Item 9 Linux-ABI pipe, fork, wait4, file-backed mmap and socketpair test (docs/linux-compat.md).
+# Item 9 Linux-ABI pipe, fork, wait4, file-backed mmap and AF_UNIX socket test (docs/linux-compat.md).
 # Built and sealed like lxtest (EI_OSABI = 3, examples/user/build.sh) and launched only with sh
 # `run lxipc` in the compat sandbox. Raw Linux syscalls only. Checks pipe (22) / pipe2 (293),
 # fork (57), vfork (58, same eager-copy fork), fork-style clone (56), wait4 (61), a MAP_PRIVATE
-# file mapping of a granted file, and socketpair 53 (AF_UNIX SOCK_STREAM). A write to a
-# pipe or socket with no reader raises SIGPIPE (default action ends the process; SIG_IGN
-# then the write returns EPIPE). socketpair accepts SOCK_NONBLOCK; a non-blocking read or
-# write that would wait returns EAGAIN; fcntl F_SETFL can set O_NONBLOCK on a socket, and
-# ppoll reports real POLLIN/POLLOUT for sockets and waits when only they are in the set.
-# Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409 stay ktest_hooks gated. The
-# kernel unsafe cap is unchanged (709).
+# file mapping of a granted file, socketpair 53, and socket/bind/listen/connect/accept on an
+# AF_UNIX SOCK_STREAM abstract address (sun_path[0] == 0). A pathname bind is EOPNOTSUPP.
+# A write to a pipe or socket with no reader raises SIGPIPE (default action ends the process;
+# SIG_IGN then the write returns EPIPE). socketpair and socket accept SOCK_NONBLOCK; a
+# non-blocking read, write or accept that would wait returns EAGAIN; fcntl F_SETFL can set
+# O_NONBLOCK on a socket, and ppoll reports real POLLIN/POLLOUT for sockets and waits when
+# only they are in the set. Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409 stay
+# ktest_hooks gated. The kernel unsafe cap is unchanged (709).
 
 ENOSYS = 0xFFFFFFFFFFFFFFDA
 EINVAL = 0xFFFFFFFFFFFFFFEA
@@ -22,8 +23,16 @@ EBADF = 0xFFFFFFFFFFFFFFF7
 EAFNOSUPPORT = 0xFFFFFFFFFFFFFF9F
 EPROTONOSUPPORT = 0xFFFFFFFFFFFFFFA3
 ESOCKTNOSUPPORT = 0xFFFFFFFFFFFFFFA2
+EOPNOTSUPP = 0xFFFFFFFFFFFFFFA1
+ENOTCONN = 0xFFFFFFFFFFFFFF95
+EISCONN = 0xFFFFFFFFFFFFFF96
+EADDRINUSE = 0xFFFFFFFFFFFFFF9E
+ECONNREFUSED = 0xFFFFFFFFFFFFFF91
+ENOTSOCK = 0xFFFFFFFFFFFFFFA8
 SIGPIPE = 13
 EAGAIN = 0xFFFFFFFFFFFFFFF5
+SOCK_CLOEXEC = 0x80000
+SOCK_NONBLOCK = 0x800
 
 fails: u64
 checks: u64
@@ -37,6 +46,8 @@ path: u8[40]
 status: u32[1]
 sa: u64[4]
 pfd: u64[1]
+sun: u8[16]
+sun2: u8[16]
 
 @naked
 def lsys(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
@@ -264,8 +275,87 @@ def lx_main(sp: u64):
     check(lsys(53, 2, 1, 0, u64(addr(fds[0])), 0) == EAFNOSUPPORT, "socketpair AF_INET -> EAFNOSUPPORT")
     check(lsys(53, 1, 2, 0, u64(addr(fds[0])), 0) == ESOCKTNOSUPPORT, "socketpair SOCK_DGRAM -> ESOCKTNOSUPPORT")
     check(lsys(53, 1, 1, 1, u64(addr(fds[0])), 0) == EPROTONOSUPPORT, "socketpair protocol 1 -> EPROTONOSUPPORT")
+    check(lsys(41, 2, 1, 0, 0, 0) == EAFNOSUPPORT, "socket AF_INET -> EAFNOSUPPORT")
+    check(lsys(41, 1, 2, 0, 0, 0) == ESOCKTNOSUPPORT, "socket SOCK_DGRAM -> ESOCKTNOSUPPORT")
+    check(lsys(41, 1, 1, 1, 0, 0) == EPROTONOSUPPORT, "socket protocol 1 -> EPROTONOSUPPORT")
+    s = lsys(41, 1, 1, 0, 0, 0)
+    check((s >> 63) == 0, "socket")
+    check(lsys(5, s, u64(addr(st[0])), 0, 0, 0) == 0, "fstat unbound socket")
+    check((st[3] & 0xFFFF) == 0xC180, "fstat socket S_IFSOCK 0600")
+    check(lsys(1, s, u64(addr(msg[0])), 5, 0, 0) == ENOTCONN, "write unbound -> ENOTCONN")
+    check(lsys(0, s, u64(addr(got[0])), 8, 0, 0) == ENOTCONN, "read unbound -> ENOTCONN")
+    check(lsys(49, 0x20, u64(addr(sun[0])), 8, 0, 0) == EBADF, "bind bad fd -> EBADF")
+    sun[0] = 1
+    sun[1] = 0
+    sun[2] = 0
+    sun[3] = 108
+    sun[4] = 120
+    sun[5] = 105
+    sun[6] = 112
+    sun[7] = 99
+    check(lsys(49, s, u64(addr(sun[0])), 8, 0, 0) == 0, "bind abstract")
+    check(lsys(49, s, u64(addr(sun[0])), 8, 0, 0) == EINVAL, "bind already bound -> EINVAL")
+    s2 = lsys(41, 1, 1, 0, 0, 0)
+    check((s2 >> 63) == 0, "socket for EADDRINUSE")
+    check(lsys(49, s2, u64(addr(sun[0])), 8, 0, 0) == EADDRINUSE, "bind EADDRINUSE")
+    sun2[0] = 1
+    sun2[1] = 0
+    sun2[2] = 47
+    sun2[3] = 100
+    sun2[4] = 97
+    sun2[5] = 116
+    sun2[6] = 97
+    sun2[7] = 47
+    sun2[8] = 115
+    check(lsys(49, s2, u64(addr(sun2[0])), 9, 0, 0) == EOPNOTSUPP, "bind pathname -> EOPNOTSUPP")
+    lsys(3, s2, 0, 0, 0, 0)
+    check(lsys(50, s, 1, 0, 0, 0) == 0, "listen")
+    r = lsys(53, 1, 1, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair for listen EINVAL")
+    check(lsys(50, u64(fds[0]), 1, 0, 0, 0) == EINVAL, "listen on socketpair -> EINVAL")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
+    c = lsys(41, 1, 1, 0, 0, 0)
+    check((c >> 63) == 0, "socket client")
+    sun2[0] = 1
+    sun2[1] = 0
+    sun2[2] = 0
+    sun2[3] = 110
+    sun2[4] = 111
+    check(lsys(42, c, u64(addr(sun2[0])), 5, 0, 0) == ECONNREFUSED, "connect missing -> ECONNREFUSED")
+    check(lsys(42, c, u64(addr(sun[0])), 8, 0, 0) == 0, "connect")
+    check(lsys(42, c, u64(addr(sun[0])), 8, 0, 0) == EISCONN, "connect already connected -> EISCONN")
+    a = lsys(43, s, 0, 0, 0, 0)
+    check((a >> 63) == 0, "accept")
+    wr = lsys(1, c, u64(addr(msg[0])), 5, 0, 0)
+    check(wr == 5, "connect write 5")
+    rd = lsys(0, a, u64(addr(got[0])), 8, 0, 0)
+    check(rd == 5 and got[0] == 104 and got[4] == 111, "accept read 5")
+    wr = lsys(1, a, u64(addr(msg[0])), 5, 0, 0)
+    check(wr == 5, "accept write 5")
+    rd = lsys(0, c, u64(addr(got[0])), 8, 0, 0)
+    check(rd == 5 and got[0] == 104, "connect read 5")
+    lsys(3, c, 0, 0, 0, 0)
+    lsys(3, a, 0, 0, 0, 0)
+    c = lsys(41, 1, 1, 0, 0, 0)
+    check(lsys(42, c, u64(addr(sun[0])), 8, 0, 0) == 0, "connect for accept4")
+    a = lsys(288, s, 0, 0, SOCK_CLOEXEC, 0)
+    check((a >> 63) == 0, "accept4 SOCK_CLOEXEC")
+    check(lsys(72, a, 1, 0, 0, 0) == 1, "accept4 GETFD FD_CLOEXEC")
+    lsys(3, c, 0, 0, 0, 0)
+    lsys(3, a, 0, 0, 0, 0)
+    check(lsys(72, s, 4, SOCK_NONBLOCK, 0, 0) == 0, "F_SETFL O_NONBLOCK on listener")
+    check(lsys(43, s, 0, 0, 0, 0) == EAGAIN, "nonblock accept empty -> EAGAIN")
+    lsys(3, s, 0, 0, 0, 0)
+    c = lsys(41, 1, 1, 0, 0, 0)
+    check(lsys(42, c, u64(addr(sun[0])), 8, 0, 0) == ECONNREFUSED, "connect after listen close -> ECONNREFUSED")
+    lsys(3, c, 0, 0, 0, 0)
     put("lxipc: AF_UNIX SOCK_STREAM socketpair is bidirectional, fstat S_IFSOCK, close EOF/EPIPE\n")
+    flush()
     put("lxipc: SOCK_NONBLOCK and F_SETFL return EAGAIN; ppoll waits for a socket\n")
+    flush()
+    put("lxipc: AF_UNIX abstract bind/listen/accept/connect, pathname bind EOPNOTSUPP\n")
+    flush()
     if fails == 0:
         put("lxipc: PASS (")
         putn(checks)

@@ -57,10 +57,12 @@
 # blocks as usual); F_SOCK reports real POLLIN/POLLOUT and ppoll waits if only sockets are in the
 # set and none are ready; closed fds get POLLNVAL. The timeout and sigmask are not used.
 # item 9: socketpair 53 (AF_UNIX SOCK_STREAM only; SOCK_CLOEXEC and SOCK_NONBLOCK accepted on the type).
+# item 9: socket 41, bind 49, listen 50, connect 42, accept 43, accept4 288 -- AF_UNIX
+# SOCK_STREAM abstract addresses (sun_path[0] == 0); a pathname bind is EOPNOTSUPP.
 # Not yet: real-time signals (32..64), sigaltstack, signals to other processes,
-# AF_INET sockets, bind/listen/accept/connect, SOCK_DGRAM.
+# AF_INET sockets, SOCK_DGRAM, AF_UNIX pathname bind.
 LX_ABI = 1
-LX_NSYS = 49  # syscalls in the table above (item 9: + socketpair 53)
+LX_NSYS = 55  # syscalls in the table above (item 9: + socket, bind, listen, connect, accept, accept4)
 ARCH_SET_FS = 0x1002
 ARCH_GET_FS = 0x1003
 ERANGE = 0xFFFFFFFFFFFFFFDE
@@ -1739,6 +1741,18 @@ def lx_dispatch(nr: u64, a: u64, b: u64, c: u64, d: u64) -> u64:
         return lx_pipe(a, flg)
     if nr == 53:
         return lx_socketpair(a, b, c, d)
+    if nr == 41:
+        return lx_socket(a, b, c)
+    if nr == 49:
+        return lx_bind(a, b, c)
+    if nr == 50:
+        return lx_listen(a, b)
+    if nr == 42:
+        return lx_connect(a, b, c)
+    if nr == 43:
+        return lx_accept4(a, b, c, 0)
+    if nr == 288:
+        return lx_accept4(a, b, c, d)
     if nr == 3:
         if p.nxthr != 0 and atomic_load(addr(p.fdbusy), acquire) != 0:
             return EBUSY  # 11.1b: another thread is using a (shared) fd

@@ -1,13 +1,20 @@
-# sock.cudi: Linux socketpair (syscall 53) for the compat sandbox (item 9).
-# AF_UNIX SOCK_STREAM only: two connected ends of one pair (File type F_SOCK, clu = sock
-# index, pos = 0 or 1, cidx bit 0 = O_NONBLOCK). Each end is bidirectional. The last close
-# of one end makes the other see EOF on read and EPIPE plus SIGPIPE on write (see
-# lx_epipe in pipe.cudi). SOCK_CLOEXEC and SOCK_NONBLOCK are accepted on the type;
-# fcntl F_SETFL can also set O_NONBLOCK on an F_SOCK. A non-blocking read or write
-# that would wait returns EAGAIN. ppoll reports real POLLIN/POLLOUT for sockets and
-# can wait when only sockets are in the set. At most SOCK_N (8) pairs exist
-# system-wide. No path, no bind, no AF_INET. Syscalls 408/409 stay ktest_hooks
-# gated. The kernel unsafe cap is unchanged (709).
+# sock.cudi: Linux AF_UNIX SOCK_STREAM sockets for the compat sandbox (item 9).
+# socketpair (53) still makes two connected ends of one pair (File type F_SOCK, clu = sock
+# index, pos = 0 or 1, cidx bit 0 = O_NONBLOCK). socket (41), bind (49), listen (50),
+# connect (42), accept (43) and accept4 (288) add a named listener: bind accepts an
+# abstract address (sun_path[0] == 0); a pathname bind is EOPNOTSUPP (needs /data, not
+# in this slice). connect to a listening name queues a new connected pair; accept
+# returns the server end. The last close of one connected end makes the other see EOF
+# on read and EPIPE plus SIGPIPE on write (see lx_epipe in pipe.cudi). SOCK_CLOEXEC
+# and SOCK_NONBLOCK are accepted on socket, socketpair and accept4; fcntl F_SETFL can
+# also set O_NONBLOCK on an F_SOCK. A non-blocking read, write, accept or connect that
+# would wait returns EAGAIN. ppoll reports real POLLIN/POLLOUT for connected sockets
+# and POLLIN for a listener with a pending connection, and can wait when only sockets
+# are in the set. bind and connect copy a sockaddr_un into locals in the syscall
+# (Cuditor array parameters are by-value, so they cannot be used as out-parameters).
+# At most SOCK_N (8) Sock objects exist system-wide (pairs and
+# listeners share the table). No AF_INET, no SOCK_DGRAM. Syscalls 408/409 stay
+# ktest_hooks gated. The kernel unsafe cap is unchanged (709).
 SOCK_N = 8
 SOCK_CAP = 4096
 AF_UNIX = 1
@@ -18,6 +25,16 @@ EAGAIN = 0xFFFFFFFFFFFFFFF5
 EAFNOSUPPORT = 0xFFFFFFFFFFFFFF9F
 EPROTONOSUPPORT = 0xFFFFFFFFFFFFFFA3
 ESOCKTNOSUPPORT = 0xFFFFFFFFFFFFFFA2
+EOPNOTSUPP = 0xFFFFFFFFFFFFFFA1
+ENOTSOCK = 0xFFFFFFFFFFFFFFA8
+ENOTCONN = 0xFFFFFFFFFFFFFF95
+EISCONN = 0xFFFFFFFFFFFFFF96
+EADDRINUSE = 0xFFFFFFFFFFFFFF9E
+ECONNREFUSED = 0xFFFFFFFFFFFFFF91
+SOCK_UNBOUND = 0
+SOCK_BOUND = 1
+SOCK_LISTEN = 2
+SOCK_CONN = 3
 
 struct Sock:
     h01: u64
@@ -32,6 +49,12 @@ struct Sock:
     wq0: WaitQ
     rq1: WaitQ
     wq1: WaitQ
+    st: u64
+    namelen: u64
+    name: u8[108]
+    backlog: u64
+    qn: u64
+    q: u64[8]
 
 socks: Sock[8]
 sock_used: u64[8]
@@ -62,6 +85,12 @@ def sock_poll_wait_if(g: u64) -> u64:
 def sock_revents(fl: ptr[File], ev: u64) -> u64:
     ss = sock_of(fl.clu)
     rev: u64 = 0
+    if ss.st == SOCK_LISTEN:
+        if ss.qn > 0:
+            rev = 1
+        return ev & rev
+    if ss.st != SOCK_CONN:
+        return 0
     if fl.pos == 0:
         if ss.n10 > 0 or ss.n1 == 0:
             rev = rev | 1
@@ -87,6 +116,22 @@ def sock_end_close(fl: ptr[File]):
     else:
         if ss.n1 != 0:
             ss.n1 -= 1
+    # a closed listener abandons queued connections (server end drops)
+    if ss.st == SOCK_LISTEN:
+        i: u64 = 0
+        while i < ss.qn:
+            cs = sock_of(ss.q[i])
+            if cs.n0 != 0:
+                cs.n0 -= 1
+            wq_wake_all_l(addr(cs.rq0))
+            wq_wake_all_l(addr(cs.wq0))
+            wq_wake_all_l(addr(cs.rq1))
+            wq_wake_all_l(addr(cs.wq1))
+            if cs.n0 == 0 and cs.n1 == 0:
+                sock_used[ss.q[i]] = 0
+            i += 1
+        ss.qn = 0
+        ss.namelen = 0
     wq_wake_all_l(addr(ss.rq0))
     wq_wake_all_l(addr(ss.wq0))
     wq_wake_all_l(addr(ss.rq1))
@@ -106,6 +151,10 @@ def sock_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
     ss = sock_of(fl.clu)
     f = irq_save()
     spin_lock(addr(rq_lock))
+    if ss.st != SOCK_CONN:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return ENOTCONN
     if fl.pos == 0:
         while ss.n10 == 0:
             if ss.n1 == 0:
@@ -169,6 +218,10 @@ def sock_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
     ss = sock_of(fl.clu)
     f = irq_save()
     spin_lock(addr(rq_lock))
+    if ss.st != SOCK_CONN:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return ENOTCONN
     if fl.pos == 0:
         while ss.n01 == SOCK_CAP:
             if ss.n1 == 0:
@@ -260,6 +313,9 @@ def lx_socketpair(domain: u64, typ: u64, protocol: u64, usv: u64) -> u64:
     ss.n10 = 0
     ss.n0 = 1
     ss.n1 = 1
+    ss.st = SOCK_CONN
+    ss.namelen = 0
+    ss.qn = 0
     e0 = file_new(F_SOCK)
     e0.clu = ci
     e0.pos = 0
@@ -288,3 +344,340 @@ def lx_socketpair(domain: u64, typ: u64, protocol: u64, usv: u64) -> u64:
         file_put(u64(e1))
         return EFAULT
     return 0
+
+def sock_alloc_l() -> u64:
+# rq_lock held; returns SOCK_N if the table is full
+    ci: u64 = 0
+    while ci < SOCK_N and sock_used[ci] != 0:
+        ci += 1
+    if ci < SOCK_N:
+        sock_used[ci] = 1
+    return ci
+
+def sock_clear(ss: ptr[Sock]):
+    ss.h01 = 0
+    ss.n01 = 0
+    ss.h10 = 0
+    ss.n10 = 0
+    ss.n0 = 0
+    ss.n1 = 0
+    ss.st = SOCK_UNBOUND
+    ss.namelen = 0
+    ss.backlog = 0
+    ss.qn = 0
+
+def sock_name_eq(ss: ptr[Sock], nm: u8[108], n: u64) -> u64:
+    if ss.namelen != n or n == 0:
+        return 0
+    i: u64 = 0
+    while i < n:
+        if ss.name[i] != nm[i]:
+            return 0
+        i += 1
+    return 1
+
+def sock_find_listen_l(nm: u8[108], n: u64) -> u64:
+# rq_lock held; returns SOCK_N if no listening socket has this abstract name
+    i: u64 = 0
+    while i < SOCK_N:
+        if sock_used[i] != 0:
+            ss = sock_of(i)
+            if ss.st == SOCK_LISTEN and sock_name_eq(ss, nm, n) != 0:
+                return i
+        i += 1
+    return SOCK_N
+
+def sock_name_in_use_l(nm: u8[108], n: u64, selfi: u64) -> u64:
+    i: u64 = 0
+    while i < SOCK_N:
+        if i != selfi and sock_used[i] != 0:
+            ss = sock_of(i)
+            if ss.namelen != 0 and sock_name_eq(ss, nm, n) != 0:
+                return 1
+        i += 1
+    return 0
+
+def sock_type_ok(domain: u64, typ: u64, protocol: u64) -> u64:
+# 0 on success, a negative errno otherwise
+    if domain != AF_UNIX:
+        return EAFNOSUPPORT
+    if protocol != 0:
+        return EPROTONOSUPPORT
+    if (typ & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)) != SOCK_STREAM:
+        if (typ & 0xFF) != SOCK_STREAM:
+            return ESOCKTNOSUPPORT
+        return EINVAL
+    return 0
+
+def sock_fd(p: ptr[Proc], fd: u64) -> nptr[File]:
+    fl = fd_get(p, fd)
+    return fl
+
+def lx_socket(domain: u64, typ: u64, protocol: u64) -> u64:
+# socket(domain, type, protocol): an unbound AF_UNIX SOCK_STREAM end.
+    e = sock_type_ok(domain, typ, protocol)
+    if e != 0:
+        return e
+    p = cur_proc()
+    a = fd_free(p)
+    if a == NFD:
+        return EMFILE
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    ci = sock_alloc_l()
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    if ci == SOCK_N:
+        return ENFILE
+    ss = sock_of(ci)
+    sock_clear(ss)
+    ss.n0 = 1
+    ss.st = SOCK_UNBOUND
+    e0 = file_new(F_SOCK)
+    e0.clu = ci
+    e0.pos = 0
+    if (typ & SOCK_NONBLOCK) != 0:
+        e0.cidx = 1
+    p.fds[a] = u64(e0)
+    p.fdr[a] = CAP_READ | CAP_WRITE | CAP_DUP
+    if (typ & SOCK_CLOEXEC) != 0:
+        lx_cx(a, 1)
+    return a
+
+# Copy a sockaddr_un from user space into locals. Array parameters are by-value, so
+# this cannot be a helper that writes through kb/pn: the caller would never see them.
+# Pathname bind/connect is EOPNOTSUPP. On success, nlen is the abstract name length
+# (addrlen - 2) and nm[0..] holds sun_path.
+def lx_bind(fd: u64, uaddr: u64, ualen: u64) -> u64:
+    p = cur_proc()
+    fl = sock_fd(p, fd)
+    if fl == 0:
+        return EBADF
+    if fl.type != F_SOCK:
+        return ENOTSOCK
+    if ualen < 2 or ualen > 110:
+        return EINVAL
+    tmp: u8[110]
+    if user_ptr_ok(uaddr, ualen) == 0:
+        return EFAULT
+    if copy_user(u64(addr(tmp[0])), uaddr, ualen) != 0:
+        return EFAULT
+    if tmp[0] != 1 or tmp[1] != 0:
+        return EAFNOSUPPORT
+    if ualen == 2:
+        return EINVAL
+    if tmp[2] != 0:
+        return EOPNOTSUPP
+    nlen = ualen - 2
+    nm: u8[108]
+    i: u64 = 0
+    while i < nlen:
+        nm[i] = tmp[2 + i]
+        i += 1
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    ss = sock_of(fl.clu)
+    if ss.st == SOCK_CONN or ss.st == SOCK_LISTEN:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EINVAL
+    if ss.st != SOCK_UNBOUND:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EINVAL
+    if sock_name_in_use_l(nm, nlen, fl.clu) != 0:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EADDRINUSE
+    i = 0
+    while i < nlen:
+        ss.name[i] = nm[i]
+        i += 1
+    ss.namelen = nlen
+    ss.st = SOCK_BOUND
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    return 0
+
+def lx_listen(fd: u64, backlog: u64) -> u64:
+    p = cur_proc()
+    fl = sock_fd(p, fd)
+    if fl == 0:
+        return EBADF
+    if fl.type != F_SOCK:
+        return ENOTSOCK
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    ss = sock_of(fl.clu)
+    if ss.st != SOCK_BOUND and ss.st != SOCK_LISTEN:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EINVAL
+    b = backlog
+    if b == 0:
+        b = 1
+    if b > 8:
+        b = 8
+    ss.backlog = b
+    ss.st = SOCK_LISTEN
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    return 0
+
+def lx_connect(fd: u64, uaddr: u64, ualen: u64) -> u64:
+    p = cur_proc()
+    fl = sock_fd(p, fd)
+    if fl == 0:
+        return EBADF
+    if fl.type != F_SOCK:
+        return ENOTSOCK
+    if ualen < 2 or ualen > 110:
+        return EINVAL
+    tmp: u8[110]
+    if user_ptr_ok(uaddr, ualen) == 0:
+        return EFAULT
+    if copy_user(u64(addr(tmp[0])), uaddr, ualen) != 0:
+        return EFAULT
+    if tmp[0] != 1 or tmp[1] != 0:
+        return EAFNOSUPPORT
+    if ualen == 2:
+        return EINVAL
+    if tmp[2] != 0:
+        return EOPNOTSUPP
+    nlen = ualen - 2
+    nm: u8[108]
+    i: u64 = 0
+    while i < nlen:
+        nm[i] = tmp[2 + i]
+        i += 1
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    ss = sock_of(fl.clu)
+    if ss.st == SOCK_CONN:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EISCONN
+    if ss.st != SOCK_UNBOUND:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EINVAL
+    while 1:
+        li = sock_find_listen_l(nm, nlen)
+        if li == SOCK_N:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return ECONNREFUSED
+        ls = sock_of(li)
+        if ls.qn >= ls.backlog:
+            if (fl.cidx & 1) != 0:
+                spin_unlock(addr(rq_lock))
+                irq_restore(f)
+                return EAGAIN
+            wq_block_l(addr(ls.wq0))
+            continue
+        ci = sock_alloc_l()
+        if ci == SOCK_N:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return ENFILE
+        cs = sock_of(ci)
+        sock_clear(cs)
+        cs.n0 = 1
+        cs.n1 = 1
+        cs.st = SOCK_CONN
+        ls.q[ls.qn] = ci
+        ls.qn += 1
+        wq_wake_all_l(addr(ls.rq0))
+        sock_poll_kick_l()
+        # retarget this File onto the new pair's client end; free the unbound slot
+        old = fl.clu
+        fl.clu = ci
+        fl.pos = 1
+        sock_used[old] = 0
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return 0
+    return EINVAL
+
+def lx_accept4(fd: u64, uaddr: u64, ualenp: u64, flags: u64) -> u64:
+    if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)) != 0:
+        return EINVAL
+    p = cur_proc()
+    fl = sock_fd(p, fd)
+    if fl == 0:
+        return EBADF
+    if fl.type != F_SOCK:
+        return ENOTSOCK
+    if uaddr != 0 or ualenp != 0:
+        if ualenp == 0 or user_ptr_ok(ualenp, 4) == 0:
+            return EFAULT
+        if uaddr != 0 and user_ptr_ok(uaddr, 2) == 0:
+            return EFAULT
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    ss = sock_of(fl.clu)
+    if ss.st != SOCK_LISTEN:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EINVAL
+    while ss.qn == 0:
+        if (fl.cidx & 1) != 0:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return EAGAIN
+        wq_block_l(addr(ss.rq0))
+        if sock_used[fl.clu] == 0 or ss.st != SOCK_LISTEN:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return EBADF
+    ci = ss.q[0]
+    i: u64 = 0
+    while i + 1 < ss.qn:
+        ss.q[i] = ss.q[i + 1]
+        i += 1
+    ss.qn -= 1
+    wq_wake_one_l(addr(ss.wq0))
+    sock_poll_kick_l()
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    a = fd_free(p)
+    if a == NFD:
+    # put the connection back at the head of the listen queue
+        f = irq_save()
+        spin_lock(addr(rq_lock))
+        if ss.st == SOCK_LISTEN and ss.qn < 8:
+            j: u64 = ss.qn
+            while j > 0:
+                ss.q[j] = ss.q[j - 1]
+                j -= 1
+            ss.q[0] = ci
+            ss.qn += 1
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EMFILE
+    e0 = file_new(F_SOCK)
+    e0.clu = ci
+    e0.pos = 0
+    if (flags & SOCK_NONBLOCK) != 0:
+        e0.cidx = 1
+    p.fds[a] = u64(e0)
+    p.fdr[a] = CAP_READ | CAP_WRITE | CAP_DUP
+    if (flags & SOCK_CLOEXEC) != 0:
+        lx_cx(a, 1)
+    if uaddr != 0:
+        fam: u8[2]
+        fam[0] = 1
+        fam[1] = 0
+        if copy_user(uaddr, u64(addr(fam[0])), 2) != 0:
+            p.fds[a] = 0
+            p.fdr[a] = 0
+            file_put(u64(e0))
+            return EFAULT
+        alen: u32[1]
+        alen[0] = 2
+        if copy_user(ualenp, u64(addr(alen[0])), 4) != 0:
+            p.fds[a] = 0
+            p.fdr[a] = 0
+            file_put(u64(e0))
+            return EFAULT
+    return a
