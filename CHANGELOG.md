@@ -149,6 +149,34 @@
   files without the check. Syscalls 408/409 stay `ktest_hooks` gated.
   The kernel unsafe cap stays 709.
 
+- `2ccfb94` `cudseal --foreign` (and the Python reference) accepts a Linux
+  ABI image with EI_OSABI = 0 when it has a PT_GNU_RELRO program header,
+  as well as EI_OSABI = 3. Most static musl builds are OSABI 0; Incudela
+  `fld` images are also OSABI 0 but do not emit GNU_RELRO, so `hello.raw`
+  is still refused. `tests/cudseal/run.sh` requires a byte-identical
+  Forge/Python result on a minimal OSABI 0 + GNU_RELRO ELF, and still
+  refuses `hello.raw`.
+
+- `556f3d6` The kernel's `elf_is_linux` matches the same shape: OSABI 3,
+  or OSABI 0 with PT_GNU_RELRO. `image_verify`, exec, and Linux execve
+  use it, so a sealed static musl binary is confined to the compat
+  sandbox (reason 6) and a sandboxed `run` is allowed. user-build writes
+  a tiny sealed-foreign OSABI 0 program (`osabi0`): a plain exec is
+  refused with reason 6; `run osabi0` exits 0 in the sandbox; `seal_test`
+  requires reason 6 and seven refusals when the file is on the ESP. The
+  expected user-build artifact count is 143. The helper calls existing
+  `le16`/`le32`, so the kernel unsafe report stays 168 / 0 / 659 / 7.
+  Syscalls 408/409 stay `ktest_hooks` gated. The kernel unsafe cap
+  stays 709.
+
+- `dbd1c74` `seal_test` skips the osabi0 `seal_check` when
+  `EFI/Incudela/bin/osabi0` is absent (the 61b3e85 kexec-old-to-new ESP,
+  still the pre-migration `\EFI\Forge\` layout). When the image is
+  present, it still requires reason 6 and seven refusals.
+  `os/kexec-old-to-new` is unchanged. The kernel unsafe report stays
+  168 / 0 / 659 / 7. Syscalls 408/409 stay `ktest_hooks` gated. The
+  kernel unsafe cap stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
