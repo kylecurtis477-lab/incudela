@@ -191,6 +191,20 @@
   Syscalls 408/409 stay `ktest_hooks` gated. The kernel unsafe cap
   stays 709.
 
+- `8d6c5c2` AF_UNIX SOCK_STREAM `socketpair` (53) for the Linux
+  personality: two connected bidirectional ends (`F_SOCK`). Close of
+  one end is EOF on read and EPIPE on write for the other. SOCK_CLOEXEC
+  is accepted on the type; SOCK_NONBLOCK is EINVAL; AF_INET is
+  EAFNOSUPPORT; SOCK_DGRAM is ESOCKTNOSUPPORT; a nonzero protocol is
+  EPROTONOSUPPORT. fstat is S_IFSOCK 0600; lseek is ESPIPE. `run lxipc`
+  covers those cases (53 checks, up from 33). The earlier "54 checks,
+  up from 34" count included the `def check(` helper and is corrected
+  here and in `docs/BUILD_PLAN.md`. No new ESP file, so
+  `os/kexec-old-to-new` and `seal_test` are unchanged. The personality
+  is 49 syscalls. The kernel unsafe report stays 168 / 0 / 659 / 7.
+  Syscalls 408/409 stay `ktest_hooks` gated. The kernel unsafe cap
+  stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
