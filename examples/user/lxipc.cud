@@ -6,8 +6,11 @@
 # fork (57), vfork (58, same eager-copy fork), fork-style clone (56), wait4 (61), a MAP_PRIVATE
 # file mapping of a granted file, and socketpair 53 (AF_UNIX SOCK_STREAM). A write to a
 # pipe or socket with no reader raises SIGPIPE (default action ends the process; SIG_IGN
-# then the write returns EPIPE). Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409
-# stay ktest_hooks gated. The kernel unsafe cap is unchanged (709).
+# then the write returns EPIPE). socketpair accepts SOCK_NONBLOCK; a non-blocking read or
+# write that would wait returns EAGAIN; fcntl F_SETFL can set O_NONBLOCK on a socket, and
+# ppoll reports real POLLIN/POLLOUT for sockets and waits when only they are in the set.
+# Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409 stay ktest_hooks gated. The
+# kernel unsafe cap is unchanged (709).
 
 ENOSYS = 0xFFFFFFFFFFFFFFDA
 EINVAL = 0xFFFFFFFFFFFFFFEA
@@ -20,6 +23,7 @@ EAFNOSUPPORT = 0xFFFFFFFFFFFFFF9F
 EPROTONOSUPPORT = 0xFFFFFFFFFFFFFFA3
 ESOCKTNOSUPPORT = 0xFFFFFFFFFFFFFFA2
 SIGPIPE = 13
+EAGAIN = 0xFFFFFFFFFFFFFFF5
 
 fails: u64
 checks: u64
@@ -32,6 +36,7 @@ got: u8[8]
 path: u8[40]
 status: u32[1]
 sa: u64[4]
+pfd: u64[1]
 
 @naked
 def lsys(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
@@ -223,11 +228,44 @@ def lx_main(sp: u64):
     lsys(3, u64(fds[0]), 0, 0, 0, 0)
     lsys(3, u64(fds[1]), 0, 0, 0, 0)
     check(lsys(53, 1, 1, 0, 0x10, 0) == EFAULT, "socketpair bad pointer -> EFAULT")
-    check(lsys(53, 1, 1 | 0x800, 0, u64(addr(fds[0])), 0) == EINVAL, "socketpair SOCK_NONBLOCK -> EINVAL")
+    r = lsys(53, 1, 1 | 0x800, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair SOCK_NONBLOCK")
+    check((lsys(72, u64(fds[0]), 3, 0, 0, 0) & 0x800) != 0, "GETFL O_NONBLOCK")
+    check(lsys(0, u64(fds[0]), u64(addr(got[0])), 8, 0, 0) == EAGAIN, "nonblock read empty -> EAGAIN")
+    wr = lsys(1, u64(fds[0]), u64(addr(msg[0])), 5, 0, 0)
+    check(wr == 5, "nonblock write 0->1")
+    pfd[0] = u64(fds[1]) | (u64(1) << 32)
+    check(lsys(271, u64(addr(pfd[0])), 1, 0, 0, 0) == 1, "ppoll POLLIN ready")
+    check(((pfd[0] >> 48) & 0xFFFF) == 1, "ppoll revents POLLIN")
+    rd = lsys(0, u64(fds[1]), u64(addr(got[0])), 8, 0, 0)
+    check(rd == 5 and got[0] == 104 and got[4] == 111, "nonblock 0->1 bytes")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
+    r = lsys(53, 1, 1, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair for SETFL")
+    check(lsys(72, u64(fds[0]), 4, 0x800 | 2, 0, 0) == 0, "SETFL O_NONBLOCK")
+    check((lsys(72, u64(fds[0]), 3, 0, 0, 0) & 0x800) != 0, "GETFL after SETFL")
+    check(lsys(0, u64(fds[0]), u64(addr(got[0])), 8, 0, 0) == EAGAIN, "SETFL then read empty -> EAGAIN")
+    pid = lsys(57, 0, 0, 0, 0, 0)
+    if pid == 0:
+        lsys(1, u64(fds[1]), u64(addr(msg[0])), 5, 0, 0)
+        lsys(231, 0, 0, 0, 0, 0)
+    check((pid >> 63) == 0 and pid != 0, "fork ppoll waiter")
+    pfd[0] = u64(fds[0]) | (u64(1) << 32)
+    check(lsys(271, u64(addr(pfd[0])), 1, 0, 0, 0) == 1, "ppoll waits then POLLIN")
+    check(((pfd[0] >> 48) & 0xFFFF) == 1, "ppoll wait revents POLLIN")
+    rd = lsys(0, u64(fds[0]), u64(addr(got[0])), 8, 0, 0)
+    check(rd == 5 and got[0] == 104, "ppoll wait read")
+    status[0] = 0
+    w = lsys(61, pid, u64(addr(status[0])), 0, 0, 0)
+    check(w == pid and status[0] == 0, "wait4 ppoll child")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
     check(lsys(53, 2, 1, 0, u64(addr(fds[0])), 0) == EAFNOSUPPORT, "socketpair AF_INET -> EAFNOSUPPORT")
     check(lsys(53, 1, 2, 0, u64(addr(fds[0])), 0) == ESOCKTNOSUPPORT, "socketpair SOCK_DGRAM -> ESOCKTNOSUPPORT")
     check(lsys(53, 1, 1, 1, u64(addr(fds[0])), 0) == EPROTONOSUPPORT, "socketpair protocol 1 -> EPROTONOSUPPORT")
     put("lxipc: AF_UNIX SOCK_STREAM socketpair is bidirectional, fstat S_IFSOCK, close EOF/EPIPE\n")
+    put("lxipc: SOCK_NONBLOCK and F_SETFL return EAGAIN; ppoll waits for a socket\n")
     if fails == 0:
         put("lxipc: PASS (")
         putn(checks)

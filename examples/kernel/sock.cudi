@@ -1,14 +1,20 @@
 # sock.cudi: Linux socketpair (syscall 53) for the compat sandbox (item 9).
 # AF_UNIX SOCK_STREAM only: two connected ends of one pair (File type F_SOCK, clu = sock
-# index, pos = 0 or 1). Each end is bidirectional. The last close of one end makes the
-# other see EOF on read and EPIPE plus SIGPIPE on write (see lx_epipe in
-# pipe.cudi). No path, no bind, no AF_INET. Syscalls 408/409 stay ktest_hooks
+# index, pos = 0 or 1, cidx bit 0 = O_NONBLOCK). Each end is bidirectional. The last close
+# of one end makes the other see EOF on read and EPIPE plus SIGPIPE on write (see
+# lx_epipe in pipe.cudi). SOCK_CLOEXEC and SOCK_NONBLOCK are accepted on the type;
+# fcntl F_SETFL can also set O_NONBLOCK on an F_SOCK. A non-blocking read or write
+# that would wait returns EAGAIN. ppoll reports real POLLIN/POLLOUT for sockets and
+# can wait when only sockets are in the set. At most SOCK_N (8) pairs exist
+# system-wide. No path, no bind, no AF_INET. Syscalls 408/409 stay ktest_hooks
 # gated. The kernel unsafe cap is unchanged (709).
 SOCK_N = 8
 SOCK_CAP = 4096
 AF_UNIX = 1
 SOCK_STREAM = 1
 SOCK_CLOEXEC = 0x80000
+SOCK_NONBLOCK = 0x800
+EAGAIN = 0xFFFFFFFFFFFFFFF5
 EAFNOSUPPORT = 0xFFFFFFFFFFFFFF9F
 EPROTONOSUPPORT = 0xFFFFFFFFFFFFFFA3
 ESOCKTNOSUPPORT = 0xFFFFFFFFFFFFFFA2
@@ -29,6 +35,44 @@ struct Sock:
 
 socks: Sock[8]
 sock_used: u64[8]
+sock_poll_wq: WaitQ
+sock_poll_gen: u64
+
+def sock_poll_kick_l():
+# rq_lock held: something a poll waiter might care about changed
+    sock_poll_gen += 1
+    wq_wake_all_l(addr(sock_poll_wq))
+
+def sock_poll_epoch() -> u64:
+    return sock_poll_gen
+
+def sock_poll_wait_if(g: u64) -> u64:
+# 1: gen already moved, caller should rescan; 0: slept and woke
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    if sock_poll_gen != g:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return 1
+    wq_block_l(addr(sock_poll_wq))
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    return 0
+
+def sock_revents(fl: ptr[File], ev: u64) -> u64:
+    ss = sock_of(fl.clu)
+    rev: u64 = 0
+    if fl.pos == 0:
+        if ss.n10 > 0 or ss.n1 == 0:
+            rev = rev | 1
+        if ss.n01 < SOCK_CAP or ss.n1 == 0:
+            rev = rev | 4
+    else:
+        if ss.n01 > 0 or ss.n0 == 0:
+            rev = rev | 1
+        if ss.n10 < SOCK_CAP or ss.n0 == 0:
+            rev = rev | 4
+    return ev & rev
 
 def sock_of(i: u64) -> ptr[Sock]:
     return addr(socks[i])
@@ -47,6 +91,7 @@ def sock_end_close(fl: ptr[File]):
     wq_wake_all_l(addr(ss.wq0))
     wq_wake_all_l(addr(ss.rq1))
     wq_wake_all_l(addr(ss.wq1))
+    sock_poll_kick_l()
     last = ss.n0 == 0 and ss.n1 == 0
     spin_unlock(addr(rq_lock))
     irq_restore(f)
@@ -67,6 +112,10 @@ def sock_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
                 spin_unlock(addr(rq_lock))
                 irq_restore(f)
                 return 0
+            if (fl.cidx & 1) != 0:
+                spin_unlock(addr(rq_lock))
+                irq_restore(f)
+                return EAGAIN
             wq_block_l(addr(ss.rq0))
         if n > 512:
             n = 512
@@ -85,6 +134,10 @@ def sock_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
                 spin_unlock(addr(rq_lock))
                 irq_restore(f)
                 return 0
+            if (fl.cidx & 1) != 0:
+                spin_unlock(addr(rq_lock))
+                irq_restore(f)
+                return EAGAIN
             wq_block_l(addr(ss.rq1))
         if n > 512:
             n = 512
@@ -97,6 +150,7 @@ def sock_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
         ss.h01 = (ss.h01 + n) % SOCK_CAP
         ss.n01 -= n
         wq_wake_one_l(addr(ss.wq0))
+    sock_poll_kick_l()
     spin_unlock(addr(rq_lock))
     irq_restore(f)
     if copy_user(ubuf, u64(addr(kb[0])), n) != 0:
@@ -121,6 +175,10 @@ def sock_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
                 spin_unlock(addr(rq_lock))
                 irq_restore(f)
                 return lx_epipe()
+            if (fl.cidx & 1) != 0:
+                spin_unlock(addr(rq_lock))
+                irq_restore(f)
+                return EAGAIN
             wq_block_l(addr(ss.wq0))
         if ss.n1 == 0:
             spin_unlock(addr(rq_lock))
@@ -140,6 +198,10 @@ def sock_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
                 spin_unlock(addr(rq_lock))
                 irq_restore(f)
                 return lx_epipe()
+            if (fl.cidx & 1) != 0:
+                spin_unlock(addr(rq_lock))
+                irq_restore(f)
+                return EAGAIN
             wq_block_l(addr(ss.wq1))
         if ss.n0 == 0:
             spin_unlock(addr(rq_lock))
@@ -153,18 +215,19 @@ def sock_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
             i += 1
         ss.n10 += n
         wq_wake_one_l(addr(ss.rq0))
+    sock_poll_kick_l()
     spin_unlock(addr(rq_lock))
     irq_restore(f)
     return n
 
 def lx_socketpair(domain: u64, typ: u64, protocol: u64, usv: u64) -> u64:
 # socketpair(domain, type, protocol, sv[2]): AF_UNIX + SOCK_STREAM only.
-# SOCK_CLOEXEC is accepted on the type; SOCK_NONBLOCK and other bits -> EINVAL.
+# SOCK_CLOEXEC and SOCK_NONBLOCK are accepted on the type; other bits -> EINVAL.
     if domain != AF_UNIX:
         return EAFNOSUPPORT
     if protocol != 0:
         return EPROTONOSUPPORT
-    if (typ & ~SOCK_CLOEXEC) != SOCK_STREAM:
+    if (typ & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)) != SOCK_STREAM:
         if (typ & 0xFF) != SOCK_STREAM:
             return ESOCKTNOSUPPORT
         return EINVAL
@@ -208,6 +271,9 @@ def lx_socketpair(domain: u64, typ: u64, protocol: u64, usv: u64) -> u64:
     p.fdr[a] = both
     p.fds[b] = u64(e1)
     p.fdr[b] = both
+    if (typ & SOCK_NONBLOCK) != 0:
+        e0.cidx = 1
+        e1.cidx = 1
     if (typ & SOCK_CLOEXEC) != 0:
         lx_cx(a, 1)
         lx_cx(b, 1)

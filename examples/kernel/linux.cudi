@@ -43,7 +43,8 @@
 # item 9 batch 4: newfstatat 262 (path, AT_EMPTY_PATH, AT_SYMLINK_NOFOLLOW; AT_NO_AUTOMOUNT ignored),
 # readlink 89, readlinkat 267, and a read-only /proc (self and self/exe only; a dir /proc grant is required).
 # 11.1e: fcntl 72 -- F_DUPFD / F_DUPFD_CLOEXEC (dup's rules), F_GETFD / F_SETFD (FD_CLOEXEC), F_GETFL,
-# F_SETFL only when it changes nothing (no status flag is settable); other commands EINVAL.
+# F_SETFL: O_NONBLOCK is settable on an F_SOCK (socketpair); other types only when it changes nothing;
+# other commands EINVAL.
 # 11.1e: getcwd 79 -- always "/": there is no working directory, so relative paths stay EACCES.
 # 11.1e: nanosleep 35 -- whole 10 ms scheduler ticks, rounded up (at most a day); not interruptible by signals yet.
 # 11.1e: geteuid 107 -- 1000, the same uid the auxv reports (AT_UID/AT_EUID/AT_GID/AT_EGID are all 1000):
@@ -52,9 +53,10 @@
 # held only after the dup succeeded; newfd is not close-on-exec; oldfd == newfd only checks oldfd.
 # 11.1e: lseek 8 -- FAT32 files: SEEK_SET / SEEK_CUR / SEEK_END, past the end allowed, below 0 EINVAL;
 # a directory only rewinds (SEEK_SET 0); the console and other objects are ESPIPE.
-# 11.1e: ppoll 271 -- never sleeps: every held object is ready (files and directories read without
-# waiting; the console reports ready and its read then blocks as usual), closed fds get POLLNVAL.
-# item 9: socketpair 53 (AF_UNIX SOCK_STREAM only; SOCK_CLOEXEC accepted on the type).
+# 11.1e: ppoll 271 -- files, directories and the console are always ready (a console read then
+# blocks as usual); F_SOCK reports real POLLIN/POLLOUT and ppoll waits if only sockets are in the
+# set and none are ready; closed fds get POLLNVAL. The timeout and sigmask are not used.
+# item 9: socketpair 53 (AF_UNIX SOCK_STREAM only; SOCK_CLOEXEC and SOCK_NONBLOCK accepted on the type).
 # Not yet: real-time signals (32..64), sigaltstack, signals to other processes,
 # AF_INET sockets, bind/listen/accept/connect, SOCK_DGRAM.
 LX_ABI = 1
@@ -318,7 +320,6 @@ CLONE_SETTLS = 0x80000
 CLONE_PARENT_SETTID = 0x100000
 CLONE_CHILD_CLEARTID = 0x200000
 CLONE_CHILD_SETTID = 0x1000000
-EAGAIN = 0xFFFFFFFFFFFFFFF5
 FX_N = 64  # futex waiters, all processes
 fx_thr: u64[64]  # parked waiters (Thread.fx_as/fx_addr hold the key); slots change under rq_lock
 lx_nthreads: u64  # clone()d threads, all processes
@@ -575,6 +576,7 @@ O_EXCL = 0x80
 O_CREAT = 0x40
 O_TRUNC = 0x200
 O_APPEND = 0x400
+O_NONBLOCK = 0x800
 O_DIRECTORY = 0x10000
 AT_SYMLINK_NOFOLLOW = 0x100
 AT_NO_AUTOMOUNT = 0x800
@@ -798,8 +800,9 @@ def lx_readlink(upath: u64, ubuf: u64, n: u64) -> u64:
 def lx_fcntl(fd: u64, cmd: u64, arg: u64) -> u64:
 # fcntl: F_DUPFD 0 / F_DUPFD_CLOEXEC 1030 (sys_dup's rules, then the lowest free fd >= arg),
 # F_GETFD 1 / F_SETFD 2 (FD_CLOEXEC), F_GETFL 3 (console O_RDWR; a /data file O_RDONLY / O_WRONLY /
-# O_RDWR and O_APPEND when opened that way; everything else O_RDONLY), F_SETFL 4 (only a no-op:
-# no status flag can be changed); anything else EINVAL
+# O_RDWR and O_APPEND when opened that way; an F_SOCK is O_RDWR and O_NONBLOCK when set; everything
+# else O_RDONLY), F_SETFL 4 (O_NONBLOCK is settable on an F_SOCK; other types only a no-op);
+# anything else EINVAL
     p = cur_proc()
     if fd >= NFD or p.fds[fd] == 0:
         return EBADF
@@ -841,9 +844,22 @@ def lx_fcntl(fd: u64, cmd: u64, arg: u64) -> u64:
                 cur = 1
             if fl.type == F_FFILE and (fl.cidx & 1) != 0:
                 cur = cur | O_APPEND
+        elif fl.type == F_SOCK:
+            cur = 2
+            if (fl.cidx & 1) != 0:
+                cur = cur | O_NONBLOCK
     if cmd == 3:
         return cur
     if cmd == 4:
+        if fl != 0:
+            if fl.type == F_SOCK:
+                if (arg & ~(O_NONBLOCK | 3)) != 0:
+                    return EINVAL
+                if (arg & O_NONBLOCK) != 0:
+                    fl.cidx = fl.cidx | 1
+                else:
+                    fl.cidx = fl.cidx & ~u64(1)
+                return 0
         if (arg & ~u64(3)) == (cur & ~u64(3)):
             return 0
         return EINVAL
@@ -915,10 +931,10 @@ def lx_lseek(fd: u64, off: u64, whence: u64) -> u64:
     return np
 
 def lx_ppoll(ufds: u64, nfds: u64) -> u64:
-# ppoll(fds, nfds, timeout, sigmask): every held object is always ready (files and directories
-# read without waiting; the console reports ready and a read then waits for input like a blocking
-# read), so the timeout and sigmask are not used and it never sleeps; POLLIN 1 / POLLOUT 4 are
-# echoed from events, a closed fd gets POLLNVAL 32, a negative fd is skipped; nfds > 64 -> EINVAL
+# ppoll(fds, nfds, timeout, sigmask): files, directories and the console are always ready
+# (a console read then waits for input like a blocking read). F_SOCK reports real POLLIN 1 /
+# POLLOUT 4; if the set has sockets and nothing is ready, it waits (timeout and sigmask are
+# unused). A closed fd gets POLLNVAL 32, a negative fd is skipped; nfds > 64 -> EINVAL.
     if nfds > 64:
         return EINVAL
     if nfds == 0:
@@ -926,29 +942,42 @@ def lx_ppoll(ufds: u64, nfds: u64) -> u64:
     if user_ptr_ok(ufds, nfds * 8) == 0:
         return EFAULT
     p = cur_proc()
-    ready: u64 = 0
-    i: u64 = 0
-    while i < nfds:
-        pf: u64[1]
-        r = copy_user(u64(addr(pf[0])), ufds + i * 8, 8)
-        if r != 0:
-            return r
-        fd = pf[0] & 0xFFFFFFFF
-        ev = (pf[0] >> 32) & 0xFFFF
-        rev: u64 = 0
-        if (fd >> 31) == 0:
-            if fd >= NFD or p.fds[fd] == 0:
-                rev = 32
-            else:
-                rev = ev & 5
-        pf[0] = (pf[0] & 0xFFFFFFFFFFFF) | (rev << 48)
-        r = copy_user(ufds + i * 8, u64(addr(pf[0])), 8)
-        if r != 0:
-            return r
-        if rev != 0:
-            ready += 1
-        i += 1
-    return ready
+    while 1:
+        g = sock_poll_epoch()
+        ready: u64 = 0
+        want: u64 = 0
+        i: u64 = 0
+        while i < nfds:
+            pf: u64[1]
+            r = copy_user(u64(addr(pf[0])), ufds + i * 8, 8)
+            if r != 0:
+                return r
+            fd = pf[0] & 0xFFFFFFFF
+            ev = (pf[0] >> 32) & 0xFFFF
+            rev: u64 = 0
+            if (fd >> 31) == 0:
+                if fd >= NFD or p.fds[fd] == 0:
+                    rev = 32
+                else:
+                    fl = fd_get(p, fd)
+                    if fl != 0:
+                        if fl.type == F_SOCK:
+                            want = 1
+                            rev = sock_revents(fl, ev)
+                        else:
+                            rev = ev & 5
+                    else:
+                        rev = ev & 5
+            pf[0] = (pf[0] & 0xFFFFFFFFFFFF) | (rev << 48)
+            r = copy_user(ufds + i * 8, u64(addr(pf[0])), 8)
+            if r != 0:
+                return r
+            if rev != 0:
+                ready += 1
+            i += 1
+        if ready != 0 or want == 0:
+            return ready
+        sock_poll_wait_if(g)
 
 def lx_getcwd(ubuf: u64, size: u64) -> u64:
 # getcwd(buf, size): there is no working directory (relative paths are EACCES), so it reports "/";
