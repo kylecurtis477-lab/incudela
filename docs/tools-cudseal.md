@@ -4,7 +4,7 @@ This is the Cuditor port of `tools/cudseal.py`, the build-time sealer (Phase 6.1
 it to `build/cudseal`.
 
     cudseal [--module] [--v2] [--extra-key KEY2] [--alg-id N] [--proof-byte] SRC.cud IMAGE KEYFILE BASELINE
-    cudseal --foreign IMAGE KEYFILE      level-3 seal of a Linux-ABI ELF (EI_OSABI = 3), caps 0
+    cudseal --foreign IMAGE KEYFILE      level-3 seal of a Linux-ABI ELF (EI_OSABI = 3, or OSABI 0 with PT_GNU_RELRO), caps 0
     cudseal --config FILE KEYFILE        kind-2 seal of a boot config (\EFI\Incudela\boot.cfg); Forge only, no Python reference
     cudseal --pub KEYFILE                the 32-byte Ed25519 public key on stdout
 
@@ -48,7 +48,7 @@ stdout, stderr and rc in 33 cases:
 
 - v3 sealing, `--extra-key` (including an empty key file, which adds no slot), caps, `--v2`, `--alg-id 2`,
   `--proof-byte`, and all options combined;
-- `--module` with v3 and v2, and an EI_OSABI = 3 image;
+- `--module` with v3 and v2, an EI_OSABI = 3 image, and an OSABI 0 image with PT_GNU_RELRO;
 - caps parsing, a relative `..` SRC path, `--foreign`, and `--pub` with seeds of 0, 1, 32 and 100 bytes;
 - every Python error: already sealed (v3, v2, foreign), not a Linux ELF, not in the baseline, unknown capability
   (including the greedy group), unknown option, and verifier rejection;

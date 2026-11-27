@@ -1,7 +1,8 @@
 # cuditor: no-runtime
 # Seal proof manifests (Phase 6.1, Seal v3): Cuditor port of tools/cudseal.py, byte-identical output.
 #   cudseal [--module] [--v2] [--extra-key KEY2] [--alg-id N] [--proof-byte] SRC.cud IMAGE KEYFILE BASELINE
-#   cudseal --foreign IMAGE KEYFILE        level-3 seal of a Linux-ABI (EI_OSABI = 3) foreign ELF
+#   cudseal --foreign IMAGE KEYFILE        level-3 seal of a Linux-ABI foreign ELF
+#                                 (EI_OSABI = 3, or OSABI 0 with PT_GNU_RELRO)
 #   cudseal --config FILE KEYFILE          kind-2 seal of a boot config (\EFI\Incudela\boot.cfg, bootpol.cudi)
 #   cudseal --pub KEYFILE                  32-byte Ed25519 public key on stdout
 # Runs build/cudc SRC /dev/null --unsafe-report in SRC's directory (the verifier), checks the counts
@@ -583,6 +584,60 @@ def wtuple(fd: u64, v: ptr[Stk]):
         k += 1
     ws(fd, ")")
 
+
+PT_GNU_RELRO = 0x6474e552
+
+@unsafe
+def u16at(p: u64, o: u64) -> u64:
+    return u64(pb(p)[o]) | (u64(pb(p)[o + 1]) << 8)
+
+@unsafe
+def u32at(p: u64, o: u64) -> u64:
+    return u16at(p, o) | (u16at(p, o + 2) << 16)
+
+@unsafe
+def u64at(p: u64, o: u64) -> u64:
+    return u32at(p, o) | (u32at(p, o + 4) << 32)
+
+@unsafe
+def elf_is_linux_file(path: u64, n: u64) -> u64:
+# 1 if IMAGE is ELF64 with EI_OSABI = 3, or EI_OSABI = 0 and a PT_GNU_RELRO program header
+# (GNU ld / static musl). Incudela fld images are OSABI 0 without GNU_RELRO.
+    if n < 64 or memeq(u64(addr(tmp.b[0])), u64("\x7fELF"), 4) == 0:
+        return 0
+    if tmp.b[7] == 3:
+        return 1
+    if tmp.b[7] != 0:
+        return 0
+    fd = sys3(2, path, 0, 0)
+    if fd < 0:
+        return 0
+    if sys4(17, u64(fd), u64(addr(iob.b[0])), 64, 0) != 64:
+        sys3(3, u64(fd), 0, 0)
+        return 0
+    # ELFCLASS64 is e_ident[4] == 2; already implied by a 64-byte ELF64 header parse
+    if iob.b[4] != 2:
+        sys3(3, u64(fd), 0, 0)
+        return 0
+    phoff = u64at(u64(addr(iob.b[0])), 32)
+    phent = u16at(u64(addr(iob.b[0])), 54)
+    phnum = u16at(u64(addr(iob.b[0])), 56)
+    if phent != 56 or phoff > n or phnum == 0 or phnum > 128 or phnum * 56 > n - phoff:
+        sys3(3, u64(fd), 0, 0)
+        return 0
+    want = phnum * 56
+    got = sys4(17, u64(fd), u64(addr(iob.b[0])), want, phoff)
+    if got < 0 or u64(got) != want:
+        sys3(3, u64(fd), 0, 0)
+        return 0
+    sys3(3, u64(fd), 0, 0)
+    i: u64 = 0
+    while i < phnum:
+        if u32at(u64(addr(iob.b[0])), i * 56) == PT_GNU_RELRO:
+            return 1
+        i += 1
+    return 0
+
 # --- the three modes ------------------------------------------------------------------------------
 
 @unsafe
@@ -602,8 +657,8 @@ def do_foreign(img: u64, kf: u64) -> u64:
     n = img_info(img, addr(dg))
     if n < 0:
         return fail(img, ": cannot read image")
-    if u64(n) < 8 or memeq(u64(addr(tmp.b[0])), u64("\x7fELF"), 4) == 0 or tmp.b[7] != 3:
-        return fail(img, ": --foreign needs a Linux ABI ELF (EI_OSABI = 3)")
+    if elf_is_linux_file(img, u64(n)) == 0:
+        return fail(img, ": --foreign needs a Linux ABI ELF (EI_OSABI = 3, or OSABI 0 with PT_GNU_RELRO)")
     if is_sealed(u64(n)):
         return fail(img, ": already sealed")
     if hash_seed(addr(key), kf) == 0:

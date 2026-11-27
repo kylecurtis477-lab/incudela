@@ -2,9 +2,10 @@
 # tests/cudseal: tools/cudseal.cud must seal byte-identically to tools/cudseal.py (the reference):
 # same sealed image, stdout, stderr and exit status for v3 (default), --extra-key (two slots, and an
 # empty key file = no extra slot), --v2, --alg-id, --proof-byte, --module, caps lines, an EI_OSABI = 3
-# image, --foreign, --pub (seeds of several lengths) and the error paths with a Python message
-# (already sealed, not in the baseline, unknown capability, unknown option, verifier rejection,
-# --foreign on a non-Linux ELF). Unreadable inputs: Python dies with a traceback, Forge with
+# image, --foreign (including an OSABI 0 ELF with PT_GNU_RELRO), --pub (seeds of several lengths)
+# and the error paths with a Python message (already sealed, not in the baseline, unknown
+# capability, unknown option, verifier rejection, --foreign on a non-Linux ELF such as hello.raw).
+# Unreadable inputs: Python dies with a traceback, Forge with
 # "cudseal: PATH: cannot read ..."; both must exit 1.
 cd "$(dirname "$0")/../.." || exit 1
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
@@ -72,6 +73,19 @@ chk "EI_OSABI=3 lxtest" $T/u/lxtest.lx $U/lxtest.cud @ $T/k32 $BL
 chk "caps parse, own baseline" $T/u/hello.raw $T/caps.cud @ $T/k32 $T/bl.txt
 chk "relative src" $T/u/hello.raw ./examples/user/../user/hello.cud @ $T/k32 $BL
 chk "--foreign" $T/u/lxtest.lx --foreign @ $T/k32
+# OSABI 0 + PT_GNU_RELRO is a Linux ABI image (static musl); --foreign must accept it.
+# Incudela fld images (hello.raw below) are OSABI 0 without GNU_RELRO and stay refused.
+python3 -c "
+import struct,sys
+eh=bytearray(64)
+eh[0:4]=b'\x7fELF'; eh[4]=2; eh[5]=1; eh[6]=1; eh[7]=0
+struct.pack_into('<HHIQQQ', eh, 16, 2, 62, 1, 0x400000, 64, 0)
+struct.pack_into('<IHHHHHH', eh, 48, 0, 64, 56, 2, 0, 0, 0)
+def ph(t,f,o,v,z,a):
+    return struct.pack('<IIQQQQQQ', t,f,o,v,v,z,z,a)
+open(sys.argv[1],'wb').write(bytes(eh)+ph(1,5,0,0x400000,0xB0,0x1000)+ph(0x6474e552,4,0,0x400000,0xB0,1)+bytes(16))
+" $T/u/osabi0.raw
+chk "--foreign OSABI 0 GNU_RELRO" $T/u/osabi0.raw --foreign @ $T/k32
 for k in 0 1 32 100; do chk "--pub ${k}B seed" - --pub $T/k$k; done
 # error paths
 python3 tools/cudseal.py $U/hello.cud $T/u/hello.raw.s $T/k32 $BL >/dev/null 2>&1

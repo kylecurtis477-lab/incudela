@@ -23,7 +23,9 @@ Seal v3 (default, plan v1.3) appends a 384-byte trailer:
   +32 caps mask    +40 ELF length   +48 main-file unsafe ops   +56 kind (0 user program, 1 kernel module: --module)
   +64 SHA-256(ELF bytes)            +96 Ed25519 signature (R || S) over trailer[0:96]
 --foreign: level 3, no unsafe counts (the Forge verifier never saw the program), caps 0; refused
-unless the ELF has EI_OSABI = 3, so the kernel runs it only in the compat sandbox (it re-checks both).
+unless the ELF is a Linux ABI image (EI_OSABI = 3, or EI_OSABI = 0 with a PT_GNU_RELRO program
+header, as in most static musl builds). Incudela fld images are OSABI 0 without GNU_RELRO and stay
+refused. The kernel re-checks the same rule.
 Safety level: 2 = no unsafe code at all in the program's own file (only the audited ulib),
 1 = unsafe counts match the audited baseline. 0 is reserved for "no unsafe anywhere"."""
 import hashlib, os, re, struct, subprocess, sys
@@ -50,10 +52,33 @@ def sealed(elf):
 CAPS = {'fs': 1, 'spawn': 2, 'ipc': 4, 'drv': 8, 'kexec': 16, 'probe': 32, 'ktest': 64, 'grant': 128, 'gfx': 256}
 MAGIC = b'FORGEPRF'
 
+PT_GNU_RELRO = 0x6474e552
+
+def is_linux_elf(elf):
+    # EI_OSABI = 3, or EI_OSABI = 0 (System V / most static musl builds) with PT_GNU_RELRO.
+    # Incudela fld images are also OSABI 0 but do not emit GNU_RELRO.
+    if elf[:4] != b'\x7fELF' or len(elf) < 64:
+        return False
+    if elf[7] == 3:
+        return True
+    if elf[7] != 0 or elf[4] != 2:
+        return False
+    phoff = struct.unpack_from('<Q', elf, 32)[0]
+    phentsz, phnum = struct.unpack_from('<HH', elf, 54)
+    if phentsz != 56:
+        return False
+    for i in range(phnum):
+        o = phoff + i * phentsz
+        if o + 4 > len(elf):
+            return False
+        if struct.unpack_from('<I', elf, o)[0] == PT_GNU_RELRO:
+            return True
+    return False
+
 def foreign(img, keyf):
     elf = open(img, 'rb').read()
-    if elf[:4] != b'\x7fELF' or elf[7] != 3:
-        sys.exit(f'cudseal: {img}: --foreign needs a Linux ABI ELF (EI_OSABI = 3)')
+    if not is_linux_elf(elf):
+        sys.exit(f'cudseal: {img}: --foreign needs a Linux ABI ELF (EI_OSABI = 3, or OSABI 0 with PT_GNU_RELRO)')
     if sealed(elf):
         sys.exit(f'cudseal: {img}: already sealed')
     t = v3((3, 3, 0, 0, len(elf), 0, 0), hashlib.sha256(elf).digest(), [open(keyf, 'rb').read()])
