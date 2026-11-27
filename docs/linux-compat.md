@@ -22,7 +22,8 @@ GNU_RELRO, so they stay Incudela. It runs only if **all** of these hold:
 
 Every other path still refuses it with reason 6 ("Linux ABI image needs the compatibility sandbox"):
 plain `exec` from sh, the boot loader's init, the seal self-test (`linuxabi`, and `osabi0` for an
-OSABI 0 Linux image). Today the only Linux
+OSABI 0 Linux image when that file is on the ESP; an older disk without `osabi0`, such as the
+61b3e85 old-to-new kexec ESP, skips that self-test check). Today the only Linux
 images on the ESP are built here from source (`lxtest`); no third-party binary is shipped.
 
 Inside the personality a process reaches **only** the Linux table. No Forge syscall is reachable,
@@ -283,7 +284,7 @@ Updated 2026-11-26 (OSABI 0 detection). Programs are launched with `run` in the 
 ### Pass
 
 - `lxtest`, `lxthreads`, `lxfs`, `lxexec`, `lxsig` (existing Linux personality tests).
-- `osabi0`: a tiny static Linux program with EI_OSABI = 0 and PT_GNU_RELRO, sealed `--foreign`. The boot self-test and a bare `osabi0` are refused with reason 6; `run osabi0` exits 0 in the sandbox. Incudela programs (also OSABI 0, no GNU_RELRO) are unchanged.
+- `osabi0`: a tiny static Linux program with EI_OSABI = 0 and PT_GNU_RELRO, sealed `--foreign`. When the image is on the ESP, the boot self-test and a bare `osabi0` are refused with reason 6, and `run osabi0` exits 0 in the sandbox. The self-test skips the osabi0 check on an older ESP that does not have the file (the 61b3e85 old-to-new kexec disk). Incudela programs (also OSABI 0, no GNU_RELRO) are unchanged.
 - `lxipc`: pipe and pipe2, fork, vfork and `clone(SIGCHLD)` reaped by wait4, and a file-backed mmap of `/efi/incudela/docs/hello.sh`. A bare `lxipc` without `run` is refused.
 - BusyBox applets already in the 11.1e gate: echo, true, false, basename, env, seq, expr, uname, wc, sha256sum, cat of a granted file, ls of a granted directory and a denied one, printf, pwd, sleep, `sh -c exit 3`, ash `<` / `>` redirections, tail, `sh /efi/incudela/docs/hello.sh`, grep.
 - Ash pipelines and ash running an external command, via `run busybox sh /efi/incudela/docs/pipeline.sh`: a builtin `echo | while read` pipeline, a pipeline to `/efi/incudela/docs/busybox wc -c`, and a simple `/efi/incudela/docs/busybox echo`. The external image is a sealed copy of busybox under the existing docs grant (`/efi/incudela/bin` stays denied).

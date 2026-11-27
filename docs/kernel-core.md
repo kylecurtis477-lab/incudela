@@ -211,7 +211,7 @@ gate: undeclared spawn and probe denied at the syscall boundary`). Channel move,
 peer close, and `EFAULT` leaving a message queued are pinned by `chantest.cud` (`chantest: PASS`)
 and `badptr`. Grants and revocation: `sbtest: PASS`, `grtest:` mid-read cut-off, `audit: ledger
 check`. W^X in user space: `wxtest: PASS`. Sealed images: boot lines `verify: /efi/incudela/bin/unsealed
-refused: no proof manifest`, `tampered` / `forged` / `linuxabi` / `osabi0` refusals; `os/seal-private-key-not-shipped`;
+refused: no proof manifest`, `tampered` / `forged` / `linuxabi` refusals, and `osabi0` when that image is on the ESP; `os/seal-private-key-not-shipped`;
 `tests/ed25519/run.sh` and `tests/cudseal/run.sh`.
 
 **Drivers, isolation and VT-d.** `PCI + virtio-blk + FAT32 (read-only) OK` and a byte-identical

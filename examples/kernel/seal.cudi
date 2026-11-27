@@ -374,8 +374,17 @@ def seal_test():
         panic("forged manifest refused for the wrong reason")
     if seal_check("EFI/Incudela/bin/linuxabi", 0) != 6:
         panic("Linux ABI image refused for the wrong reason")
-    if seal_check("EFI/Incudela/bin/osabi0", 0) != 6:
-        panic("OSABI 0 Linux image refused for the wrong reason")
+    # osabi0 lives on this tree's ESP. An older disk (kexec-old-to-new from 61b3e85,
+    # still the pre-migration \EFI\Forge\ layout) does not have it; skip the check
+    # then, and still require reason 6 when the image is present.
+    want_refused: u64 = 6
+    osz: u64 = 0
+    obuf = fs_read_file("EFI/Incudela/bin/osabi0", addr(osz))
+    if obuf != 0:
+        kfree(obuf)
+        if seal_check("EFI/Incudela/bin/osabi0", 0) != 6:
+            panic("OSABI 0 Linux image refused for the wrong reason")
+        want_refused = 7
     v0 = seal_v2_count
     seal_check("EFI/Incudela/bin/hellov2", SEAL_OK)
     if seal_v2_count - v0 != 1:
@@ -384,7 +393,7 @@ def seal_test():
         panic("unknown signature algorithm refused for the wrong reason")
     if seal_check("EFI/Incudela/bin/proofset", 0) != 10:
         panic("filled proof slot refused for the wrong reason")
-    if seal_refused - n0 != 7:
+    if seal_refused - n0 != want_refused:
         panic("seal refusals not counted")
     puts("proof manifest (Ed25519): 3 sealed images accepted with their declared caps; unsealed, tampered and forged images refused; Linux ABI image confined to compat sandbox\n")
     puts("seal v3: Ed25519 (algorithm 1), 3 signature slots, reserved proof slot; v2 seal still accepted, 2-signature seal accepted, unknown algorithm and filled proof slot refused\n")
