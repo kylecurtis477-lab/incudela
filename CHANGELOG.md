@@ -205,6 +205,32 @@
   Syscalls 408/409 stay `ktest_hooks` gated. The kernel unsafe cap
   stays 709.
 
+- `3dd9e34` A write to a pipe or an AF_UNIX SOCK_STREAM socket with no
+  reader now raises SIGPIPE after returning EPIPE. The default action
+  ends the writer (wait word `(128+13)<<8`, as for `run lxsig term`).
+  `SIG_IGN` or a blocked SIGPIPE leaves the writer running and the
+  write returns EPIPE. `run lxipc` covers both (62 checks, up from 53).
+  No new ESP file, so `os/kexec-old-to-new` and `seal_test` are
+  unchanged. The personality stays 49 syscalls. The kernel unsafe
+  report stays 168 / 0 / 659 / 7. Syscalls 408/409 stay `ktest_hooks`
+  gated. The kernel unsafe cap stays 709.
+
+- `c50e631` AF_UNIX SOCK_STREAM `socketpair` accepts `SOCK_NONBLOCK`
+  (alone or with `SOCK_CLOEXEC`). A non-blocking read or write that
+  would wait returns EAGAIN. `fcntl` `F_SETFL` can set or clear
+  `O_NONBLOCK` on an `F_SOCK` (`F_GETFL` reports it; other file types
+  still reject a changing `F_SETFL`). `ppoll` reports real `POLLIN` /
+  `POLLOUT` for sockets and waits when only sockets are in the set and
+  none are ready; files, directories and the console stay always-ready,
+  so ash read is unchanged. `pipe2` `O_NONBLOCK` stays EINVAL. At most
+  8 socketpairs exist system-wide (documented as a known issue).
+  `docs/linux-compat.md`'s stale "45 syscalls" sentence is now 49.
+  `run lxipc` covers these cases (77 checks, up from 62). No new ESP
+  file, so `os/kexec-old-to-new` and `seal_test` are unchanged. The
+  personality stays 49 syscalls. The kernel unsafe report stays
+  168 / 0 / 659 / 7. Syscalls 408/409 stay `ktest_hooks` gated. The
+  kernel unsafe cap stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
