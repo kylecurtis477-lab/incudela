@@ -13,7 +13,8 @@
 # Item 9: a mounted volume is also visible to processes at /data. Writes (Linux open/write/unlink, and
 # native sys_write on a handle that carries CAP_WRITE) are allowed only there. Kernel and object-store
 # names (persist.dat, hello.txt, scratch.dat, and anything beginning objects.) are not visible under
-# /data and cannot be opened, created or unlinked through it. The ESP stays read-only.
+# /data and cannot be opened, created or unlinked through it. "." , ".." and names with a control
+# byte are also refused. The ESP stays read-only.
 FFS_MAGIC = 0x3153464547524F46  # "FORGEFS1"
 FFS_NI = 64
 FFS_T0 = 0x4F0A6B7FD0C2E3A1
@@ -461,14 +462,18 @@ def ffs_reserved(s: slice[u8]) -> u64:
     return 0
 
 def ffs_user_ok(s: slice[u8]) -> u64:
-# a /data name: 1..39 bytes, no slash or NUL in the middle, not reserved
+# a /data name: 1..39 bytes, no slash, NUL, or control byte, not "." or "..", not reserved
     n = len(s)
     i: u64 = 0
     while i < n and s[i] != 0:
-        if s[i] == 47:
+        if s[i] == 47 or s[i] < 32 or s[i] == 127:
             return 0
         i += 1
     if i == 0 or i > 39:
+        return 0
+    if i == 1 and s[0] == 46:
+        return 0
+    if i == 2 and s[0] == 46 and s[1] == 46:
         return 0
     if ffs_reserved(s) != 0:
         return 0

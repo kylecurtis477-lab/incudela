@@ -4,7 +4,8 @@
 # (EI_OSABI = 3, examples/user/build.sh) and launched only with sh `run lxwrite` in the compat
 # sandbox, on a boot whose NVMe disk has an explicitly created Incudela FS partition. Raw Linux
 # syscalls only. Writes on the ESP stay EROFS; kernel and object-store names under /data stay
-# EACCES. After unlink and recreate of the same name, read/write/fstat/lseek of the old fd
+# EACCES, as do "." , ".." and names with a control byte. After unlink and recreate of the same
+# name, read/write/fstat/lseek of the old fd
 # return ESTALE (close and fcntl still work). After O_TRUNC, a sparse write past the
 # old start leaves zeros in the gap (the old extent is not exposed). Syscall 409 stays unreachable (ENOSYS).
 # Syscalls 408/409 stay ktest_hooks gated. The kernel unsafe cap is unchanged (709).
@@ -106,6 +107,15 @@ def lx_main(sp: u64):
     check(lsys(2, u64(addr(path[0])), 0, 0, 0, 0) == EACCES, "open hello.txt -> EACCES")
     setpath("/data/objects.log")
     check(lsys(2, u64(addr(path[0])), 0, 0, 0, 0) == EACCES, "open objects.log -> EACCES")
+    setpath("/data/.")
+    check(lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT | O_TRUNC, 0, 0, 0) == EACCES, "open . -> EACCES")
+    setpath("/data/..")
+    check(lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT | O_TRUNC, 0, 0, 0) == EACCES, "open .. -> EACCES")
+    check(lsys(87, u64(addr(path[0])), 0, 0, 0, 0) == EACCES, "unlink .. -> EACCES")
+    setpath("/data/")
+    path[6] = 1
+    path[7] = 0
+    check(lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT | O_TRUNC, 0, 0, 0) == EACCES, "open control name -> EACCES")
     setpath("/data/lxwrite.dat")
     fd = lsys(2, u64(addr(path[0])), O_RDWR | O_CREAT | O_TRUNC, 0, 0, 0)
     check((fd >> 63) == 0, "create /data/lxwrite.dat")
@@ -204,7 +214,7 @@ def lx_main(sp: u64):
     check(lsys(5, fd, u64(addr(st[0])), 0, 0, 0) == 0 and st[6] == 36, "trunc: fstat size 36")
     lsys(3, fd, 0, 0, 0, 0)
     check(lsys(87, u64(addr(path[0])), 0, 0, 0, 0) == 0, "trunc: unlink")
-    put("lxwrite: ESP write EROFS, reserved /data names EACCES\n")
+    put("lxwrite: ESP write EROFS, reserved /data names, ., .., control names EACCES\n")
     flush()
     put("lxwrite: create/write/read/append/unlink/O_EXCL on /data/lxwrite.dat\n")
     flush()
