@@ -132,6 +132,23 @@
   must have left Enable off. Syscalls 408/409 stay `ktest_hooks` gated.
   The kernel unsafe cap stays 709.
 
+- `7a5ad02` `hw_quiesce` now resets virtio-blk and drops MSI-X Enable so a
+  leftover vector 0x50 cannot #GP a kexec successor. `vb_init` prints the
+  Enable bit it finds on a successor (`bi.kx_gen != 0`) before it calls
+  `vb_msix_off`. `tests/os/lxwrite.sh`, which already kexecs with the ESP
+  virtio-blk attached, requires `virtio-blk: MSI-X Enable on handoff: off`.
+  Legacy device-specific config is read at 0x14 when MSI-X is off and at
+  0x18 while Enable is on. Syscalls 408/409 stay `ktest_hooks` gated.
+  The kernel unsafe cap stays 709.
+
+- `2ccea78` `ffs_user_ok` refuses a `/data` name that is `.` or `..`, or
+  that contains a slash, a NUL, or a control byte (0x00..0x1F or 0x7F),
+  in addition to the reserved kernel and object-store names. `run lxwrite`
+  requires EACCES for `.`, `..` (open and unlink), and a name with a
+  control byte (55 checks total). Those names were accepted as ordinary
+  files without the check. Syscalls 408/409 stay `ktest_hooks` gated.
+  The kernel unsafe cap stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
