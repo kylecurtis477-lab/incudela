@@ -1,6 +1,7 @@
 # Phase 11.1: the Linux syscall personality (docs/linux-compat.md).
 #
-# A sealed ELF tagged EI_OSABI = 3 (Linux) runs under this personality, and only when it was launched
+# A sealed Linux ABI ELF (EI_OSABI = 3, or EI_OSABI = 0 with PT_GNU_RELRO; see elf_is_linux) runs
+# under this personality, and only when it was launched
 # in the compat sandbox: sh `run app` (sys_exec with sb = 1 verifies with SEAL_COMPAT). Plain exec,
 # the boot loader and the 6.1 self-test still refuse it (seal reason 6), and an unsealed or tampered
 # Linux image is refused before the ABI is even looked at. So the only Linux code that can run is code
@@ -1097,7 +1098,7 @@ def lx_getdents64(fd: u64, ubuf: u64, n: u64) -> u64:
 # a handle it already holds: execve(path) needs an absolute path that lies under one of its directory
 # handles (matched by the handle's label, then opened relative to it like openat); execveat(dirfd,
 # name) opens name relative to dirfd, or with AT_EMPTY_PATH runs the file handle itself (fexecve).
-# The image must be sealed AND tagged Linux (OSABI 3); it is verified with SEAL_COMPAT because the
+# The image must be sealed AND detected as Linux (elf_is_linux); it is verified with SEAL_COMPAT because the
 # caller is already inside the compat sandbox. The new image keeps the sandbox (no root capability
 # comes back), keeps its handles except O_CLOEXEC ones, and its capabilities are AND-ed with the new
 # seal's: grants are carried or narrowed, never widened. argv[1..] become the space-separated args
@@ -1245,7 +1246,7 @@ def lx_execve(frame: u64, dirfd: u64, upath: u64, uargv: u64, flags: u64) -> u64
         seal_log(addr(path[0]))
         kfree(img)
         return ENOEXEC
-    if lx_osabi(img) != 3:
+    if elf_is_linux(img, sz) == 0:
         kfree(img)
         return lx_exec_refuse(p, path[:], "not a Linux image (Incudela images run only through Incudela exec)", ENOEXEC)
     # past every check: drop O_CLOEXEC handles, then replace the image

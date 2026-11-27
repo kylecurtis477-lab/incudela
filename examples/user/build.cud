@@ -4,7 +4,8 @@
 # and seals them with tools/cudseal.cud under build/user/seal.key (an Ed25519 seed made once per build
 # tree from /dev/urandom, never committed; the kernel embeds only seal.pub). cat also carries a second
 # signature (seal2.key). Then the seal v3/v2 and 6.3/6.4 negative images, the 11.1 Linux-ABI test programs
-# (EI_OSABI = 3 set before sealing) and, when the BusyBox source tarball is on the box, BusyBox via
+# (EI_OSABI = 3 set before sealing), a foreign-sealed OSABI 0 Linux program (osabi0: EI_OSABI = 0
+# with PT_GNU_RELRO), and, when the BusyBox source tarball is on the box, BusyBox via
 # build/busybox-build (tools/busybox/build.cud; the caller builds it). The script's python3 byte patches
 # are done here in Forge.
 # usage: build/user-build [OUTDIR]  (default build/user). The binary lives in build/, so the repo is the
@@ -56,6 +57,35 @@ def patch(a, b, off: int, x: int, v: int):
         off = len(d) + off
     c: int = v if v >= 0 else ord(d[off]) ^ x
     write_file(b, d[:off] + chr(c) + d[off + 1:])
+
+def le(v: int, n: int):
+    s = ""
+    i: int = 0
+    while i < n:
+        s = s + chr(v & 255)
+        v = v >> 8
+        i += 1
+    return s
+
+def phdr(typ: int, flags: int, off: int, va: int, fsz: int, msz: int, al: int):
+    return le(typ, 4) + le(flags, 4) + le(off, 8) + le(va, 8) + le(va, 8) + le(fsz, 8) + le(msz, 8) + le(al, 8)
+
+def write_osabi0(path):
+# tiny static Linux x86-64 program: EI_OSABI = 0, PT_GNU_RELRO, `_start` is exit(0).
+# Most static musl builds are OSABI 0 and carry GNU_RELRO; Incudela fld images do not.
+    e = le(0x464C457F, 4) + chr(2) + chr(1) + chr(1) + chr(0) + le(0, 8)
+    e = e + le(2, 2) + le(62, 2) + le(1, 4) + le(0x401000, 8) + le(64, 8) + le(0, 8)
+    e = e + le(0, 4) + le(64, 2) + le(56, 2) + le(3, 2) + le(0, 2) + le(0, 2) + le(0, 2)
+    e = e + phdr(1, 4, 0, 0x400000, 0xE8, 0xE8, 0x1000)
+    e = e + phdr(1, 5, 0x1000, 0x401000, 10, 10, 0x1000)
+    e = e + phdr(0x6474e552, 4, 0, 0x400000, 0xE8, 0xE8, 1)
+    z = ""
+    i: int = 0
+    while i < 3864:
+        z = z + chr(0)
+        i += 1
+    e = e + z + chr(0x48) + chr(0x31) + chr(0xFF) + chr(0xB8) + chr(0x3C) + chr(0) + chr(0) + chr(0) + chr(0x0F) + chr(0x05)
+    write_file(path, e)
 
 def keygen(p):
     d = read_file(p)
@@ -127,6 +157,9 @@ def main():
         step(["../../build/fld", "-o", b + ".raw", b + ".o"])
         patch(b + ".raw", b + ".elf", 7, 0, 3)
         quiet([s, p + ".cud", b + ".elf", k, bl])
+    # OSABI 0 Linux detection: musl-shaped ELF (EI_OSABI = 0, PT_GNU_RELRO), sealed --foreign
+    write_osabi0(out + "/osabi0.elf")
+    quiet([s, "--foreign", out + "/osabi0.elf", k])
     # 11.1e: BusyBox from verified source, only when the source tarballs are on the box
     bb = os.getenv("BB_SRC", "")
     if bb == "":

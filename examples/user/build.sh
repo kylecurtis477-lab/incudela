@@ -84,6 +84,21 @@ $S lxwrite.cud $B/lxwrite.elf $K ../../tests/unsafe/baseline.txt >/dev/null
 ../../build/fld -o $B/lxproc.raw $B/lxproc.o
 python3 -c "import sys; d=bytearray(open(sys.argv[1],'rb').read()); d[7]=3; open(sys.argv[2],'wb').write(d)" $B/lxproc.raw $B/lxproc.elf
 $S lxproc.cud $B/lxproc.elf $K ../../tests/unsafe/baseline.txt >/dev/null
+# OSABI 0 Linux detection: a tiny static musl-shaped ELF (EI_OSABI = 0, PT_GNU_RELRO, exit 0),
+# sealed --foreign. The kernel must treat it as Linux (reason 6 from a plain exec; `run osabi0`
+# exits 0 in the sandbox). Incudela fld images are also OSABI 0 but have no GNU_RELRO.
+python3 -c "
+import struct,sys
+eh=bytearray(64)
+eh[0:4]=b'\x7fELF'; eh[4]=2; eh[5]=1; eh[6]=1; eh[7]=0
+struct.pack_into('<HHIQQQ', eh, 16, 2, 62, 1, 0x401000, 64, 0)
+struct.pack_into('<IHHHHHH', eh, 48, 0, 64, 56, 3, 0, 0, 0)
+def ph(t,f,o,v,z,m,a):
+    return struct.pack('<IIQQQQQQ', t,f,o,v,v,z,m,a)
+d=bytes(eh)+ph(1,4,0,0x400000,0xE8,0xE8,0x1000)+ph(1,5,0x1000,0x401000,10,10,0x1000)+ph(0x6474e552,4,0,0x400000,0xE8,0xE8,1)
+open(sys.argv[1],'wb').write(d+bytes(0x1000-0xE8)+bytes([0x48,0x31,0xff,0xb8,0x3c,0,0,0,0x0f,0x05]))
+" $B/osabi0.elf
+$S --foreign $B/osabi0.elf $K >/dev/null
 # 11.1e: BusyBox from verified source (tools/busybox), only when the source tarballs are on the box
 if [ -f ${BB_SRC:-/workspace/bb}/busybox-1.38.0.tar.bz2 ]; then
     sh ../../tools/busybox/build.sh $B/busybox.elf $K

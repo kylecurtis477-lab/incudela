@@ -319,6 +319,7 @@ def as_free(pml4: u64) -> u64:
 # ---- ELF64 loader ----
 elf_bad_rejects: u64
 ELF_MAX_MAP = 0x4000000  # 64 MiB of PT_LOAD memory per image
+PT_GNU_RELRO = 0x6474e552  # GNU ld / musl static images carry this; fld does not emit it
 
 # ELF64 header and program header viewed as u64 words (fields packed inside a word are masked out)
 struct Ehdr:
@@ -339,6 +340,35 @@ struct Phdr:
     fsz: u64
     msz: u64
     align: u64
+
+def elf_is_linux(img: u64, len: u64) -> u64:
+# 1 if this is a Linux ABI image: EI_OSABI = 3, or EI_OSABI = 0 (System V, the ELF default and
+# what most static musl builds use) with a PT_GNU_RELRO program header. Incudela programs are
+# also EI_OSABI = 0, but fld does not emit GNU_RELRO, so they stay Incudela. Used by image_verify
+# (reason 6 / 8) and by exec to select the Linux personality.
+# Reads the header through le16/le32 (existing @unsafe helpers) so this function stays safe and
+# the kernel unsafe report is unchanged.
+    if len < 64:
+        return 0
+    if le32(img) != 0x464C457F or (le32(img + 4) & 0xFF) != 2:
+        return 0
+    osabi = (le32(img + 4) >> 24) & 0xFF
+    if osabi == 3:
+        return 1
+    if osabi != 0:
+        return 0
+    phoff = le32(img + 32) | (le32(img + 36) << 32)
+    phent = le16(img + 54)
+    phnum = le16(img + 56)
+    if phent != 56 or phoff > len or phnum == 0 or phnum * 56 > len - phoff:
+        return 0
+    i = 0
+    while i < phnum:
+        typ = le32(img + phoff + i * 56)
+        if typ == PT_GNU_RELRO:
+            return 1
+        i += 1
+    return 0
 
 @unsafe
 def elf_load(pml4: u64, img: u64, len: u64, endp: u64) -> u64:

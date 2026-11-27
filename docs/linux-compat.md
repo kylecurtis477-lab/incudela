@@ -6,7 +6,10 @@ console, scheduling and capabilities are Forge's, seen through Linux numbers and
 
 ## Who may run under it (the 6.4 gate)
 
-A Linux image is one whose ELF header says EI_OSABI = 3. It runs only if **all** of these hold:
+A Linux image is one whose ELF header says EI_OSABI = 3, or EI_OSABI = 0 (the System V default,
+used by most static musl builds) with a PT_GNU_RELRO program header (`elf_is_linux` in
+`examples/kernel/user.cudi`). Incudela programs are also EI_OSABI = 0, but `fld` does not emit
+GNU_RELRO, so they stay Incudela. It runs only if **all** of these hold:
 
 1. It is **sealed** (`tools/cudseal.py`): the verifier's unsafe report matches the audited baseline
    and the build key signed it. Unsealed (reason 1) and tampered (reason 5) images are refused before
@@ -18,7 +21,8 @@ A Linux image is one whose ELF header says EI_OSABI = 3. It runs only if **all**
    `/efi/incudela/apps/<app>.mf` manifest grants (Phase 5.3 / 10.2), plus its sealed capabilities.
 
 Every other path still refuses it with reason 6 ("Linux ABI image needs the compatibility sandbox"):
-plain `exec` from sh, the boot loader's init, the seal self-test (`linuxabi`). Today the only Linux
+plain `exec` from sh, the boot loader's init, the seal self-test (`linuxabi`, and `osabi0` for an
+OSABI 0 Linux image). Today the only Linux
 images on the ESP are built here from source (`lxtest`); no third-party binary is shipped.
 
 Inside the personality a process reaches **only** the Linux table. No Forge syscall is reachable,
@@ -257,9 +261,6 @@ syscall 409 is ENOSYS. `lxproc: PASS (N checks)` and `[lxproc exited 0 (sandboxe
 - Sockets, and a coherent MAP_SHARED file map (file-backed MAP_PRIVATE is done; MAP_SHARED+PROT_WRITE of an ESP file stays EACCES). Writable files on `/data` are done (an explicitly created Incudela FS partition only). A read-only `/proc` (`self` and `self/exe` only; a `dir /proc` grant is required) is done. vfork is implemented as an eager-copy fork (not a shared-memory vfork).
 - Busybox (the Phase 11.1 acceptance test) needs a third-party static binary; it will be added only
   after the owner approves downloading one, and it will run under the same gate (sealed + sandboxed).
-- OSABI 0 Linux binaries (most static musl builds) are not detected as Linux; they are refused today
-  only because they are unsealed.
-
 ## BusyBox acceptance (11.1e)
 
 BusyBox is built from source only; no prebuilt third-party binary is used.
@@ -270,18 +271,19 @@ BusyBox is built from source only; no prebuilt third-party binary is used.
   - make-4.4.1.tar.gz (host had no make): GPG signature made in 2023 by a key that has since expired (EXPKEYSIG, accepted with a note).
 - Host compiler: Debian gcc 14.2.0, used to build make and musl; BusyBox is compiled with `musl-gcc --static`. bzip2 decompression uses Python's bz2 (`tools/busybox/bzip2` shim). The build runs as `build/busybox-build` (tools/busybox/build.cud); `tools/busybox/build.sh` is kept as the reference.
 - Config: `tools/busybox/busybox.config` (allnoconfig + a small applet set).
-- Image: static EXEC at 0x400000, EI_OSABI set to 3, sealed `cudseal.py --foreign` (level 3, unsafe 0, caps 0). `image_verify` refuses a level-3 seal on anything but a capability-free Linux image (reason 8); the 6.4 gate still refuses it outside the compat sandbox.
+- Image: static EXEC at 0x400000, EI_OSABI set to 3 (the build still pokes the byte; an unpoked musl image is also detected as Linux because it has PT_GNU_RELRO), sealed `cudseal.py --foreign` (level 3, unsafe 0, caps 0). `--foreign` also accepts EI_OSABI = 0 with PT_GNU_RELRO. `image_verify` refuses a level-3 seal on anything but a capability-free Linux image (reason 8); the 6.4 gate still refuses it outside the compat sandbox.
 - Manifest `examples/apps/busybox.mf`: one `dir /efi/incudela/docs` grant.
 
 Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; seq, expr now work; lxtest checks it); uname 63 (11.1e part 3: sysname Linux, nodename forge, release 0.2.6-forge, machine x86_64; `uname -s -m` works). open 2 (11.1e part 4: absolute paths under a grant; wc, sha256sum and cat of granted files work, a file outside is EACCES). stat 4 (11.1e part 5; `ls` of a directory outside the grant -> Permission denied). lstat 6 (11.1e part 6; same as stat, no symlinks). fcntl 72 (11.1e part 7; `ls` of the granted directory and `printf` work). getcwd 79 (11.1e part 8; `pwd` prints /). nanosleep 35 (11.1e part 9; `sleep 1` works). geteuid 107 (11.1e part 10; ash starts without an ENOSYS, `sh -c exit 3` exits 3). dup2 33 (11.1e part 11; ash `<` / `>` redirections). lseek 8 (11.1e part 12; `tail` works). ppoll 271 (11.1e part 13; ash's `read` builtin). 11.1 accepted: `busybox sh /efi/incudela/docs/hello.sh` (functions, loops, arithmetic, case, test, a `while read` over a redirected file, printf) runs to completion in the sandbox; the config also enables grep, test and head/tail options. Fork (57), vfork (58, the same eager-copy fork), fork-style clone, pipe (22), pipe2 (293) and file-backed mmap are implemented and tested by `run lxipc`. Ash pipelines and ash running an external command are in the gate: `run busybox sh /efi/incudela/docs/pipeline.sh` (a builtin pipeline, a pipeline to `/efi/incudela/docs/busybox wc`, and a simple `/efi/incudela/docs/busybox echo`). The manifest still grants only `dir /efi/incudela/docs`; `/efi/incudela/bin` stays denied, so a sealed copy of busybox is installed under docs for the external command. A `sh -c` line with `${IFS}` is not used for a pipeline: IFS includes a newline and breaks the script. Writable files on `/data` (item 9 batch 3) are tested by `run lxwrite` in `tests/os/lxwrite.sh`, not in the main boot script (that boot has no Incudela partition). The personality has 45 syscalls, including unlink 87.
 
 ## Application pass/fail list (item 9)
 
-Updated 2026-11-26 (batch 4). Programs are launched with `run` in the OS boot script unless noted.
+Updated 2026-11-26 (OSABI 0 detection). Programs are launched with `run` in the OS boot script unless noted.
 
 ### Pass
 
 - `lxtest`, `lxthreads`, `lxfs`, `lxexec`, `lxsig` (existing Linux personality tests).
+- `osabi0`: a tiny static Linux program with EI_OSABI = 0 and PT_GNU_RELRO, sealed `--foreign`. The boot self-test and a bare `osabi0` are refused with reason 6; `run osabi0` exits 0 in the sandbox. Incudela programs (also OSABI 0, no GNU_RELRO) are unchanged.
 - `lxipc`: pipe and pipe2, fork, vfork and `clone(SIGCHLD)` reaped by wait4, and a file-backed mmap of `/efi/incudela/docs/hello.sh`. A bare `lxipc` without `run` is refused.
 - BusyBox applets already in the 11.1e gate: echo, true, false, basename, env, seq, expr, uname, wc, sha256sum, cat of a granted file, ls of a granted directory and a denied one, printf, pwd, sleep, `sh -c exit 3`, ash `<` / `>` redirections, tail, `sh /efi/incudela/docs/hello.sh`, grep.
 - Ash pipelines and ash running an external command, via `run busybox sh /efi/incudela/docs/pipeline.sh`: a builtin `echo | while read` pipeline, a pipeline to `/efi/incudela/docs/busybox wc -c`, and a simple `/efi/incudela/docs/busybox echo`. The external image is a sealed copy of busybox under the existing docs grant (`/efi/incudela/bin` stays denied).
@@ -290,4 +292,4 @@ Updated 2026-11-26 (batch 4). Programs are launched with `run` in the OS boot sc
 
 ### Not yet in the gate
 
-- Sockets, a coherent MAP_SHARED file map, and OSABI 0 binaries.
+- Sockets, and a coherent MAP_SHARED file map.

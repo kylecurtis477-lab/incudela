@@ -1,0 +1,3 @@
+# osabi0: tiny static Linux program with EI_OSABI = 0 and PT_GNU_RELRO (the shape of
+# most static musl builds). Sealed --foreign; needs no grant (it only exits 0).
+# Launched with sh `run osabi0` in the compat sandbox (docs/linux-compat.md).

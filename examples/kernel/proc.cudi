@@ -1103,7 +1103,7 @@ def exec_image(frame: u64, img: u64, sz: u64, vc: u64, pa: slice[u8]) -> u64:
 # Shared by sys_exec and (11.1d) the Linux execve. Capabilities only narrow: caps &= vc.
 # pa = exec_pack(path, args) (kernel memory).
     abi: u64 = 0
-    if lx_osabi(img) == 3:
+    if elf_is_linux(img, sz):
         abi = LX_ABI  # verified above with SEAL_COMPAT, so this is a sandboxed launch
     pml4 = as_new()
     iend: u64 = 0
