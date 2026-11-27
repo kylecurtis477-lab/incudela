@@ -231,6 +231,19 @@
   168 / 0 / 659 / 7. Syscalls 408/409 stay `ktest_hooks` gated. The
   kernel unsafe cap stays 709.
 
+- `ba4dee4` `hw_quiesce` now drops xHCI MSI-X Enable and AHCI MSI
+  Enable so leftover vectors 0x52 and 0x54 cannot #GP a kexec
+  successor. `xhci_init` and `ahci_init` print the Enable bit they
+  find on a successor (`bi.kx_gen != 0`) before they clear it.
+  `os/drivers` already types through a USB keyboard and, after
+  `hello usb`, types `kexec next` the same way; the log must contain
+  `xHCI: MSI-X Enable on handoff: off`. `os/lxwrite` keeps its PS/2
+  path and `kbd_irqs != 0` check. `os/efi-loader-gpt` requires
+  `AHCI: MSI Enable on handoff: off`. No new ESP file, so
+  `os/kexec-old-to-new` is unchanged. `os/result-count` stays 69.
+  The kernel unsafe report stays 168 / 0 / 659 / 7. Syscalls
+  408/409 stay `ktest_hooks` gated. The kernel unsafe cap stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
