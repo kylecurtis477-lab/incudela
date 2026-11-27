@@ -177,6 +177,20 @@
   168 / 0 / 659 / 7. Syscalls 408/409 stay `ktest_hooks` gated. The
   kernel unsafe cap stays 709.
 
+- `4b59189` Coherent `MAP_SHARED` of Incudela FS files on `/data`.
+  `MAP_SHARED+PROT_WRITE` requires `CAP_WRITE`: stores are visible to
+  `read()` and `write()` is visible in the mapping in the same process;
+  `munmap` and exit write the file back. `MAP_PRIVATE` is still a copy.
+  `MAP_SHARED+PROT_WRITE` of an ESP / FAT file stays EACCES, as does a
+  read-only `/data` fd. `run lxwrite` covers those cases (76 checks, up
+  from 55). Stores into the mapping reuse lxwrite's unused `@unsafe`
+  peek slot as `poke8`, so the audited unsafe report stays 4 0 4 0 and
+  `tests/unsafe/baseline.txt` is unchanged. No new ESP file, so
+  `os/kexec-old-to-new` and `seal_test` are unchanged. The personality
+  stays 48 syscalls. The kernel unsafe report stays 168 / 0 / 659 / 7.
+  Syscalls 408/409 stay `ktest_hooks` gated. The kernel unsafe cap
+  stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
