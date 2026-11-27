@@ -30,7 +30,7 @@ Inside the personality a process reaches **only** the Linux table. No Forge sysc
 including the driver (400+), kexec/ktest (408/409, still also gated by `ktest_hooks`) and grant
 syscalls: they return -ENOSYS like any unknown number.
 
-## Syscalls (11.1a to 11.1e, then item 9; 48 in all)
+## Syscalls (11.1a to 11.1e, then item 9; 49 in all)
 
 | nr | name | notes |
 |----|------|-------|
@@ -63,6 +63,7 @@ syscalls: they return -ENOSYS like any unknown number.
 | 257 | openat | (11.1c) only relative to a directory handle the sandbox holds (Forge `openat` rules: no absolute paths, no `..`); AT_FDCWD with a relative path -> EACCES (there is no ambient cwd); AT_FDCWD with an absolute path follows open (11.1e), write/create/truncate/append flags -> EROFS, O_DIRECTORY on a file -> ENOTDIR; O_CLOEXEC / O_NONBLOCK / O_NOFOLLOW / O_LARGEFILE accepted |
 | 9 | mmap | anonymous private, or a file-backed mapping of a granted regular file (item 9); PROT_EXEC -> EACCES (W^X: no new code), MAP_FIXED -> EINVAL; MAP_SHARED+PROT_WRITE of an ESP / FAT file -> EACCES; of a `/data` (Incudela FS) file with CAP_WRITE, stores are visible to read() and write() is visible in the mapping (same process), and munmap/exit write the file back; MAP_PRIVATE is a copy; r8/r9 come from the saved frame |
 | 22 / 293 | pipe / pipe2 | (item 9) a 4096-byte ring with a read end and a write end; close of the write end is EOF, close of the read end is EPIPE; pipe2 accepts only O_CLOEXEC (O_NONBLOCK -> EINVAL); fstat is S_IFIFO 0600; lseek -> ESPIPE; bad pointer -> EFAULT |
+| 53 | socketpair | (item 9) AF_UNIX SOCK_STREAM only: two connected bidirectional ends (4096-byte ring each way); close of one end is EOF on read and EPIPE on write for the other; SOCK_CLOEXEC is accepted on the type (SOCK_NONBLOCK -> EINVAL); AF_INET -> EAFNOSUPPORT, SOCK_DGRAM -> ESOCKTNOSUPPORT, nonzero protocol -> EPROTONOSUPPORT; fstat is S_IFSOCK 0600; lseek -> ESPIPE; bad pointer -> EFAULT |
 | 11 | munmap | |
 | 12 | brk | Linux semantics: returns the current break on failure |
 | 24 | sched_yield | (11.1b) |
@@ -259,7 +260,7 @@ syscall 409 is ENOSYS. `lxproc: PASS (N checks)` and `[lxproc exited 0 (sandboxe
 
 - Timed futex waits, FUTEX_REQUEUE/WAKE_OP, threads running in parallel on several CPUs.
 - Real-time signals (32..64), sigaltstack, signals to other processes, interrupting a futex wait.
-- Sockets remain. A same-process coherent MAP_SHARED file map of `/data` is done (file-backed MAP_PRIVATE is a copy; MAP_SHARED+PROT_WRITE of an ESP file stays EACCES). Writable files on `/data` are done (an explicitly created Incudela FS partition only). A read-only `/proc` (`self` and `self/exe` only; a `dir /proc` grant is required) is done. vfork is implemented as an eager-copy fork (not a shared-memory vfork).
+- AF_INET sockets, bind/listen/accept/connect, and SOCK_DGRAM remain. AF_UNIX SOCK_STREAM socketpair is done. A same-process coherent MAP_SHARED file map of `/data` is done (file-backed MAP_PRIVATE is a copy; MAP_SHARED+PROT_WRITE of an ESP file stays EACCES). Writable files on `/data` are done (an explicitly created Incudela FS partition only). A read-only `/proc` (`self` and `self/exe` only; a `dir /proc` grant is required) is done. vfork is implemented as an eager-copy fork (not a shared-memory vfork).
 - Busybox (the Phase 11.1 acceptance test) needs a third-party static binary; it will be added only
   after the owner approves downloading one, and it will run under the same gate (sealed + sandboxed).
 ## BusyBox acceptance (11.1e)
@@ -279,13 +280,13 @@ Status: echo, true, false, basename, env work. Added: writev 20 (11.1e part 2; s
 
 ## Application pass/fail list (item 9)
 
-Updated 2026-11-27 (coherent MAP_SHARED on `/data`). Programs are launched with `run` in the OS boot script unless noted.
+Updated 2026-11-27 (AF_UNIX SOCK_STREAM socketpair). Programs are launched with `run` in the OS boot script unless noted.
 
 ### Pass
 
 - `lxtest`, `lxthreads`, `lxfs`, `lxexec`, `lxsig` (existing Linux personality tests).
 - `osabi0`: a tiny static Linux program with EI_OSABI = 0 and PT_GNU_RELRO, sealed `--foreign`. When the image is on the ESP, the boot self-test and a bare `osabi0` are refused with reason 6, and `run osabi0` exits 0 in the sandbox. The self-test skips the osabi0 check on an older ESP that does not have the file (the 61b3e85 old-to-new kexec disk). Incudela programs (also OSABI 0, no GNU_RELRO) are unchanged.
-- `lxipc`: pipe and pipe2, fork, vfork and `clone(SIGCHLD)` reaped by wait4, and a file-backed mmap of `/efi/incudela/docs/hello.sh`. A bare `lxipc` without `run` is refused.
+- `lxipc`: pipe and pipe2, fork, vfork and `clone(SIGCHLD)` reaped by wait4, a file-backed mmap of `/efi/incudela/docs/hello.sh`, and AF_UNIX SOCK_STREAM `socketpair` (bidirectional, fstat S_IFSOCK, close EOF/EPIPE). A bare `lxipc` without `run` is refused.
 - BusyBox applets already in the 11.1e gate: echo, true, false, basename, env, seq, expr, uname, wc, sha256sum, cat of a granted file, ls of a granted directory and a denied one, printf, pwd, sleep, `sh -c exit 3`, ash `<` / `>` redirections, tail, `sh /efi/incudela/docs/hello.sh`, grep.
 - Ash pipelines and ash running an external command, via `run busybox sh /efi/incudela/docs/pipeline.sh`: a builtin `echo | while read` pipeline, a pipeline to `/efi/incudela/docs/busybox wc -c`, and a simple `/efi/incudela/docs/busybox echo`. The external image is a sealed copy of busybox under the existing docs grant (`/efi/incudela/bin` stays denied).
 - `lxproc`: newfstatat (AT_FDCWD, relative to a held dir, AT_EMPTY_PATH, AT_SYMLINK_NOFOLLOW), readlink and readlinkat of `/proc/self` (the decimal pid) and `/proc/self/exe` (the image path), lstat of those links, stat of `/proc/self` as a directory, getdents of `/proc` (`self` is DT_LNK), and a write open of `/proc` -> EROFS. A bare path outside every grant stays EACCES. Launched with `run lxproc` in the main OS boot (manifest: docs and `/proc`). Following `/proc/self/exe` to the image is not in the test (the bin directory is not granted).
@@ -293,4 +294,4 @@ Updated 2026-11-27 (coherent MAP_SHARED on `/data`). Programs are launched with 
 
 ### Not yet in the gate
 
-- Sockets.
+- AF_INET sockets, bind/listen/accept/connect, and SOCK_DGRAM. AF_UNIX SOCK_STREAM socketpair is done.

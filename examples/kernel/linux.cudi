@@ -54,9 +54,11 @@
 # a directory only rewinds (SEEK_SET 0); the console and other objects are ESPIPE.
 # 11.1e: ppoll 271 -- never sleeps: every held object is ready (files and directories read without
 # waiting; the console reports ready and its read then blocks as usual), closed fds get POLLNVAL.
-# Not yet: real-time signals (32..64), sigaltstack, signals to other processes.
+# item 9: socketpair 53 (AF_UNIX SOCK_STREAM only; SOCK_CLOEXEC accepted on the type).
+# Not yet: real-time signals (32..64), sigaltstack, signals to other processes,
+# AF_INET sockets, bind/listen/accept/connect, SOCK_DGRAM.
 LX_ABI = 1
-LX_NSYS = 48  # syscalls in the table above (item 9: + newfstatat 262, readlink 89, readlinkat 267)
+LX_NSYS = 49  # syscalls in the table above (item 9: + socketpair 53)
 ARCH_SET_FS = 0x1002
 ARCH_GET_FS = 0x1003
 ERANGE = 0xFFFFFFFFFFFFFFDE
@@ -1025,6 +1027,8 @@ def lx_fstat(fd: u64, ubuf: u64) -> u64:
         st[5] = 0x401  # rdev: tty1 (4, 1)
     elif fl.type == F_CHAN or fl.type == F_PIPE:
         mode = 0x1180  # S_IFIFO | 0600
+    elif fl.type == F_SOCK:
+        mode = 0xC180  # S_IFSOCK | 0600
     st[0] = 0xF0  # st_dev: one device number for the Forge VFS
     st[1] = fl.clu + 1
     st[3] = mode
@@ -1704,6 +1708,8 @@ def lx_dispatch(nr: u64, a: u64, b: u64, c: u64, d: u64) -> u64:
         if nr == 293:
             flg = b
         return lx_pipe(a, flg)
+    if nr == 53:
+        return lx_socketpair(a, b, c, d)
     if nr == 3:
         if p.nxthr != 0 and atomic_load(addr(p.fdbusy), acquire) != 0:
             return EBUSY  # 11.1b: another thread is using a (shared) fd

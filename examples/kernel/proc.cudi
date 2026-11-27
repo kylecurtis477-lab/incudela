@@ -186,6 +186,8 @@ def file_put(fl: u64):
             chan_end_close(f)
         if f.type == F_PIPE:
             pipe_end_close(f)
+        if f.type == F_SOCK:
+            sock_end_close(f)
         kfree(fl)
 
 console_obj: File
@@ -307,6 +309,7 @@ def dir_read(fl: ptr[File], ubuf: u64, n: u64, kern: u64) -> u64:
 F_OBJ = 5
 F_ODIR = 6
 F_PIPE = 7  # item 9: Linux pipe/pipe2 ends (pipe.cudi); clu = pipe index, pos = 0 read / 1 write
+F_SOCK = 12  # item 9: Linux socketpair ends (sock.cudi); clu = sock index, pos = 0 or 1
 F_FFILE = 8  # item 9: a user-visible Incudela FS file under /data; clu = inode slot, ccl = inode generation, cidx bit 0 = O_APPEND
 F_FDIR = 9  # item 9: the /data directory (the user-visible view of a mounted Incudela FS)
 F_PDIR = 10  # item 9: a read-only /proc directory (clu 0 = /proc, clu 1 = /proc/<pid> or followed /proc/self)
@@ -1360,6 +1363,8 @@ def sys_read(fd: u64, ubuf: u64, n: u64) -> u64:
         return r
     if fl.type == F_PIPE:
         return pipe_read(fl, ubuf, n)
+    if fl.type == F_SOCK:
+        return sock_read(fl, ubuf, n)
     if fl.type == F_OBJ:
         r = ofile_read(fl, ubuf, n)
         au_moved(fl.gid, r)
@@ -1384,6 +1389,8 @@ def sys_write(fd: u64, ubuf: u64, n: u64) -> u64:
         return con_write_user(ubuf, n)
     if fl.type == F_PIPE:
         return pipe_write(fl, ubuf, n)
+    if fl.type == F_SOCK:
+        return sock_write(fl, ubuf, n)
     if fl.type == F_FFILE:
         r = ffile_write(fl, ubuf, n)
         au_moved(fl.gid, r)

@@ -1,11 +1,12 @@
 # cuditor: no-runtime
 # cuditor: caps()
-# Item 9 Linux-ABI pipe, fork, wait4 and file-backed mmap test (docs/linux-compat.md). Built and
-# sealed like lxtest (EI_OSABI = 3, examples/user/build.sh) and launched only with sh `run lxipc`
-# in the compat sandbox. Raw Linux syscalls only. Checks pipe (22) / pipe2 (293), fork (57),
-# vfork (58, same eager-copy fork), fork-style clone (56), wait4 (61), and a MAP_PRIVATE file
-# mapping of a granted file. Syscall 409 stays unreachable (ENOSYS). Syscalls 408/409 stay
-# ktest_hooks gated. The kernel unsafe cap is unchanged (709).
+# Item 9 Linux-ABI pipe, fork, wait4, file-backed mmap and socketpair test (docs/linux-compat.md).
+# Built and sealed like lxtest (EI_OSABI = 3, examples/user/build.sh) and launched only with sh
+# `run lxipc` in the compat sandbox. Raw Linux syscalls only. Checks pipe (22) / pipe2 (293),
+# fork (57), vfork (58, same eager-copy fork), fork-style clone (56), wait4 (61), a MAP_PRIVATE
+# file mapping of a granted file, and socketpair 53 (AF_UNIX SOCK_STREAM). Syscall 409 stays
+# unreachable (ENOSYS). Syscalls 408/409 stay ktest_hooks gated. The kernel unsafe cap is
+# unchanged (709).
 
 ENOSYS = 0xFFFFFFFFFFFFFFDA
 EINVAL = 0xFFFFFFFFFFFFFFEA
@@ -14,6 +15,9 @@ EPIPE = 0xFFFFFFFFFFFFFFE0
 ESPIPE = 0xFFFFFFFFFFFFFFE3
 EACCES = 0xFFFFFFFFFFFFFFF3
 EBADF = 0xFFFFFFFFFFFFFFF7
+EAFNOSUPPORT = 0xFFFFFFFFFFFFFF9F
+EPROTONOSUPPORT = 0xFFFFFFFFFFFFFFA3
+ESOCKTNOSUPPORT = 0xFFFFFFFFFFFFFFA2
 
 fails: u64
 checks: u64
@@ -156,6 +160,38 @@ def lx_main(sp: u64):
     lsys(3, fd, 0, 0, 0, 0)
     check(lsys(9, 0, 4096, 1, 2, 99) == EBADF, "mmap bad fd -> EBADF")
     put("lxipc: file-backed mmap of hello.sh, MAP_SHARED+WRITE EACCES, bad fd EBADF\n")
+    flush()
+    r = lsys(53, 1, 1, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair")
+    check(fds[1] != fds[0], "socketpair fds distinct")
+    wr = lsys(1, u64(fds[0]), u64(addr(msg[0])), 5, 0, 0)
+    check(wr == 5, "socketpair write 0->1")
+    rd = lsys(0, u64(fds[1]), u64(addr(got[0])), 8, 0, 0)
+    check(rd == 5, "socketpair read 1")
+    check(got[0] == 104 and got[4] == 111, "socketpair 0->1 bytes")
+    wr = lsys(1, u64(fds[1]), u64(addr(msg[0])), 5, 0, 0)
+    check(wr == 5, "socketpair write 1->0")
+    rd = lsys(0, u64(fds[0]), u64(addr(got[0])), 8, 0, 0)
+    check(rd == 5, "socketpair read 0")
+    check(got[0] == 104 and got[4] == 111, "socketpair 1->0 bytes")
+    check(lsys(5, u64(fds[0]), u64(addr(st[0])), 0, 0, 0) == 0, "fstat socket")
+    check((st[3] & 0xFFFF) == 0xC180, "fstat S_IFSOCK 0600")
+    check(lsys(8, u64(fds[0]), 0, 0, 0, 0) == ESPIPE, "lseek socket -> ESPIPE")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    check(lsys(0, u64(fds[1]), u64(addr(got[0])), 8, 0, 0) == 0, "close peer then read EOF")
+    check(lsys(1, u64(fds[1]), u64(addr(msg[0])), 5, 0, 0) == EPIPE, "close peer then write EPIPE")
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
+    r = lsys(53, 1, 1 | 0x80000, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair SOCK_CLOEXEC")
+    check(lsys(72, u64(fds[0]), 1, 0, 0, 0) == 1, "socketpair GETFD FD_CLOEXEC")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
+    check(lsys(53, 1, 1, 0, 0x10, 0) == EFAULT, "socketpair bad pointer -> EFAULT")
+    check(lsys(53, 1, 1 | 0x800, 0, u64(addr(fds[0])), 0) == EINVAL, "socketpair SOCK_NONBLOCK -> EINVAL")
+    check(lsys(53, 2, 1, 0, u64(addr(fds[0])), 0) == EAFNOSUPPORT, "socketpair AF_INET -> EAFNOSUPPORT")
+    check(lsys(53, 1, 2, 0, u64(addr(fds[0])), 0) == ESOCKTNOSUPPORT, "socketpair SOCK_DGRAM -> ESOCKTNOSUPPORT")
+    check(lsys(53, 1, 1, 1, u64(addr(fds[0])), 0) == EPROTONOSUPPORT, "socketpair protocol 1 -> EPROTONOSUPPORT")
+    put("lxipc: AF_UNIX SOCK_STREAM socketpair is bidirectional, fstat S_IFSOCK, close EOF/EPIPE\n")
     if fails == 0:
         put("lxipc: PASS (")
         putn(checks)
