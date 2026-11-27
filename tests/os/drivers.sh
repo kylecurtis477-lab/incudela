@@ -8,6 +8,12 @@
 # HID step 2: Configure Endpoint adds its interrupt IN endpoint, and the host types "forge usb" + Enter through the
 # QEMU monitor; the kernel must decode exactly that text from the boot reports. HID step 3: the keyboard then
 # moves to MSI-X and its keys feed the tty, so "hello usb" typed at the shell prompt must run hello.
+# After hello exits, the host types "kexec next" the same way (USB sendkey). QEMU sendkey goes to
+# usb-kbd, not PS/2, so this boot must not use the usual shell_test kbd_irqs check; the guest is
+# stopped as soon as the successor prints "xHCI: MSI-X Enable on handoff: off" (xhci_init, when
+# bi.kx_gen != 0, before later kexec_resume checks). That line is required: it only appears after
+# a real kexec, and only if hw_quiesce left MSI-X Enable off. No new ESP file; os/kexec-old-to-new
+# is unchanged.
 # Each NIC resolves the user-network gateway 10.0.2.2 by ARP, pings it (ICMP echo, checked reply), then
 # serves UDP echo on port 7. Each netdev forwards a free host UDP port to guest port 7, and a host-side
 # sender waits for the NIC's "listening" line, then sends a datagram every 0.25 s (at most 60 tries) until
@@ -41,7 +47,7 @@ s=[socket.socket(socket.AF_INET,socket.SOCK_DGRAM) for _ in "ab"]
 [x.bind(("127.0.0.1",0)) for x in s]
 print(*[x.getsockname()[1] for x in s])')
 PORTS
-timeout 120 qemu-system-x86_64 -machine q35 -cpu max -display none -no-reboot -m 256 -smp 4 \
+timeout 240 qemu-system-x86_64 -machine q35 -cpu max -display none -no-reboot -m 256 -smp 4 \
   -serial file:$T/s.log -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
   -drive file=$T/vdisk.img,format=raw,if=none,id=vd,readonly=on -device virtio-blk-pci,drive=vd \
   -boot d -cdrom build/kernel/forge.iso \
@@ -113,9 +119,31 @@ for k in "h e l l o spc u s b ret".split():
     m.sendall(b"sendkey " + k.encode() + b"\n")
     time.sleep(0.25)
 print("host: typed hello usb + ret at the shell prompt")
+# wait for hello to finish and the prompt to return, then type kexec next (kernel-next.elf)
+t = time.time() + 110
+while time.time() < t:
+    try:
+        logb = open(log, "rb").read()
+    except OSError:
+        time.sleep(0.1)
+        continue
+    after = logb.split(b"hello: args = 'usb'", 1)
+    if len(after) == 2 and b"sh$ " in after[1]:
+        time.sleep(0.4)
+        break
+    time.sleep(0.1)
+else:
+    print("host: no prompt after hello usb")
+    sys.exit(0)
+for k in "k e x e c spc n e x t ret".split():
+    m.sendall(b"sendkey " + k.encode() + b"\n")
+    time.sleep(0.25)
+print("host: typed kexec next + ret at the shell prompt")
 K
 KB=$!
 for i in $(seq 120); do grep -aq "hello: args = 'usb'" $T/s.log 2>/dev/null && break; sleep 1; done
+# successor xhci_init prints this early; stop the guest then, before later kexec_resume checks
+for i in $(seq 90); do grep -aq "xHCI: MSI-X Enable on handoff: off" $T/s.log 2>/dev/null && break; sleep 1; done
 kill $Q 2>/dev/null; wait $Q 2>/dev/null
 wait $H 2>/dev/null
 wait $KB 2>/dev/null
@@ -127,6 +155,7 @@ for p in "NVMe: read LBA 0 (4096 bytes), fnv1a64=$(cat $T/nvme.h)" "NVMe: I/O co
   "xHCI: Configure Endpoint OK: endpoint 0x81 -> DCI 3, interrupt IN, interval 2^" ", state running; 8 report TRBs queued" \
   ' errors, typed "forge usb" + Enter' \
   "xHCI: HID boot keyboard on MSI-X vector 0x52 -> cpu0; key presses go to the tty" "hello: args = 'usb'" \
+  "xHCI: MSI-X Enable on handoff: off" \
   "e1000: ARP reply: 10.0.2.2 is at" "virtio-net: ARP reply: 10.0.2.2 is at" \
   "e1000: ICMP echo reply from 10.0.2.2: seq 1, 56 data bytes, checksums ok" \
   "virtio-net: ICMP echo reply from 10.0.2.2: seq 1, 56 data bytes, checksums ok" "out-of-window accesses 0" \
@@ -137,8 +166,9 @@ for d in e1000 virtio-net; do
   grep -aqE "^$d: UDP echo: [0-9]+ bytes from 10\.0\.2\.2:[0-9]+ echoed back \(IP \+ UDP checksums ok" $S || { ok=0; miss="$miss [$d UDP echo in the log]"; }
   grep -aqE "^host: $d echoed [0-9]+ bytes identical" $T/udp.out || { ok=0; miss="$miss [host: $(grep -a "$d" $T/udp.out)]"; }
 done
+grep -aqF "host: typed kexec next + ret at the shell prompt" $T/kbd.out || { ok=0; miss="$miss [host: kexec next not typed]"; }
 grep -aq PANIC $S && { ok=0; miss="$miss [panic]"; }
-if [ $ok = 1 ]; then echo "PASS os/drivers (NVMe (MSI-X completions), AHCI (MSI completions), xHCI + HID boot keyboard (key reports read, MSI-X keys into the shell), e1000, virtio-net; ARP + ICMP echo + UDP echo)"; else echo "FAIL os/drivers:$miss"; fi
+if [ $ok = 1 ]; then echo "PASS os/drivers (NVMe (MSI-X completions), AHCI (MSI completions), xHCI + HID boot keyboard (key reports read, MSI-X keys into the shell), kexec next, xHCI MSI-X Enable on handoff: off, e1000, virtio-net; ARP + ICMP echo + UDP echo)"; else echo "FAIL os/drivers:$miss"; fi
 if (cd $T && sha256sum -c --quiet before.sha); then echo "PASS os/drivers-no-disk-write"; else echo "FAIL os/drivers-no-disk-write"; fi
 mkdir -p build/os; grep -a "^host:" $T/udp.out > build/os/drivers-udp.txt
 rm -rf $T

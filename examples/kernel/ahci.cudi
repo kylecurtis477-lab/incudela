@@ -4,6 +4,10 @@
 # with interrupts on and the scheduler running sleeps on ah_wq until the slot's CI bit clears (the handler
 # acknowledges PxIS/IS and wakes it, both under rq_lock, so no wakeup is lost); early boot, interrupts-off
 # callers and interrupt remapping keep polling.
+# hw_quiesce also drops PCI MSI Enable so a leftover vector 0x54 cannot #GP a kexec successor.
+# On a successor (bi.kx_gen != 0), ahci_init prints the Enable bit it finds
+# ("AHCI: MSI Enable on handoff: off" or "on") before it clears it; tests/os/run.sh's
+# os/efi-loader-gpt boot (q35 with a SATA disk, which already kexecs) requires "off".
 ah_regs: u64
 ah_port: u64  # port register block of the first SATA disk
 ah_mem: u64  # one page: command list 0x000, received FIS 0x400, command table 0x800
@@ -73,6 +77,39 @@ def ah_cmd(cmd: u64, lba: u64, count: u64, bytes: u64) -> u64:
         return 0
     return 1
 
+
+def ah_msi_cap() -> u64:
+# PCI MSI capability offset, or 0
+    c = pci_rd32(ah_bdf, 0x34) & 0xFC
+    g: u64 = 0
+    while c != 0 and g < 48:
+        h = pci_rd32(ah_bdf, c)
+        if (h & 0xFF) == 0x05:
+            return c
+        c = (h >> 8) & 0xFC
+        g += 1
+    return 0
+
+def ah_msi_off():
+# drop MSI Enable so a leftover vector 0x54 from a previous kernel cannot fire before the
+# successor has idt_set(VEC_AHCI). Called from hw_quiesce and early in ahci_init.
+    if ah_regs == 0:
+        return
+    c = ah_msi_cap()
+    if c == 0:
+        return
+    pci_wr32(ah_bdf, c, pci_rd32(ah_bdf, c) & ~u64(0x10000))
+
+def ah_msi_report_handoff():
+# on a kexec successor, print the MSI Enable bit found before this kernel clears it.
+# hw_quiesce must have left it off; os/efi-loader-gpt requires "off".
+    puts("AHCI: MSI Enable on handoff: ")
+    c = ah_msi_cap()
+    if c != 0 and (pci_rd32(ah_bdf, c) & 0x10000) != 0:
+        puts("on\n")
+    else:
+        puts("off\n")
+
 def ahci_init() -> u64:
     f = pci_find(0x010601, 0)
     if f == 0:
@@ -80,12 +117,15 @@ def ahci_init() -> u64:
         return 0
     ah_bdf = f - 1
     ah_msi = 0
+    if bi.kx_gen != 0:
+        ah_msi_report_handoff()
     ah_regs = pci_map_bar(f - 1, 5, 0x1100)
     if ah_regs == 0:
         puts("AHCI: ABAR not mappable\n")
         return 0
     mmio_wr(ah_regs + 4, 4, mmio_rd(ah_regs + 4, 4) | 0x80000000)  # GHC.AE
     mmio_wr(ah_regs + 4, 4, mmio_rd(ah_regs + 4, 4) & ~u64(2))  # no interrupts
+    ah_msi_off()
     pi = mmio_rd(ah_regs + 0x0C, 4)
     vs = mmio_rd(ah_regs + 0x10, 4)
     np: u64 = 0

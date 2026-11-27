@@ -85,7 +85,7 @@ UEFI="-machine q35 -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE -driv
 $B kernel-uefi $L/uefi.log 360 "multiboot2 (UEFI)|ACPI rev 2 XSDT|$K" "$FB" -- $Q $UEFI $VD -cdrom build/kernel/forge.iso
 cp $OVMF_VARS $L/vars.fd
 DH0=$(sha256sum < build/efi/disk.img)
-$B efi-loader-gpt $L/efi.log 360 "hello from PE32+|signature OK|, set mode |GOP 1024x768|exiting boot services|Incudela UEFI loader (ExitBootServices done)|ACPI rev 2 XSDT|$K" "$FB" -- $Q $UEFI $VD -drive file=build/efi/disk.img,format=raw
+$B efi-loader-gpt $L/efi.log 360 "hello from PE32+|signature OK|, set mode |GOP 1024x768|exiting boot services|Incudela UEFI loader (ExitBootServices done)|ACPI rev 2 XSDT|$K|AHCI: command completions on MSI vector 0x54|AHCI: MSI Enable on handoff: off" "$FB" -- $Q $UEFI $VD -drive file=build/efi/disk.img,format=raw
 # kexec handoff: the boot disk the loader ran from (writable in QEMU) is byte-identical afterwards
 if [ "$(sha256sum < build/efi/disk.img)" = "$DH0" ]; then echo "PASS os/kexec-no-disk-write"; else echo "FAIL os/kexec-no-disk-write"; fi
 # post-KERNEL-OK wait: must be well under the old 60 s stall (TSC-bounded 5 s window)

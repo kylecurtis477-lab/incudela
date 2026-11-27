@@ -10,6 +10,11 @@
 # (tty_push_l, like the PS/2 and COM1 handlers), so a USB keyboard types into the shell. xh_irq_init turns on
 # IMAN.IE and USBCMD.INTE before it drains what the polled phase left (fix, inv230): an event posted while
 # interrupts are off leaves Event Handler Busy set, and no MSI-X is sent until a drain clears it.
+# hw_quiesce stops the controller and drops MSI-X Enable so a leftover vector 0x52 cannot #GP a
+# kexec successor. On a successor (bi.kx_gen != 0), xhci_init prints the Enable bit it finds
+# ("xHCI: MSI-X Enable on handoff: off" or "on") before it clears it; tests/os/drivers.sh
+# requires "off" on a boot that already types through qemu-xhci and a USB keyboard, then
+# types "kexec next" the same way (so MSI-X was actually armed).
 xh_cap: u64
 xh_op: u64
 xh_rt: u64
@@ -94,12 +99,47 @@ def xh_wait(r: u64, mask: u64, want: u64) -> u64:
         tsc_delay_us(10)
     return 1
 
+
+def xh_msix_cap() -> u64:
+# PCI MSI-X capability offset, or 0
+    c = pci_rd32(xh_bdf, 0x34) & 0xFC
+    g: u64 = 0
+    while c != 0 and g < 48:
+        h = pci_rd32(xh_bdf, c)
+        if (h & 0xFF) == 0x11:
+            return c
+        c = (h >> 8) & 0xFC
+        g += 1
+    return 0
+
+def xh_msix_off():
+# drop MSI-X Enable / set function mask so a leftover vector 0x52 from a previous kernel cannot
+# fire before the successor has idt_set(VEC_XHCI). Called from hw_quiesce and at the start of xhci_init.
+    if xh_op == 0:
+        return
+    c = xh_msix_cap()
+    if c == 0:
+        return
+    pci_wr32(xh_bdf, c, (pci_rd32(xh_bdf, c) | 0x40000000) & ~u64(0x80000000))
+
+def xh_msix_report_handoff():
+# on a kexec successor, print the MSI-X Enable bit found before this kernel clears it.
+# hw_quiesce must have left it off; tests/os/drivers.sh requires "off" when a USB keyboard armed MSI-X.
+    puts("xHCI: MSI-X Enable on handoff: ")
+    c = xh_msix_cap()
+    if c != 0 and (pci_rd32(xh_bdf, c) & 0x80000000) != 0:
+        puts("on\n")
+    else:
+        puts("off\n")
+
 def xhci_init() -> u64:
     f = pci_find(0x0C0330, 0)
     if f == 0:
         puts("xHCI: not present\n")
         return 0
     xh_bdf = f - 1
+    if bi.kx_gen != 0:
+        xh_msix_report_handoff()
     xh_cap = pci_map_bar(f - 1, 0, 0x10000)
     if xh_cap == 0:
         puts("xHCI: BAR0 not mappable\n")
@@ -128,6 +168,7 @@ def xhci_init() -> u64:
     if xh_wait(xh_op, 2, 0) == 0 or xh_wait(xh_op + 4, 0x800, 0) == 0:
         puts("xHCI: reset timed out\n")
         return 0
+    xh_msix_off()
     if xh_slots > 8:
         xh_slots = 8
     mmio_wr(xh_op + 0x38, 4, xh_slots)
