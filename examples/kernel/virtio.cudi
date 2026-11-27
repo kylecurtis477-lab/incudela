@@ -3,6 +3,11 @@
 # ACCESS_PLATFORM (and will actually translate DMA) on a non-transitional device.
 # Completion is signalled by an MSI-X interrupt; requesters sleep on a mutex and a wait queue.
 # Without MSI-X (or with interrupts off) a request is polled under a spinlock as before.
+# hw_quiesce stops the device and drops MSI-X Enable so a leftover vector 0x50 cannot #GP a
+# kexec successor. On a successor (bi.kx_gen != 0), vb_init prints the Enable bit it finds
+# ("virtio-blk: MSI-X Enable on handoff: off" or "on") before it clears it; tests/os/lxwrite.sh
+# requires "off". Legacy device-specific config is at VIO_CAP 0x14 when MSI-X is off, and at
+# 0x18 while Enable is on (VIO_MSIX_CFG/VIO_MSIX_Q occupy 0x14/0x16).
 VIO_HOSTF = 0x00
 VIO_GUESTF = 0x04
 VIO_QPFN = 0x08
@@ -63,6 +68,55 @@ def vb_kick():
         mmio_wr(vb_notify + off * vb_notify_mul, 2, 0)
     elif vb_io != 0:
         pio_wr((vb_io + VIO_QNOTIFY), 2, 0)
+
+def vb_pci_msix_cap(bdf: u64) -> u64:
+# PCI MSI-X capability offset, or 0
+    c = pci_rd32(bdf, 0x34) & 0xFC
+    g: u64 = 0
+    while c != 0 and g < 48:
+        h = pci_rd32(bdf, c)
+        if (h & 0xFF) == 0x11:
+            return c
+        c = (h >> 8) & 0xFC
+        g += 1
+    return 0
+
+def vb_pci_msix_on(bdf: u64) -> u64:
+    c = vb_pci_msix_cap(bdf)
+    if c != 0 and (pci_rd32(bdf, c) & 0x80000000) != 0:
+        return 1
+    return 0
+
+def vb_legacy_cfg(bdf: u64) -> u64:
+# device-specific config: 0x18 while MSI-X Enable is on, else 0x14
+    if vb_pci_msix_on(bdf) != 0:
+        return 0x18
+    return VIO_CAP
+
+def vb_msix_off():
+# drop MSI-X Enable / set function mask so a leftover vector 0x50 from a previous kernel cannot
+# fire before the successor has idt_set(VEC_VBLK). Called from hw_quiesce and at the start of vb_init.
+    if pci_vblk == 0:
+        return
+    c = vb_pci_msix_cap(pci_vblk - 1)
+    if c == 0:
+        return
+    pci_wr32(pci_vblk - 1, c, (pci_rd32(pci_vblk - 1, c) | 0x40000000) & ~u64(0x80000000))
+
+def vb_msix_report_handoff():
+# on a kexec successor, print the MSI-X Enable bit found before this kernel clears it.
+# hw_quiesce must have left it off; tests/os/lxwrite.sh requires "off".
+    puts("virtio-blk: MSI-X Enable on handoff: ")
+    if pci_vblk != 0 and vb_pci_msix_on(pci_vblk - 1) != 0:
+        puts("on\n")
+    else:
+        puts("off\n")
+
+def vb_quiesce():
+# stop virtio-blk and drop MSI-X Enable so a leftover vector 0x50 cannot #GP the successor.
+    if vb_modern or vb_io != 0:
+        vb_status_wr(0)
+    vb_msix_off()
 
 def vb_modern_features() -> u64:
     mmio_wr(vb_cfg, 4, 0)
@@ -189,6 +243,9 @@ def vb_init() -> u64:
     if pci_vblk == 0:
         return 0
     bdf = pci_vblk - 1
+    if bi.kx_gen != 0:
+        vb_msix_report_handoff()
+    vb_msix_off()
     if vb_try_modern(bdf):
         puts("virtio-blk: modern, queue ")
         put_u64(vb_qsz)
@@ -233,7 +290,8 @@ def vb_init() -> u64:
     vb_req_pa = frame_alloc()
     vb_req = mmio_add(p2v(vb_req_pa), PAGE)
     pio_wr(io + VIO_STATUS, 1, 7)
-    vb_cap = pio_rd(io + VIO_CAP, 4) | (pio_rd(io + VIO_CAP + 4, 4) << 32)
+    cfg = vb_legacy_cfg(bdf)
+    vb_cap = pio_rd(io + cfg, 4) | (pio_rd(io + cfg + 4, 4) << 32)
     puts("virtio-blk: io 0x")
     put_hex16(vb_io)
     puts(", queue ")
