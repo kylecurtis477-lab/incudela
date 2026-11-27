@@ -118,6 +118,20 @@
   immediately. A timeout now reports `timeout 60s, exit 124`. The test is
   never skipped. No compiler change.
 
+- `567ee01` `snap()` in `tests/os/lxwrite.sh` still hashes the GPT image with
+  the Incudela partition range masked out (type GUID
+  D0C2E3A1-6B7F-4F0A-9E11-466F72676546), so a write outside that range fails
+  the test. The helper is now plain shell (`od`, `dd`, `sha256sum`) and
+  matches the former python3 helper. No check is dropped.
+
+- `0ddecd7` `nvme_init` prints the MSI-X Enable bit it finds on a kexec
+  successor (`bi.kx_gen != 0`) before it calls `nv_msix_off`.
+  `tests/os/lxwrite.sh`, which already kexecs with an Incudela NVMe disk
+  attached, now requires `NVMe: I/O completions on MSI-X vector 0x53`,
+  `kexec handoff OK`, and `NVMe: MSI-X Enable on handoff: off`. `hw_quiesce`
+  must have left Enable off. Syscalls 408/409 stay `ktest_hooks` gated.
+  The kernel unsafe cap stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
