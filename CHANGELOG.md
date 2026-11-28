@@ -264,6 +264,33 @@
   stays 168 / 0 / 659 / 7. Syscalls 408/409 stay `ktest_hooks` gated.
   The kernel unsafe cap stays 709.
 
+- `c115524` AF_UNIX `SOCK_DGRAM` for the Linux personality: `socketpair`
+  and `socket` accept datagram sockets, and `bind` takes an abstract
+  name (the abstract namespace is per type, so a stream and a datagram
+  socket may share a name). `sendto` (44) and `recvfrom` (45) are the
+  first six-argument calls after `mmap`: `syscall_do` reads r8 and r9
+  from the frame. Messages keep their boundaries: the 4096-byte ring
+  holds frames of a 3-byte header, the sender's abstract name and up
+  to 512 data bytes. A longer message is EMSGSIZE and a short receive
+  buffer drops the rest of the message; an empty datagram is a
+  message. `recvfrom` reports the sender's name, or addrlen 0 if it
+  has none; a bad addrlen pointer is EFAULT before the message is
+  taken. `read` and `write` on a datagram socket are recv and send. A
+  closed peer or a missing name is ECONNREFUSED; an unconnected
+  socket with no destination is EDESTADDRREQ. `connect`, `listen` and
+  `accept` on a datagram socket are EOPNOTSUPP (a default destination
+  is not in this slice). On a stream socket `sendto` and `recvfrom`
+  are send and recv. `ppoll` reports POLLIN for a queued message and
+  POLLOUT when the destination ring has room. `SOCK_N` stays 8.
+  `run lxipc` covers these cases (187 checks, up from 109), including
+  a full ring (7 maximal frames, then EAGAIN) filled twice so frames
+  wrap around the ring. The two earlier SOCK_DGRAM -> ESOCKTNOSUPPORT
+  checks now use SOCK_RAW and expect the same errno. No new ESP file,
+  so `os/kexec-old-to-new` and `seal_test` are unchanged. The
+  personality is 57 syscalls. The kernel unsafe report stays
+  168 / 0 / 659 / 7. Syscalls 408/409 stay `ktest_hooks` gated. The
+  kernel unsafe cap stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
