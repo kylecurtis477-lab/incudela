@@ -22,8 +22,12 @@
 # returns one message and the sender's name if it has one (addrlen 0 otherwise); read and
 # write on a datagram socket are recv and send. A message longer than the buffer is cut and
 # the rest is dropped. A closed peer or a missing name is ECONNREFUSED; an unconnected
-# datagram socket with no destination is EDESTADDRREQ. connect, listen and accept on a
-# datagram socket are EOPNOTSUPP (a default destination is not in this slice). No AF_INET.
+# datagram socket with no destination is EDESTADDRREQ. listen and accept on a datagram socket
+# stay EOPNOTSUPP. connect on a datagram socket sets a default destination
+# (an abstract name of a bound datagram socket); send and write with no address use it, and
+# recvfrom drops messages whose sender is not that name. A missing name at connect or send is
+# ECONNREFUSED. Pathname bind and connect stay EOPNOTSUPP (the main lxipc boot has no /data).
+# No AF_INET.
 # Syscalls 408/409 stay ktest_hooks gated. The kernel unsafe cap is unchanged (709).
 SOCK_N = 8
 SOCK_CAP = 4096
@@ -73,6 +77,8 @@ struct Sock:
     qn: u64
     q: u64[8]
     kind: u64
+    destlen: u64
+    dest: u8[108]
 
 socks: Sock[8]
 sock_used: u64[8]
@@ -388,6 +394,7 @@ def sock_clear(ss: ptr[Sock]):
     ss.backlog = 0
     ss.qn = 0
     ss.kind = 0
+    ss.destlen = 0
 
 def sock_name_eq(ss: ptr[Sock], nm: u8[108], n: u64) -> u64:
     if ss.namelen != n or n == 0:
@@ -583,9 +590,23 @@ def lx_connect(fd: u64, uaddr: u64, ualen: u64) -> u64:
     spin_lock(addr(rq_lock))
     ss = sock_of(fl.clu)
     if ss.kind == 1:
+        if ss.st == SOCK_CONN:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return EISCONN
+        ti = sock_find_dgram_l(nm, nlen)
+        if ti == SOCK_N:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return ECONNREFUSED
+        i = 0
+        while i < nlen:
+            ss.dest[i] = nm[i]
+            i += 1
+        ss.destlen = nlen
         spin_unlock(addr(rq_lock))
         irq_restore(f)
-        return EOPNOTSUPP
+        return 0
     if ss.st == SOCK_CONN:
         spin_unlock(addr(rq_lock))
         irq_restore(f)
@@ -878,10 +899,21 @@ def dg_send(fl: ptr[File], ubuf: u64, n: u64, uaddr: u64, ualen: u64, flags: u64
                     return EAGAIN
                 wq_block_l(addr(ss.wq1))
     else:
-        if uaddr == 0:
+        if uaddr != 0:
+            if ss.destlen != 0:
+                spin_unlock(addr(rq_lock))
+                irq_restore(f)
+                return EISCONN
+        elif ss.destlen == 0:
             spin_unlock(addr(rq_lock))
             irq_restore(f)
             return EDESTADDRREQ
+        else:
+            nlen = ss.destlen
+            i = 0
+            while i < nlen:
+                nm[i] = ss.dest[i]
+                i += 1
         while 1:
             ti = sock_find_dgram_l(nm, nlen)
             if ti == SOCK_N:
@@ -902,6 +934,19 @@ def dg_send(fl: ptr[File], ubuf: u64, n: u64, uaddr: u64, ualen: u64, flags: u64
     irq_restore(f)
     return n
 
+def dg_drop_head_l(ss: ptr[Sock], pos: u64):
+# rq_lock held: discard one frame from the inbox of end pos and wake writers.
+    tot = DG_HDR + dg_rb(ss, pos, 2) + (dg_rb(ss, pos, 0) | (dg_rb(ss, pos, 1) << 8))
+    if pos == 0:
+        ss.h10 = (ss.h10 + tot) % SOCK_CAP
+        ss.n10 -= tot
+        wq_wake_all_l(addr(ss.wq1))
+    else:
+        ss.h01 = (ss.h01 + tot) % SOCK_CAP
+        ss.n01 -= tot
+        wq_wake_all_l(addr(ss.wq0))
+    sock_poll_kick_l()
+
 def dg_recv(fl: ptr[File], ubuf: u64, n: u64, uaddr: u64, ualenp: u64, flags: u64) -> u64:
 # receive one datagram into ubuf (at most n bytes; the rest of the message is dropped). If
 # uaddr is not 0 the sender's name goes there and its length (0 for an unnamed sender) to
@@ -910,6 +955,9 @@ def dg_recv(fl: ptr[File], ubuf: u64, n: u64, uaddr: u64, ualenp: u64, flags: u6
     nm: u8[108]
     al: u32[1]
     i: u64 = 0
+    keep: u64 = 0
+    j: u64 = 0
+    sn0: u64 = 0
     if (flags & ~MSG_DONTWAIT) != 0:
         return EOPNOTSUPP
     if uaddr != 0:
@@ -926,15 +974,31 @@ def dg_recv(fl: ptr[File], ubuf: u64, n: u64, uaddr: u64, ualenp: u64, flags: u6
     f = irq_save()
     spin_lock(addr(rq_lock))
     ss = sock_of(fl.clu)
-    while dg_cnt(ss, pos) == 0:
-        if nb != 0:
-            spin_unlock(addr(rq_lock))
-            irq_restore(f)
-            return EAGAIN
-        if pos == 0:
-            wq_block_l(addr(ss.rq0))
-        else:
-            wq_block_l(addr(ss.rq1))
+    while 1:
+        while dg_cnt(ss, pos) == 0:
+            if nb != 0:
+                spin_unlock(addr(rq_lock))
+                irq_restore(f)
+                return EAGAIN
+            if pos == 0:
+                wq_block_l(addr(ss.rq0))
+            else:
+                wq_block_l(addr(ss.rq1))
+        keep = 1
+        if ss.destlen != 0 and ss.st != SOCK_CONN:
+            sn0 = dg_rb(ss, pos, 2)
+            if sn0 != ss.destlen:
+                keep = 0
+            else:
+                j = 0
+                while j < sn0:
+                    if u8(dg_rb(ss, pos, DG_HDR + j)) != ss.dest[j]:
+                        keep = 0
+                    j += 1
+        if keep == 0:
+            dg_drop_head_l(ss, pos)
+            continue
+        break
     mlen = dg_rb(ss, pos, 0) | (dg_rb(ss, pos, 1) << 8)
     snl = dg_rb(ss, pos, 2)
     while i < snl:

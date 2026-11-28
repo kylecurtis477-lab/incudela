@@ -5,7 +5,9 @@
 # `run lxipc` in the compat sandbox. Raw Linux syscalls only. Checks pipe (22) / pipe2 (293),
 # fork (57), vfork (58, same eager-copy fork), fork-style clone (56), wait4 (61), a MAP_PRIVATE
 # file mapping of a granted file, socketpair 53, and socket/bind/listen/connect/accept on an
-# AF_UNIX SOCK_STREAM abstract address (sun_path[0] == 0). A pathname bind is EOPNOTSUPP.
+# AF_UNIX SOCK_STREAM abstract address (sun_path[0] == 0). A pathname bind is EOPNOTSUPP (the main boot has no /data). connect on a datagram socket
+# sets a default destination; write and sendto with no address use it, and recvfrom drops
+# messages from any other sender. listen and accept on a datagram socket stay EOPNOTSUPP.
 # A write to a pipe or socket with no reader raises SIGPIPE (default action ends the process;
 # SIG_IGN then the write returns EPIPE). socketpair and socket accept SOCK_NONBLOCK; a
 # non-blocking read, write or accept that would wait returns EAGAIN; fcntl F_SETFL can set
@@ -492,7 +494,7 @@ def lx_main(sp: u64):
     check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == EAFNOSUPPORT, "sendto bad family -> EAFNOSUPPORT")
     dn[0] = 1
     check(sendto(cl, u64(addr(big[0])), 600, 0, u64(addr(dn[0])), 6) == EMSGSIZE, "sendto 600 bytes -> EMSGSIZE")
-    check(lsys(42, cl, u64(addr(dn[0])), 6, 0, 0) == EOPNOTSUPP, "connect on a dgram socket -> EOPNOTSUPP")
+    # connect default-destination tests come after the ring test, which uses unconnected sendto
     check(lsys(50, sv, 1, 0, 0, 0) == EOPNOTSUPP, "listen on a dgram socket -> EOPNOTSUPP")
     check(lsys(43, sv, 0, 0, 0, 0) == EOPNOTSUPP, "accept on a dgram socket -> EOPNOTSUPP")
     # a full ring (7 frames of 512 bytes plus the 3-byte header and a 4-byte sender name) and a
@@ -522,6 +524,56 @@ def lx_main(sp: u64):
     lsys(3, sv, 0, 0, 0, 0)
     check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == ECONNREFUSED, "sendto after the receiver closed -> ECONNREFUSED")
     lsys(3, cl, 0, 0, 0, 0)
+    # default destination: connect on an AF_UNIX SOCK_DGRAM socket
+    sv = lsys(41, 1, 2, 0, 0, 0)
+    cl = lsys(41, 1, 2, 0, 0, 0)
+    sun2[0] = 1
+    sun2[1] = 0
+    sun2[2] = 0
+    sun2[3] = 110
+    sun2[4] = 111
+    check(lsys(42, cl, u64(addr(sun2[0])), 5, 0, 0) == ECONNREFUSED, "dgram connect missing -> ECONNREFUSED")
+    check(lsys(42, cl, u64(addr(pn[0])), 7, 0, 0) == EOPNOTSUPP, "dgram connect pathname -> EOPNOTSUPP")
+    check(lsys(1, cl, u64(addr(msg[0])), 5, 0, 0) == EDESTADDRREQ, "write before dgram connect -> EDESTADDRREQ")
+    check(lsys(49, sv, u64(addr(dn[0])), 6, 0, 0) == 0, "bind server for dgram connect")
+    check(lsys(42, cl, u64(addr(dn[0])), 6, 0, 0) == 0, "dgram connect sets a default destination")
+    check(lsys(1, cl, u64(addr(msg[0])), 5, 0, 0) == 5, "write after dgram connect")
+    alen[0] = 16
+    rd = recvfrom(sv, u64(addr(got[0])), 8, 0, u64(addr(an[0])), u64(addr(alen[0])))
+    check(rd == 5 and got[0] == 104 and alen[0] == 0, "recvfrom after connected write, unnamed sender")
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == EISCONN, "sendto a name after dgram connect -> EISCONN")
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, 0, 0) == 5, "sendto no address uses the default destination")
+    check(recvfrom(sv, u64(addr(got[0])), 8, 0, 0, 0) == 5, "recvfrom after sendto with no address")
+    lsys(3, cl, 0, 0, 0, 0)
+    cl = lsys(41, 1, 2, 0, 0, 0)
+    check(lsys(49, cl, u64(addr(dc[0])), 6, 0, 0) == 0, "bind the connected client")
+    check(lsys(42, cl, u64(addr(dn[0])), 6, 0, 0) == 0, "connect the named client")
+    ox = lsys(41, 1, 2, 0, 0, 0)
+    sun2[0] = 1
+    sun2[1] = 0
+    sun2[2] = 0
+    sun2[3] = 111
+    sun2[4] = 120
+    check(lsys(49, ox, u64(addr(sun2[0])), 5, 0, 0) == 0, "bind a third datagram socket")
+    check(sendto(ox, u64(addr(msg[0])), 4, 0, u64(addr(dc[0])), 6) == 4, "third socket sendto the connected client")
+    check(sendto(sv, u64(addr(msg[0])), 5, 0, u64(addr(dc[0])), 6) == 5, "server sendto the connected client")
+    rd = recvfrom(cl, u64(addr(got[0])), 8, 0x40, 0, 0)
+    check(rd == 5 and got[0] == 104, "connected recvfrom drops the other sender")
+    check(recvfrom(cl, u64(addr(got[0])), 8, 0x40, 0, 0) == EAGAIN, "other sender was dropped, queue empty")
+    lsys(3, ox, 0, 0, 0, 0)
+    lsys(3, sv, 0, 0, 0, 0)
+    check(lsys(1, cl, u64(addr(msg[0])), 5, 0, 0) == ECONNREFUSED, "write after the destination closed -> ECONNREFUSED")
+    sv = lsys(41, 1, 2, 0, 0, 0)
+    check(lsys(49, sv, u64(addr(dn[0])), 6, 0, 0) == 0, "rebind the destination name")
+    check(lsys(1, cl, u64(addr(msg[0])), 5, 0, 0) == 5, "write uses the destination name, not a slot")
+    check(recvfrom(sv, u64(addr(got[0])), 8, 0, 0, 0) == 5, "rebound name receives the write")
+    lsys(3, sv, 0, 0, 0, 0)
+    lsys(3, cl, 0, 0, 0, 0)
+    r = lsys(53, 1, 2, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair SOCK_DGRAM for connect EISCONN")
+    check(lsys(42, u64(fds[0]), u64(addr(dn[0])), 6, 0, 0) == EISCONN, "dgram socketpair connect -> EISCONN")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
     # sendto/recvfrom on a stream socketpair are send and recv
     r = lsys(53, 1, 1, 0, u64(addr(fds[0])), 0)
     check(r == 0, "socketpair for stream sendto")
@@ -540,6 +592,8 @@ def lx_main(sp: u64):
     put("lxipc: AF_UNIX abstract bind/listen/accept/connect, pathname bind EOPNOTSUPP\n")
     flush()
     put("lxipc: AF_UNIX SOCK_DGRAM socketpair and bound names, sendto/recvfrom keep message boundaries\n")
+    flush()
+    put("lxipc: AF_UNIX SOCK_DGRAM connect sets a default destination\n")
     flush()
     if fails == 0:
         put("lxipc: PASS (")

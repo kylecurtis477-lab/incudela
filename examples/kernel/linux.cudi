@@ -60,10 +60,10 @@
 # item 9: socket 41, bind 49, listen 50, connect 42, accept 43, accept4 288 -- AF_UNIX
 # SOCK_STREAM abstract addresses (sun_path[0] == 0); a pathname bind is EOPNOTSUPP.
 # item 9: sendto 44 and recvfrom 45 (six arguments, routed by syscall_do like mmap) carry
-# AF_UNIX SOCK_DGRAM messages (socketpair, socket, bind by abstract name) and act as send
-# and recv on a stream socket.
+# AF_UNIX SOCK_DGRAM messages (socketpair, socket, bind by abstract name, connect as a
+# default destination) and act as send and recv on a stream socket.
 # Not yet: real-time signals (32..64), sigaltstack, signals to other processes,
-# AF_INET sockets, a default destination (connect) on SOCK_DGRAM, AF_UNIX pathname bind.
+# AF_INET sockets, AF_UNIX pathname bind (the main lxipc boot has no /data).
 LX_ABI = 1
 LX_NSYS = 57  # syscalls in the table above (item 9: + socket, bind, listen, connect, accept, accept4, sendto, recvfrom)
 ARCH_SET_FS = 0x1002
