@@ -291,6 +291,23 @@
   168 / 0 / 659 / 7. Syscalls 408/409 stay `ktest_hooks` gated. The
   kernel unsafe cap stays 709.
 
+- `cfa94b0` AF_UNIX `SOCK_DGRAM` default destination: `connect` (42)
+  on a datagram socket sets a default destination (the abstract name
+  of a bound datagram socket). `write` and `sendto` with no address
+  use it; `sendto` with an address after connect is EISCONN.
+  `recvfrom` drops messages whose sender is not that name. A missing
+  name at connect or send is ECONNREFUSED. A pathname bind or connect
+  stays EOPNOTSUPP (the main lxipc boot has no `/data` inode, so
+  pathname sockets are deferred). `listen` and `accept` on a datagram
+  socket stay EOPNOTSUPP. The destination is a name, not a table
+  slot: if the bound socket is closed and another binds the same
+  name, a later write goes there. `SOCK_CONN` still means a
+  socketpair end. `run lxipc` covers these cases (209 checks, up from
+  187). No new ESP file, so `os/kexec-old-to-new` and `seal_test` are
+  unchanged. The personality stays 57 syscalls. The kernel unsafe
+  report stays 168 / 0 / 659 / 7. Syscalls 408/409 stay
+  `ktest_hooks` gated. The kernel unsafe cap stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
