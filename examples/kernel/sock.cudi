@@ -1,4 +1,4 @@
-# sock.cudi: Linux AF_UNIX SOCK_STREAM sockets for the compat sandbox (item 9).
+# sock.cudi: Linux AF_UNIX SOCK_STREAM and SOCK_DGRAM sockets for the compat sandbox (item 9).
 # socketpair (53) still makes two connected ends of one pair (File type F_SOCK, clu = sock
 # index, pos = 0 or 1, cidx bit 0 = O_NONBLOCK). socket (41), bind (49), listen (50),
 # connect (42), accept (43) and accept4 (288) add a named listener: bind accepts an
@@ -12,13 +12,28 @@
 # and POLLIN for a listener with a pending connection, and can wait when only sockets
 # are in the set. bind and connect copy a sockaddr_un into locals in the syscall
 # (Cuditor array parameters are by-value, so they cannot be used as out-parameters).
-# At most SOCK_N (8) Sock objects exist system-wide (pairs and
-# listeners share the table). No AF_INET, no SOCK_DGRAM. Syscalls 408/409 stay
-# ktest_hooks gated. The kernel unsafe cap is unchanged (709).
+# At most SOCK_N (8) Sock objects exist system-wide (pairs, listeners and datagram
+# sockets share the table). SOCK_DGRAM (AF_UNIX): socketpair makes two connected ends and
+# socket makes an unconnected one; bind takes an abstract name (the abstract namespace is
+# per type, so a stream and a datagram socket may share a name). Messages keep their
+# boundaries: the 4096-byte ring holds frames of a 3-byte header (length lo, length hi,
+# sender name length), the sender's abstract name and up to DG_MAX (512) data bytes. sendto
+# (44) names a bound datagram socket or, on a connected pair end, no one; recvfrom (45)
+# returns one message and the sender's name if it has one (addrlen 0 otherwise); read and
+# write on a datagram socket are recv and send. A message longer than the buffer is cut and
+# the rest is dropped. A closed peer or a missing name is ECONNREFUSED; an unconnected
+# datagram socket with no destination is EDESTADDRREQ. connect, listen and accept on a
+# datagram socket are EOPNOTSUPP (a default destination is not in this slice). No AF_INET.
+# Syscalls 408/409 stay ktest_hooks gated. The kernel unsafe cap is unchanged (709).
 SOCK_N = 8
 SOCK_CAP = 4096
 AF_UNIX = 1
 SOCK_STREAM = 1
+SOCK_DGRAM = 2
+DG_MAX = 512
+DG_HDR = 3
+MSG_DONTWAIT = 0x40
+MSG_NOSIGNAL = 0x4000
 SOCK_CLOEXEC = 0x80000
 SOCK_NONBLOCK = 0x800
 EAGAIN = 0xFFFFFFFFFFFFFFF5
@@ -31,6 +46,8 @@ ENOTCONN = 0xFFFFFFFFFFFFFF95
 EISCONN = 0xFFFFFFFFFFFFFF96
 EADDRINUSE = 0xFFFFFFFFFFFFFF9E
 ECONNREFUSED = 0xFFFFFFFFFFFFFF91
+EDESTADDRREQ = 0xFFFFFFFFFFFFFFA7
+EMSGSIZE = 0xFFFFFFFFFFFFFFA6
 SOCK_UNBOUND = 0
 SOCK_BOUND = 1
 SOCK_LISTEN = 2
@@ -55,6 +72,7 @@ struct Sock:
     backlog: u64
     qn: u64
     q: u64[8]
+    kind: u64
 
 socks: Sock[8]
 sock_used: u64[8]
@@ -85,6 +103,8 @@ def sock_poll_wait_if(g: u64) -> u64:
 def sock_revents(fl: ptr[File], ev: u64) -> u64:
     ss = sock_of(fl.clu)
     rev: u64 = 0
+    if ss.kind == 1:
+        return ev & dg_revents(ss, fl.pos)
     if ss.st == SOCK_LISTEN:
         if ss.qn > 0:
             rev = 1
@@ -146,6 +166,8 @@ def sock_end_close(fl: ptr[File]):
 def sock_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
     kb: u8[512]
     i: u64 = 0
+    if sock_of(fl.clu).kind == 1:
+        return dg_recv(fl, ubuf, n, 0, 0, 0)
     if n == 0:
         return 0
     ss = sock_of(fl.clu)
@@ -209,6 +231,8 @@ def sock_read(fl: ptr[File], ubuf: u64, n: u64) -> u64:
 def sock_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
     kb: u8[512]
     i: u64 = 0
+    if sock_of(fl.clu).kind == 1:
+        return dg_send(fl, ubuf, n, 0, 0, 0)
     if n == 0:
         return 0
     if n > 512:
@@ -274,16 +298,11 @@ def sock_write(fl: ptr[File], ubuf: u64, n: u64) -> u64:
     return n
 
 def lx_socketpair(domain: u64, typ: u64, protocol: u64, usv: u64) -> u64:
-# socketpair(domain, type, protocol, sv[2]): AF_UNIX + SOCK_STREAM only.
+# socketpair(domain, type, protocol, sv[2]): AF_UNIX, SOCK_STREAM or SOCK_DGRAM.
 # SOCK_CLOEXEC and SOCK_NONBLOCK are accepted on the type; other bits -> EINVAL.
-    if domain != AF_UNIX:
-        return EAFNOSUPPORT
-    if protocol != 0:
-        return EPROTONOSUPPORT
-    if (typ & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)) != SOCK_STREAM:
-        if (typ & 0xFF) != SOCK_STREAM:
-            return ESOCKTNOSUPPORT
-        return EINVAL
+    te = sock_type_ok(domain, typ, protocol)
+    if te != 0:
+        return te
     if user_ptr_ok(usv, 8) == 0:
         return EFAULT
     p = cur_proc()
@@ -316,6 +335,9 @@ def lx_socketpair(domain: u64, typ: u64, protocol: u64, usv: u64) -> u64:
     ss.st = SOCK_CONN
     ss.namelen = 0
     ss.qn = 0
+    ss.kind = 0
+    if (typ & 0xFF) == SOCK_DGRAM:
+        ss.kind = 1
     e0 = file_new(F_SOCK)
     e0.clu = ci
     e0.pos = 0
@@ -365,6 +387,7 @@ def sock_clear(ss: ptr[Sock]):
     ss.namelen = 0
     ss.backlog = 0
     ss.qn = 0
+    ss.kind = 0
 
 def sock_name_eq(ss: ptr[Sock], nm: u8[108], n: u64) -> u64:
     if ss.namelen != n or n == 0:
@@ -387,25 +410,25 @@ def sock_find_listen_l(nm: u8[108], n: u64) -> u64:
         i += 1
     return SOCK_N
 
-def sock_name_in_use_l(nm: u8[108], n: u64, selfi: u64) -> u64:
+def sock_name_in_use_l(nm: u8[108], n: u64, selfi: u64, kd: u64) -> u64:
     i: u64 = 0
     while i < SOCK_N:
         if i != selfi and sock_used[i] != 0:
             ss = sock_of(i)
-            if ss.namelen != 0 and sock_name_eq(ss, nm, n) != 0:
+            if ss.kind == kd and ss.namelen != 0 and sock_name_eq(ss, nm, n) != 0:
                 return 1
         i += 1
     return 0
 
 def sock_type_ok(domain: u64, typ: u64, protocol: u64) -> u64:
-# 0 on success, a negative errno otherwise
+# 0 on success, a negative errno otherwise. SOCK_STREAM and SOCK_DGRAM are the two types.
     if domain != AF_UNIX:
         return EAFNOSUPPORT
     if protocol != 0:
         return EPROTONOSUPPORT
-    if (typ & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)) != SOCK_STREAM:
-        if (typ & 0xFF) != SOCK_STREAM:
-            return ESOCKTNOSUPPORT
+    if (typ & 0xFF) != SOCK_STREAM and (typ & 0xFF) != SOCK_DGRAM:
+        return ESOCKTNOSUPPORT
+    if (typ & ~(SOCK_CLOEXEC | SOCK_NONBLOCK | 0xFF)) != 0:
         return EINVAL
     return 0
 
@@ -414,7 +437,7 @@ def sock_fd(p: ptr[Proc], fd: u64) -> nptr[File]:
     return fl
 
 def lx_socket(domain: u64, typ: u64, protocol: u64) -> u64:
-# socket(domain, type, protocol): an unbound AF_UNIX SOCK_STREAM end.
+# socket(domain, type, protocol): an unbound AF_UNIX SOCK_STREAM or SOCK_DGRAM socket.
     e = sock_type_ok(domain, typ, protocol)
     if e != 0:
         return e
@@ -433,6 +456,8 @@ def lx_socket(domain: u64, typ: u64, protocol: u64) -> u64:
     sock_clear(ss)
     ss.n0 = 1
     ss.st = SOCK_UNBOUND
+    if (typ & 0xFF) == SOCK_DGRAM:
+        ss.kind = 1
     e0 = file_new(F_SOCK)
     e0.clu = ci
     e0.pos = 0
@@ -485,7 +510,7 @@ def lx_bind(fd: u64, uaddr: u64, ualen: u64) -> u64:
         spin_unlock(addr(rq_lock))
         irq_restore(f)
         return EINVAL
-    if sock_name_in_use_l(nm, nlen, fl.clu) != 0:
+    if sock_name_in_use_l(nm, nlen, fl.clu, ss.kind) != 0:
         spin_unlock(addr(rq_lock))
         irq_restore(f)
         return EADDRINUSE
@@ -509,6 +534,10 @@ def lx_listen(fd: u64, backlog: u64) -> u64:
     f = irq_save()
     spin_lock(addr(rq_lock))
     ss = sock_of(fl.clu)
+    if ss.kind == 1:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EOPNOTSUPP
     if ss.st != SOCK_BOUND and ss.st != SOCK_LISTEN:
         spin_unlock(addr(rq_lock))
         irq_restore(f)
@@ -553,6 +582,10 @@ def lx_connect(fd: u64, uaddr: u64, ualen: u64) -> u64:
     f = irq_save()
     spin_lock(addr(rq_lock))
     ss = sock_of(fl.clu)
+    if ss.kind == 1:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EOPNOTSUPP
     if ss.st == SOCK_CONN:
         spin_unlock(addr(rq_lock))
         irq_restore(f)
@@ -616,6 +649,10 @@ def lx_accept4(fd: u64, uaddr: u64, ualenp: u64, flags: u64) -> u64:
     f = irq_save()
     spin_lock(addr(rq_lock))
     ss = sock_of(fl.clu)
+    if ss.kind == 1:
+        spin_unlock(addr(rq_lock))
+        irq_restore(f)
+        return EOPNOTSUPP
     if ss.st != SOCK_LISTEN:
         spin_unlock(addr(rq_lock))
         irq_restore(f)
@@ -681,3 +718,329 @@ def lx_accept4(fd: u64, uaddr: u64, ualenp: u64, flags: u64) -> u64:
             file_put(u64(e0))
             return EFAULT
     return a
+
+# ---- SOCK_DGRAM (AF_UNIX) ----
+# A datagram socket is a Sock with kind == 1. A connected pair end (socketpair) reads the
+# ring that the other end writes: end 0 reads buf10/h10/n10, end 1 reads buf01/h01/n01. A
+# socket from socket() is end 0 only (st UNBOUND or BOUND) and its inbox is buf10; sendto
+# by name appends a frame to the target's buf10. A frame is: length (2 bytes, little
+# endian), sender name length snl (1 byte), the sender's name (snl bytes), then the data.
+# Array parameters are by-value; dg_push_l and the finders only read their arrays.
+
+def dg_cnt(ss: ptr[Sock], pos: u64) -> u64:
+    if pos == 0:
+        return ss.n10
+    return ss.n01
+
+def dg_rb(ss: ptr[Sock], pos: u64, off: u64) -> u64:
+# byte `off` past the head of the inbox of end `pos`
+    if pos == 0:
+        return u64(ss.buf10[(ss.h10 + off) % SOCK_CAP])
+    return u64(ss.buf01[(ss.h01 + off) % SOCK_CAP])
+
+def dg_revents(ss: ptr[Sock], pos: u64) -> u64:
+# 1 POLLIN when a message is queued, 4 POLLOUT when the destination ring has room for one
+# more maximal frame (an unconnected socket can always try)
+    rev: u64 = 0
+    if dg_cnt(ss, pos) > 0:
+        rev = 1
+    if ss.st != SOCK_CONN:
+        return rev | 4
+    if pos == 0:
+        if ss.n1 == 0 or SOCK_CAP - ss.n01 >= DG_HDR + 108 + DG_MAX:
+            rev = rev | 4
+    else:
+        if ss.n0 == 0 or SOCK_CAP - ss.n10 >= DG_HDR + 108 + DG_MAX:
+            rev = rev | 4
+    return rev
+
+def dg_push_l(dst: ptr[Sock], tw: u64, src: ptr[Sock], kb: u8[512], n: u64) -> u64:
+# rq_lock held. Append one frame to dst's ring tw (0: buf01, read by end 1; 1: buf10, read
+# by end 0) with src's name as the sender. 1 if queued, 0 if the ring has no room.
+    snl: u64 = 0
+    if src.st == SOCK_BOUND:
+        snl = src.namelen
+    need = DG_HDR + snl + n
+    i: u64 = 0
+    if tw == 0:
+        if SOCK_CAP - dst.n01 < need:
+            return 0
+        b = dst.h01 + dst.n01
+        dst.buf01[b % SOCK_CAP] = u8(n & 255)
+        dst.buf01[(b + 1) % SOCK_CAP] = u8(n >> 8)
+        dst.buf01[(b + 2) % SOCK_CAP] = u8(snl)
+        while i < snl:
+            dst.buf01[(b + DG_HDR + i) % SOCK_CAP] = src.name[i]
+            i += 1
+        i = 0
+        while i < n:
+            dst.buf01[(b + DG_HDR + snl + i) % SOCK_CAP] = kb[i]
+            i += 1
+        dst.n01 += need
+        return 1
+    if SOCK_CAP - dst.n10 < need:
+        return 0
+    b = dst.h10 + dst.n10
+    dst.buf10[b % SOCK_CAP] = u8(n & 255)
+    dst.buf10[(b + 1) % SOCK_CAP] = u8(n >> 8)
+    dst.buf10[(b + 2) % SOCK_CAP] = u8(snl)
+    while i < snl:
+        dst.buf10[(b + DG_HDR + i) % SOCK_CAP] = src.name[i]
+        i += 1
+    i = 0
+    while i < n:
+        dst.buf10[(b + DG_HDR + snl + i) % SOCK_CAP] = kb[i]
+        i += 1
+    dst.n10 += need
+    return 1
+
+def sock_find_dgram_l(nm: u8[108], n: u64) -> u64:
+# rq_lock held; the bound datagram socket with this abstract name, or SOCK_N
+    i: u64 = 0
+    while i < SOCK_N:
+        if sock_used[i] != 0:
+            ss = sock_of(i)
+            if ss.kind == 1 and ss.st == SOCK_BOUND and sock_name_eq(ss, nm, n) != 0:
+                return i
+        i += 1
+    return SOCK_N
+
+def dg_send(fl: ptr[File], ubuf: u64, n: u64, uaddr: u64, ualen: u64, flags: u64) -> u64:
+# send one datagram from fl (kind 1). uaddr/ualen name the destination, or 0/0 for a
+# connected pair end. MSG_DONTWAIT and MSG_NOSIGNAL are accepted; other flags are EOPNOTSUPP.
+    kb: u8[512]
+    tmp: u8[110]
+    nm: u8[108]
+    nlen: u64 = 0
+    i: u64 = 0
+    if (flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) != 0:
+        return EOPNOTSUPP
+    if n > DG_MAX:
+        return EMSGSIZE
+    if uaddr != 0:
+        if ualen < 2 or ualen > 110:
+            return EINVAL
+        if user_ptr_ok(uaddr, ualen) == 0:
+            return EFAULT
+        if copy_user(u64(addr(tmp[0])), uaddr, ualen) != 0:
+            return EFAULT
+        if tmp[0] != 1 or tmp[1] != 0:
+            return EAFNOSUPPORT
+        if ualen == 2:
+            return EINVAL
+        if tmp[2] != 0:
+            return EOPNOTSUPP
+        nlen = ualen - 2
+        while i < nlen:
+            nm[i] = tmp[2 + i]
+            i += 1
+    if n > 0:
+        if user_ptr_ok(ubuf, n) == 0:
+            return EFAULT
+        if copy_user(u64(addr(kb[0])), ubuf, n) != 0:
+            return EFAULT
+    nb: u64 = 0
+    if (fl.cidx & 1) != 0 or (flags & MSG_DONTWAIT) != 0:
+        nb = 1
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    ss = sock_of(fl.clu)
+    if ss.st == SOCK_CONN:
+        if uaddr != 0:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return EISCONN
+        while 1:
+            if fl.pos == 0:
+                if ss.n1 == 0:
+                    spin_unlock(addr(rq_lock))
+                    irq_restore(f)
+                    return ECONNREFUSED
+                if dg_push_l(ss, 0, ss, kb, n) != 0:
+                    wq_wake_one_l(addr(ss.rq1))
+                    break
+                if nb != 0:
+                    spin_unlock(addr(rq_lock))
+                    irq_restore(f)
+                    return EAGAIN
+                wq_block_l(addr(ss.wq0))
+            else:
+                if ss.n0 == 0:
+                    spin_unlock(addr(rq_lock))
+                    irq_restore(f)
+                    return ECONNREFUSED
+                if dg_push_l(ss, 1, ss, kb, n) != 0:
+                    wq_wake_one_l(addr(ss.rq0))
+                    break
+                if nb != 0:
+                    spin_unlock(addr(rq_lock))
+                    irq_restore(f)
+                    return EAGAIN
+                wq_block_l(addr(ss.wq1))
+    else:
+        if uaddr == 0:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return EDESTADDRREQ
+        while 1:
+            ti = sock_find_dgram_l(nm, nlen)
+            if ti == SOCK_N:
+                spin_unlock(addr(rq_lock))
+                irq_restore(f)
+                return ECONNREFUSED
+            ts = sock_of(ti)
+            if dg_push_l(ts, 1, ss, kb, n) != 0:
+                wq_wake_one_l(addr(ts.rq0))
+                break
+            if nb != 0:
+                spin_unlock(addr(rq_lock))
+                irq_restore(f)
+                return EAGAIN
+            wq_block_l(addr(ts.wq1))
+    sock_poll_kick_l()
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    return n
+
+def dg_recv(fl: ptr[File], ubuf: u64, n: u64, uaddr: u64, ualenp: u64, flags: u64) -> u64:
+# receive one datagram into ubuf (at most n bytes; the rest of the message is dropped). If
+# uaddr is not 0 the sender's name goes there and its length (0 for an unnamed sender) to
+# the u32 at ualenp. MSG_DONTWAIT is accepted; other flags are EOPNOTSUPP.
+    kb: u8[512]
+    nm: u8[108]
+    al: u32[1]
+    i: u64 = 0
+    if (flags & ~MSG_DONTWAIT) != 0:
+        return EOPNOTSUPP
+    if uaddr != 0:
+        if copy_user(u64(addr(al[0])), ualenp, 4) != 0:
+            return EFAULT
+        if al[0] > 110:
+            return EINVAL
+        if al[0] != 0 and user_ptr_ok(uaddr, u64(al[0])) == 0:
+            return EFAULT
+    nb: u64 = 0
+    if (fl.cidx & 1) != 0 or (flags & MSG_DONTWAIT) != 0:
+        nb = 1
+    pos = fl.pos
+    f = irq_save()
+    spin_lock(addr(rq_lock))
+    ss = sock_of(fl.clu)
+    while dg_cnt(ss, pos) == 0:
+        if nb != 0:
+            spin_unlock(addr(rq_lock))
+            irq_restore(f)
+            return EAGAIN
+        if pos == 0:
+            wq_block_l(addr(ss.rq0))
+        else:
+            wq_block_l(addr(ss.rq1))
+    mlen = dg_rb(ss, pos, 0) | (dg_rb(ss, pos, 1) << 8)
+    snl = dg_rb(ss, pos, 2)
+    while i < snl:
+        nm[i] = u8(dg_rb(ss, pos, DG_HDR + i))
+        i += 1
+    m = mlen
+    if m > n:
+        m = n
+    i = 0
+    while i < m:
+        kb[i] = u8(dg_rb(ss, pos, DG_HDR + snl + i))
+        i += 1
+    tot = DG_HDR + snl + mlen
+    if pos == 0:
+        ss.h10 = (ss.h10 + tot) % SOCK_CAP
+        ss.n10 -= tot
+        wq_wake_all_l(addr(ss.wq1))
+    else:
+        ss.h01 = (ss.h01 + tot) % SOCK_CAP
+        ss.n01 -= tot
+        wq_wake_all_l(addr(ss.wq0))
+    sock_poll_kick_l()
+    spin_unlock(addr(rq_lock))
+    irq_restore(f)
+    if m > 0:
+        if copy_user(ubuf, u64(addr(kb[0])), m) != 0:
+            return EFAULT
+    if uaddr != 0:
+    # an unnamed sender reports a length of 0 and leaves the address alone
+        full = u64(0)
+        if snl != 0:
+            full = 2 + snl
+            out: u8[110]
+            out[0] = 1
+            out[1] = 0
+            i = 0
+            while i < snl:
+                out[2 + i] = nm[i]
+                i += 1
+            cn = full
+            if cn > u64(al[0]):
+                cn = u64(al[0])
+            if cn > 0:
+                if copy_user(uaddr, u64(addr(out[0])), cn) != 0:
+                    return EFAULT
+        al[0] = u32(full)
+        if copy_user(ualenp, u64(addr(al[0])), 4) != 0:
+            return EFAULT
+    return m
+
+def lx_sendto(fd: u64, ubuf: u64, n: u64, flags: u64, uaddr: u64, ualen: u64) -> u64:
+# sendto (44). Datagram sockets use dg_send. On a stream socket it is send(): no address and
+# flags 0 is write; an address on a connected stream is EISCONN, on an unconnected one
+# EOPNOTSUPP (as on Linux).
+    p = cur_proc()
+    fl = sock_fd(p, fd)
+    if fl == 0:
+        return EBADF
+    if fl.type != F_SOCK:
+        return ENOTSOCK
+    if (p.fdr[fd] & CAP_WRITE) == 0:
+        return EPERM
+    ss = sock_of(fl.clu)
+    atomic_fetch_add(addr(p.fdbusy), 1, acq_rel)
+    r: u64 = 0
+    if ss.kind == 1:
+        r = dg_send(fl, ubuf, n, uaddr, ualen, flags)
+    elif uaddr != 0:
+        r = EOPNOTSUPP
+        if ss.st == SOCK_CONN:
+            r = EISCONN
+    elif flags != 0:
+        r = EOPNOTSUPP
+    elif user_ptr_ok(ubuf, n) == 0:
+        r = EFAULT
+    else:
+        r = sock_write(fl, ubuf, n)
+    atomic_fetch_add(addr(p.fdbusy), 0xFFFFFFFFFFFFFFFF, acq_rel)
+    return r
+
+def lx_recvfrom(fd: u64, ubuf: u64, n: u64, flags: u64, uaddr: u64, ualenp: u64) -> u64:
+# recvfrom (45). Datagram sockets use dg_recv. On a stream socket it is recv(): flags 0 is
+# read; the peer address is not reported (addrlen 0), as for a connected stream on Linux.
+    p = cur_proc()
+    fl = sock_fd(p, fd)
+    if fl == 0:
+        return EBADF
+    if fl.type != F_SOCK:
+        return ENOTSOCK
+    if (p.fdr[fd] & CAP_READ) == 0:
+        return EPERM
+    ss = sock_of(fl.clu)
+    atomic_fetch_add(addr(p.fdbusy), 1, acq_rel)
+    r: u64 = 0
+    if ss.kind == 1:
+        r = dg_recv(fl, ubuf, n, uaddr, ualenp, flags)
+    elif flags != 0:
+        r = EOPNOTSUPP
+    elif user_ptr_ok(ubuf, n) == 0:
+        r = EFAULT
+    else:
+        r = sock_read(fl, ubuf, n)
+        if uaddr != 0 and r < 0xFFFFFFFFFFFFF001:
+            al: u32[1]
+            al[0] = 0
+            if ualenp == 0 or copy_user(ualenp, u64(addr(al[0])), 4) != 0:
+                r = EFAULT
+    atomic_fetch_add(addr(p.fdbusy), 0xFFFFFFFFFFFFFFFF, acq_rel)
+    return r

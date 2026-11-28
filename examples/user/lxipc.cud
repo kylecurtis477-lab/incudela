@@ -28,6 +28,8 @@ ENOTCONN = 0xFFFFFFFFFFFFFF95
 EISCONN = 0xFFFFFFFFFFFFFF96
 EADDRINUSE = 0xFFFFFFFFFFFFFF9E
 ECONNREFUSED = 0xFFFFFFFFFFFFFF91
+EDESTADDRREQ = 0xFFFFFFFFFFFFFFA7
+EMSGSIZE = 0xFFFFFFFFFFFFFFA6
 ENOTSOCK = 0xFFFFFFFFFFFFFFA8
 SIGPIPE = 13
 EAGAIN = 0xFFFFFFFFFFFFFFF5
@@ -48,11 +50,19 @@ sa: u64[4]
 pfd: u64[1]
 sun: u8[16]
 sun2: u8[16]
+dn: u8[16]
+dc: u8[16]
+pn: u8[16]
+an: u8[16]
+alen: u32[1]
+big: u8[600]
+rb: u8[512]
+lx_a6: u64
 
 @naked
 def lsys(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
     asm("mov %rdi,%rax", "mov %rsi,%rdi", "mov %rdx,%rsi", "mov %rcx,%rdx", "mov %r8,%r10",
-        "mov %r9,%r8", "xor %r9d,%r9d", "syscall", "ret")
+        "mov %r9,%r8", "mov lx_a6(%rip),%r9", "syscall", "ret")
 
 @unsafe
 def peek(a: u64) -> u64:
@@ -91,6 +101,20 @@ def check(ok: u64, what: ptr[u8]):
         put(what)
         put("\n")
         flush()
+
+# sendto (44) and recvfrom (45) take six arguments; lsys carries five, and the sixth (r9) comes from
+# lx_a6 (0 for every other call).
+def sendto(fd: u64, b: u64, n: u64, fl: u64, dst: u64, dl: u64) -> u64:
+    lx_a6 = dl
+    r = lsys(44, fd, b, n, fl, dst)
+    lx_a6 = 0
+    return r
+
+def recvfrom(fd: u64, b: u64, n: u64, fl: u64, src: u64, lp: u64) -> u64:
+    lx_a6 = lp
+    r = lsys(45, fd, b, n, fl, src)
+    lx_a6 = 0
+    return r
 
 def lx_main(sp: u64):
     msg[0] = 104
@@ -273,10 +297,10 @@ def lx_main(sp: u64):
     lsys(3, u64(fds[0]), 0, 0, 0, 0)
     lsys(3, u64(fds[1]), 0, 0, 0, 0)
     check(lsys(53, 2, 1, 0, u64(addr(fds[0])), 0) == EAFNOSUPPORT, "socketpair AF_INET -> EAFNOSUPPORT")
-    check(lsys(53, 1, 2, 0, u64(addr(fds[0])), 0) == ESOCKTNOSUPPORT, "socketpair SOCK_DGRAM -> ESOCKTNOSUPPORT")
+    check(lsys(53, 1, 3, 0, u64(addr(fds[0])), 0) == ESOCKTNOSUPPORT, "socketpair SOCK_RAW -> ESOCKTNOSUPPORT")
     check(lsys(53, 1, 1, 1, u64(addr(fds[0])), 0) == EPROTONOSUPPORT, "socketpair protocol 1 -> EPROTONOSUPPORT")
     check(lsys(41, 2, 1, 0, 0, 0) == EAFNOSUPPORT, "socket AF_INET -> EAFNOSUPPORT")
-    check(lsys(41, 1, 2, 0, 0, 0) == ESOCKTNOSUPPORT, "socket SOCK_DGRAM -> ESOCKTNOSUPPORT")
+    check(lsys(41, 1, 3, 0, 0, 0) == ESOCKTNOSUPPORT, "socket SOCK_RAW -> ESOCKTNOSUPPORT")
     check(lsys(41, 1, 1, 1, 0, 0) == EPROTONOSUPPORT, "socket protocol 1 -> EPROTONOSUPPORT")
     s = lsys(41, 1, 1, 0, 0, 0)
     check((s >> 63) == 0, "socket")
@@ -350,11 +374,172 @@ def lx_main(sp: u64):
     c = lsys(41, 1, 1, 0, 0, 0)
     check(lsys(42, c, u64(addr(sun[0])), 8, 0, 0) == ECONNREFUSED, "connect after listen close -> ECONNREFUSED")
     lsys(3, c, 0, 0, 0, 0)
+    # AF_UNIX SOCK_DGRAM: socketpair, message boundaries, truncation, empty datagrams
+    r = lsys(53, 1, 2, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair SOCK_DGRAM")
+    check(lsys(5, u64(fds[0]), u64(addr(st[0])), 0, 0, 0) == 0, "fstat dgram end")
+    check((st[3] & 0xFFFF) == 0xC180, "fstat dgram S_IFSOCK 0600")
+    check(lsys(1, u64(fds[0]), u64(addr(msg[0])), 5, 0, 0) == 5, "dgram write 5")
+    check(lsys(1, u64(fds[0]), u64(addr(msg[0])), 3, 0, 0) == 3, "dgram write 3")
+    rd = lsys(0, u64(fds[1]), u64(addr(got[0])), 8, 0, 0)
+    check(rd == 5 and got[0] == 104 and got[4] == 111, "dgram read returns one message (5 of 8)")
+    rd = lsys(0, u64(fds[1]), u64(addr(got[0])), 8, 0, 0)
+    check(rd == 3, "dgram second message 3")
+    check(lsys(1, u64(fds[0]), u64(addr(msg[0])), 5, 0, 0) == 5, "dgram write 5 for short read")
+    rd = lsys(0, u64(fds[1]), u64(addr(got[0])), 2, 0, 0)
+    check(rd == 2 and got[1] == 101, "dgram short read returns 2")
+    check(recvfrom(u64(fds[1]), u64(addr(got[0])), 8, 0x40, 0, 0) == EAGAIN, "dgram rest dropped after short read")
+    check(lsys(1, u64(fds[0]), u64(addr(msg[0])), 0, 0, 0) == 0, "dgram empty write")
+    pfd[0] = u64(fds[1]) | (u64(1) << 32)
+    check(lsys(271, u64(addr(pfd[0])), 1, 0, 0, 0) == 1, "ppoll sees a queued empty datagram")
+    check(((pfd[0] >> 48) & 0xFFFF) == 1, "ppoll empty datagram revents POLLIN")
+    check(lsys(0, u64(fds[1]), u64(addr(got[0])), 8, 0, 0) == 0, "dgram empty read returns 0")
+    check(recvfrom(u64(fds[1]), u64(addr(got[0])), 8, 0x40, 0, 0) == EAGAIN, "dgram empty message consumed")
+    check(lsys(1, u64(fds[1]), u64(addr(msg[0])), 4, 0, 0) == 4, "dgram write other direction")
+    rd = lsys(0, u64(fds[0]), u64(addr(got[0])), 8, 0, 0)
+    check(rd == 4, "dgram read other direction")
+    check(lsys(1, u64(fds[0]), u64(addr(msg[0])), 5, 0, 0) == 5, "dgram write for ppoll")
+    pfd[0] = u64(fds[1]) | (u64(5) << 32)
+    check(lsys(271, u64(addr(pfd[0])), 1, 0, 0, 0) == 1, "ppoll POLLIN|POLLOUT")
+    check(((pfd[0] >> 48) & 0xFFFF) == 5, "ppoll dgram revents POLLIN|POLLOUT")
+    check(lsys(0, u64(fds[1]), u64(addr(got[0])), 8, 0, 0) == 5, "dgram drain")
+    check(lsys(1, u64(fds[0]), u64(addr(big[0])), 600, 0, 0) == EMSGSIZE, "dgram write 600 -> EMSGSIZE")
+    check(sendto(u64(fds[0]), u64(addr(msg[0])), 5, 1, 0, 0) == EOPNOTSUPP, "sendto MSG_OOB -> EOPNOTSUPP")
+    check(sendto(u64(fds[0]), u64(addr(msg[0])), 5, 0x40, 0, 0) == 5, "sendto MSG_DONTWAIT on a pair")
+    rd = recvfrom(u64(fds[1]), u64(addr(got[0])), 8, 0, 0, 0)
+    check(rd == 5, "recvfrom on a pair")
+    dn[0] = 1
+    dn[1] = 0
+    dn[2] = 0
+    dn[3] = 100
+    dn[4] = 103
+    dn[5] = 115
+    check(sendto(u64(fds[0]), u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == EISCONN, "sendto a name on a connected pair -> EISCONN")
+    check(sendto(u64(fds[0]), u64(addr(msg[0])), 5, 0, 0, 0) == 5, "sendto no address on a pair")
+    alen[0] = 16
+    rd = recvfrom(u64(fds[1]), u64(addr(got[0])), 8, 0, u64(addr(an[0])), u64(addr(alen[0])))
+    check(rd == 5 and alen[0] == 0, "recvfrom unnamed sender: addrlen 0")
+    check(sendto(u64(fds[0]), u64(addr(msg[0])), 5, 0, 0, 0) == 5, "sendto for bad addrlen pointer")
+    check(recvfrom(u64(fds[1]), u64(addr(got[0])), 8, 0x40, u64(addr(an[0])), 8) == EFAULT, "recvfrom bad addrlen pointer -> EFAULT")
+    check(recvfrom(u64(fds[1]), u64(addr(got[0])), 8, 0x40, 0, 0) == 5, "message kept after EFAULT")
+    check(sendto(0x20, u64(addr(msg[0])), 5, 0, 0, 0) == EBADF, "sendto bad fd -> EBADF")
+    check(recvfrom(0x20, u64(addr(got[0])), 8, 0, 0, 0) == EBADF, "recvfrom bad fd -> EBADF")
+    check(sendto(1, u64(addr(msg[0])), 5, 0, 0, 0) == ENOTSOCK, "sendto on the console -> ENOTSOCK")
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
+    check(lsys(1, u64(fds[0]), u64(addr(msg[0])), 5, 0, 0) == ECONNREFUSED, "dgram write after peer close -> ECONNREFUSED")
+    check(recvfrom(u64(fds[0]), u64(addr(got[0])), 8, 0x40, 0, 0) == EAGAIN, "dgram recv after peer close, non-blocking -> EAGAIN")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    r = lsys(53, 1, 2 | SOCK_NONBLOCK, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair SOCK_DGRAM|SOCK_NONBLOCK")
+    check(lsys(0, u64(fds[0]), u64(addr(got[0])), 8, 0, 0) == EAGAIN, "dgram SOCK_NONBLOCK read empty -> EAGAIN")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
+    # named AF_UNIX SOCK_DGRAM sockets, sendto by abstract name
+    sv = lsys(41, 1, 2, 0, 0, 0)
+    check((sv >> 63) == 0, "socket SOCK_DGRAM")
+    check(lsys(1, sv, u64(addr(msg[0])), 5, 0, 0) == EDESTADDRREQ, "write on unconnected dgram -> EDESTADDRREQ")
+    check(sendto(sv, u64(addr(msg[0])), 5, 0, 0, 0) == EDESTADDRREQ, "sendto no address -> EDESTADDRREQ")
+    check(recvfrom(sv, u64(addr(got[0])), 8, 0x40, 0, 0) == EAGAIN, "recvfrom empty unbound dgram, non-blocking -> EAGAIN")
+    check(lsys(49, sv, u64(addr(dn[0])), 6, 0, 0) == 0, "bind dgram abstract name")
+    cl = lsys(41, 1, 2, 0, 0, 0)
+    check(lsys(49, cl, u64(addr(dn[0])), 6, 0, 0) == EADDRINUSE, "bind dgram name in use -> EADDRINUSE")
+    sx = lsys(41, 1, 1, 0, 0, 0)
+    check(lsys(49, sx, u64(addr(dn[0])), 6, 0, 0) == 0, "a stream socket may bind a dgram name")
+    lsys(3, sx, 0, 0, 0, 0)
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == 5, "sendto a bound dgram name")
+    alen[0] = 16
+    rd = recvfrom(sv, u64(addr(got[0])), 8, 0, u64(addr(an[0])), u64(addr(alen[0])))
+    check(rd == 5 and got[0] == 104 and alen[0] == 0, "recvfrom: message and unnamed sender")
+    dc[0] = 1
+    dc[1] = 0
+    dc[2] = 0
+    dc[3] = 100
+    dc[4] = 103
+    dc[5] = 99
+    check(lsys(49, cl, u64(addr(dc[0])), 6, 0, 0) == 0, "bind the client dgram name")
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == 5, "sendto from a named sender")
+    alen[0] = 16
+    rd = recvfrom(sv, u64(addr(got[0])), 8, 0, u64(addr(an[0])), u64(addr(alen[0])))
+    check(rd == 5 and alen[0] == 6, "recvfrom reports the sender name length")
+    check(an[0] == 1 and an[1] == 0 and an[2] == 0 and an[3] == 100 and an[4] == 103 and an[5] == 99, "recvfrom sender name bytes")
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == 5, "sendto for a short address buffer")
+    alen[0] = 3
+    rd = recvfrom(sv, u64(addr(got[0])), 8, 0, u64(addr(an[0])), u64(addr(alen[0])))
+    check(rd == 5 and alen[0] == 6, "short address buffer: full length reported")
+    check(sendto(sv, u64(addr(msg[0])), 3, 0, u64(addr(dc[0])), 6) == 3, "sendto back to the sender's name")
+    rd = recvfrom(cl, u64(addr(got[0])), 8, 0, 0, 0)
+    check(rd == 3, "recvfrom the reply")
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == 5, "sendto for ppoll")
+    pfd[0] = sv | (u64(1) << 32)
+    check(lsys(271, u64(addr(pfd[0])), 1, 0, 0, 0) == 1, "ppoll on a bound dgram")
+    check(((pfd[0] >> 48) & 0xFFFF) == 1, "ppoll bound dgram revents POLLIN")
+    check(recvfrom(sv, u64(addr(got[0])), 8, 0x40, 0, 0) == 5, "drain the ppoll message")
+    sun2[0] = 1
+    sun2[1] = 0
+    sun2[2] = 0
+    sun2[3] = 110
+    sun2[4] = 111
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(sun2[0])), 5) == ECONNREFUSED, "sendto a missing name -> ECONNREFUSED")
+    pn[0] = 1
+    pn[1] = 0
+    pn[2] = 47
+    pn[3] = 100
+    pn[4] = 97
+    pn[5] = 116
+    pn[6] = 97
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(pn[0])), 7) == EOPNOTSUPP, "sendto a pathname -> EOPNOTSUPP")
+    dn[0] = 2
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == EAFNOSUPPORT, "sendto bad family -> EAFNOSUPPORT")
+    dn[0] = 1
+    check(sendto(cl, u64(addr(big[0])), 600, 0, u64(addr(dn[0])), 6) == EMSGSIZE, "sendto 600 bytes -> EMSGSIZE")
+    check(lsys(42, cl, u64(addr(dn[0])), 6, 0, 0) == EOPNOTSUPP, "connect on a dgram socket -> EOPNOTSUPP")
+    check(lsys(50, sv, 1, 0, 0, 0) == EOPNOTSUPP, "listen on a dgram socket -> EOPNOTSUPP")
+    check(lsys(43, sv, 0, 0, 0, 0) == EOPNOTSUPP, "accept on a dgram socket -> EOPNOTSUPP")
+    # a full ring (7 frames of 512 bytes plus the 3-byte header and a 4-byte sender name) and a
+    # second fill after the head has moved, so the frames wrap around the 4096-byte ring
+    k = 0
+    while k < 512:
+        big[k] = u8(k & 255)
+        k += 1
+    rnd = 0
+    while rnd < 2:
+        k = 0
+        rr = 512
+        while rr == 512 and k < 20:
+            rr = sendto(cl, u64(addr(big[0])), 512, 0x40, u64(addr(dn[0])), 6)
+            if rr == 512:
+                k += 1
+        check(k == 7 and rr == EAGAIN, "ring holds 7 maximal frames, the 8th is EAGAIN")
+        k = 0
+        rr = 512
+        while rr == 512 and k < 20:
+            rr = recvfrom(sv, u64(addr(rb[0])), 512, 0x40, 0, 0)
+            if rr == 512:
+                k += 1
+        check(k == 7 and rr == EAGAIN, "ring drains 7 frames of 512, then EAGAIN")
+        check(rb[0] == 0 and rb[255] == 255 and rb[256] == 0 and rb[511] == 255, "full-size frame data intact")
+        rnd += 1
+    lsys(3, sv, 0, 0, 0, 0)
+    check(sendto(cl, u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == ECONNREFUSED, "sendto after the receiver closed -> ECONNREFUSED")
+    lsys(3, cl, 0, 0, 0, 0)
+    # sendto/recvfrom on a stream socketpair are send and recv
+    r = lsys(53, 1, 1, 0, u64(addr(fds[0])), 0)
+    check(r == 0, "socketpair for stream sendto")
+    check(sendto(u64(fds[0]), u64(addr(msg[0])), 5, 0, 0, 0) == 5, "sendto on a stream pair")
+    alen[0] = 16
+    rd = recvfrom(u64(fds[1]), u64(addr(got[0])), 8, 0, u64(addr(an[0])), u64(addr(alen[0])))
+    check(rd == 5 and alen[0] == 0, "recvfrom on a stream pair, addrlen 0")
+    check(sendto(u64(fds[0]), u64(addr(msg[0])), 5, 0, u64(addr(dn[0])), 6) == EISCONN, "sendto a name on a connected stream -> EISCONN")
+    check(sendto(u64(fds[0]), u64(addr(msg[0])), 5, 0x40, 0, 0) == EOPNOTSUPP, "sendto flags on a stream -> EOPNOTSUPP")
+    lsys(3, u64(fds[0]), 0, 0, 0, 0)
+    lsys(3, u64(fds[1]), 0, 0, 0, 0)
     put("lxipc: AF_UNIX SOCK_STREAM socketpair is bidirectional, fstat S_IFSOCK, close EOF/EPIPE\n")
     flush()
     put("lxipc: SOCK_NONBLOCK and F_SETFL return EAGAIN; ppoll waits for a socket\n")
     flush()
     put("lxipc: AF_UNIX abstract bind/listen/accept/connect, pathname bind EOPNOTSUPP\n")
+    flush()
+    put("lxipc: AF_UNIX SOCK_DGRAM socketpair and bound names, sendto/recvfrom keep message boundaries\n")
     flush()
     if fails == 0:
         put("lxipc: PASS (")

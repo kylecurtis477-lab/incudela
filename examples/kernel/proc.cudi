@@ -2331,6 +2331,12 @@ def syscall_do(nr: u64, a: u64, b: u64, c: u64, d: u64, frame: u64) -> u64:
             irq_restore(f)
         elif nr == 56:
             r = lx_clone(frame, a, b, c, d, sf.r8)
+        elif nr == 44:
+        # item 9: sendto (fd, buf, len, flags, dest, addrlen)
+            r = lx_sendto(a, b, c, d, sf.r8, sf.r9)
+        elif nr == 45:
+        # item 9: recvfrom (fd, buf, len, flags, src, addrlenp)
+            r = lx_recvfrom(a, b, c, d, sf.r8, sf.r9)
         elif nr == 57:
             r = lx_fork(frame)
         elif nr == 58:
