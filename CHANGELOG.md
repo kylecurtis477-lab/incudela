@@ -244,6 +244,26 @@
   The kernel unsafe report stays 168 / 0 / 659 / 7. Syscalls
   408/409 stay `ktest_hooks` gated. The kernel unsafe cap stays 709.
 
+- `e0245fc` AF_UNIX abstract `bind` (49), `listen` (50), `connect` (42),
+  `accept` (43) and `accept4` (288) for the Linux personality, plus
+  `socket` (41). Abstract names (`sun_path[0] == 0`) take a same-process
+  SOCK_STREAM client/server through bind, listen, accept and connect.
+  Pathname bind is EOPNOTSUPP until `/data` can hold the inode (the
+  main `lxipc` boot has no Incudela partition). `connect` to a
+  listening name completes immediately and queues the server end for
+  `accept`. A write or read on an unbound socket is ENOTCONN. A
+  missing name or a closed listener is ECONNREFUSED. A name already
+  bound is EADDRINUSE. `accept4` accepts `SOCK_CLOEXEC` and
+  `SOCK_NONBLOCK`. `F_SETFL` `O_NONBLOCK` on a listener makes an empty
+  `accept` return EAGAIN. `SOCK_N` stays 8 (listeners and pairs share
+  the table). `bind` and `connect` copy the `sockaddr_un` into locals;
+  Cuditor array parameters are by-value and cannot be used as
+  out-parameters. `run lxipc` covers these cases (109 checks, up from
+  77). No new ESP file, so `os/kexec-old-to-new` and `seal_test` are
+  unchanged. The personality is 55 syscalls. The kernel unsafe report
+  stays 168 / 0 / 659 / 7. Syscalls 408/409 stay `ktest_hooks` gated.
+  The kernel unsafe cap stays 709.
+
 ## 0.23.1 (open): KDF hardening, key-temporary wipes, and sysfuzz gated-list check (no git tag)
 
 - `2146c37` `tests/sysfuzz-gates/run.sh` (wired as item 69, lane X) parses `sys_need` in
